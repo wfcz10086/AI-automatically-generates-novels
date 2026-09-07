@@ -401,3 +401,22 @@ def test_outline_digest_is_layered(tmp_path):
     head, tail = out2.split("【最近各章（完整细纲", 1)
     assert "剧情2：" in tail, "完整段丢了剧情点"
     assert "剧情2：" not in head, "压缩段没压住"
+
+
+def test_three_stage_flow_exists():
+    """流程要分三段：排全书细纲 → 审阅 → 写正文。
+
+    边排边写的话，前面的章看不见后面的安排：伏笔没法全局铺、节奏必然漂。
+    而细纲阶段改一行字，比写完二十万字再返工便宜一百倍。
+    """
+    import inspect
+    import run_novel
+    from server.orchestrator import Novelist
+    assert hasattr(run_novel, "cmd_outline"), "缺少排全书细纲的命令"
+    assert hasattr(run_novel, "cmd_review"), "缺少细纲审阅的命令"
+    assert "def step_outline_review" in inspect.getsource(Novelist)
+    rv = inspect.getsource(Novelist.step_outline_review)
+    # 审阅要看的六件事，逐章写时都看不出来
+    for k in ("节奏", "伏笔", "重复", "人物", "接缝", "兑现"):
+        assert k in rv, f"审阅漏了「{k}」这一项"
+    assert "outline_review.md" in rv

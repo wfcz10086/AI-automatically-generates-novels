@@ -66,6 +66,57 @@ def _code_stamp() -> str:
     return h.hexdigest()[:12]
 
 
+def cmd_outline(a):
+    """先把全书细纲排完 —— 边排边写会让前面的章看不见后面的安排。"""
+    p = Project(a.title)
+    nv = Novelist(p)
+    for step, fn in (("世界观", nv.step_world_bible), ("角色档案", nv.step_characters),
+                     ("总纲", nv.step_outline)):
+        name = {"世界观": "world_bible.md", "角色档案": "characters.md",
+                "总纲": "outline.md"}[step]
+        if not p.read(name):
+            print(f"[前置] {step}")
+            fn()
+    if not p._load("volumes.json", []):
+        print("[前置] 分卷")
+        nv.step_volumes()
+    total = a.to or int(p.meta.get("target_chapters") or 0)
+    stamp = _code_stamp()
+    while True:
+        co = p._load("chapter_outlines.json", {}) or {}
+        miss = [i for i in range(1, total + 1) if str(i) not in co]
+        if not miss:
+            break
+        start = miss[0]
+        batch = nv.outline_batch()
+        print(f"  → 第 {start}-{min(start + batch - 1, total)} 章细纲"
+              f"（已排 {len(co)}/{total}）", flush=True)
+        nv.step_chapter_outlines(start, min(batch, total - start + 1))
+        if _code_stamp() != stamp:
+            print("!! 代码已更新，退出交由守护以新版本续排")
+            return 3
+    print(f"✓ 全书 {total} 章细纲已排完。下一步：review 审阅，再 run 写正文")
+    return 0
+
+
+def cmd_review(a):
+    """细纲审阅 —— 动笔前的一道关。现在改一行，比写完二十万字再返工便宜得多。"""
+    nv = Novelist(Project(a.title))
+    d = nv.step_outline_review()
+    if d.get("error"):
+        print("审阅失败：", d["error"])
+        return 1
+    print(f"\n总评：{d.get('verdict','')}\n")
+    for i, x in enumerate(d.get("issues", []), 1):
+        print(f"{i}. [{x.get('kind')}] {x.get('where')}")
+        print(f"   问题：{x.get('what','')[:110]}")
+        print(f"   怎么改：{x.get('fix','')[:110]}\n")
+    if not d.get("issues"):
+        print("未发现结构性问题。")
+    print(f"完整报告：projects/{a.title}/outline_review.md")
+    return 0
+
+
 def cmd_run(a):
     p = Project(slugify(a.title))
     if not p.meta:
@@ -156,6 +207,13 @@ if __name__ == "__main__":
     i.add_argument("--history", default="auto",
                    choices=["auto", "none", *_Nv.BASIS_TYPES],
                    help="real=真实朝代(宋朝就叫宋朝) alt=架空(自造国号) none=与史无关")
+
+    o = sub.add_parser("outline"); o.set_defaults(f=cmd_outline)
+    o.add_argument("--title", required=True)
+    o.add_argument("--to", type=int, default=0, help="排到第几章（默认全书）")
+
+    v = sub.add_parser("review"); v.set_defaults(f=cmd_review)
+    v.add_argument("--title", required=True)
 
     r = sub.add_parser("run"); r.set_defaults(f=cmd_run)
     r.add_argument("--title", required=True)
