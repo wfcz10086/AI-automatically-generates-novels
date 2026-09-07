@@ -363,3 +363,41 @@ def test_outline_batch_is_computed_not_hardcoded():
     gen = inspect.getsource(Novelist.step_chapter_outlines)
     assert "outline_digest(" in gen, "后续批次看不到前面排了什么"
     assert "self.outline_batch(count)" in gen
+
+
+def test_outline_digest_is_layered(tmp_path):
+    """已排细纲要分层喂：近的完整，远的压缩。
+
+    全部压成一行会把最近几章的细节也丢掉 —— 而接缝处最需要的恰恰是
+    「上一章结在哪、谁还在场、埋了什么没收」这些细节。
+    """
+    import json as _j
+    from server.orchestrator import Novelist, Project
+    from server.settings import load
+
+    d = tmp_path / "书"
+    (d / "chapters").mkdir(parents=True)
+    (d / "project.json").write_text(_j.dumps(
+        {"title": "t", "type_id": "novel", "genre_id": "lishi",
+         "style_id": "qidian-lishi", "target_chapters": 100,
+         "target_words": 300000, "fields": {}}, ensure_ascii=False), encoding="utf-8")
+    (d / "state.json").write_text('{"done": [], "current": 0}', encoding="utf-8")
+    body = "第N章 标题\n核心事件：某事发生\n剧情1：细节甲\n剧情2：细节乙\n" + "补充。" * 120
+    (d / "chapter_outlines.json").write_text(_j.dumps(
+        {str(i): body.replace("第N章", f"第{i}章") for i in range(1, 61)},
+        ensure_ascii=False), encoding="utf-8")
+
+    nv = Novelist(Project(str(d)))
+    # 预算充足时全部完整喂（上下文够大就不该压）
+    out = nv.outline_digest(61)
+    assert "【最近各章（完整细纲" in out, "近的没有完整喂"
+    assert out.count("—— 第") == 60, "预算够却没全给完整版"
+
+    # 预算收紧时才分层：近的完整、远的压成一行
+    out2 = nv.outline_digest(61, limit=12000)
+    assert "【更早各章（压缩" in out2, "预算不足时没有压缩远端"
+    n_full = out2.count("—— 第")
+    assert 1 <= n_full < 60, f"完整段章数不合理：{n_full}"
+    head, tail = out2.split("【最近各章（完整细纲", 1)
+    assert "剧情2：" in tail, "完整段丢了剧情点"
+    assert "剧情2：" not in head, "压缩段没压住"

@@ -138,6 +138,33 @@ class MemoryController:
 
         self.results.append(self._fit("L5_constraint", constraints))
 
+        # 余量回收: 各层配额按比例切死, 用不完也不外借 —— 实测 100k 预算只用到
+        # 21.8%（L1 用 6.4k/上限 20k, L2 用 11.5k/上限 38k），而 L2「最近章节原文」
+        # 恰恰是越多越好的那一层。把没人用的额度让给它, 把窗口吃满。
+        spare = self.total - sum(r.tokens for r in self.results)
+        if spare > 2000:
+            for key, pool, joiner in (("L2_recent", recent, "\n"),
+                                      ("L3_mid", mid, "\n\n")):
+                i = next((j for j, r in enumerate(self.results) if r.key == key), None)
+                if i is None or not self.results[i].truncated:
+                    continue
+                cur = self.results[i]
+                cap2 = cur.cap + spare
+                kept, used = [], 0
+                for blk in reversed(pool):
+                    t = est_tokens(blk)
+                    if used + t > cap2:
+                        break
+                    kept.insert(0, blk)
+                    used += t
+                if used > cur.tokens:
+                    self.results[i] = LayerResult(
+                        key, self.layers[key]["label"], joiner.join(kept),
+                        used, cap2, truncated=len(kept) < len(pool))
+                    spare = self.total - sum(r.tokens for r in self.results)
+                    if spare <= 2000:
+                        break
+
         by = {r.key: r.text for r in self.results}
         return {
             "layers": by,

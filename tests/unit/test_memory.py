@@ -70,11 +70,31 @@ class TestMemoryController:
         assert layers["L0_outline"]["tokens"] > 0    # hard 层永不清空
 
     def test_recent_drops_oldest_first(self):
+        """装不下时丢最旧的，最新的一定保留。
+
+        预算给得极小，连余量回收也救不回来，这时才看得出丢弃顺序。
+        """
         recent = [f"第{i}章：" + "很长的内容" * 40 for i in range(10)]
-        r = MemoryController(3000).assemble(**self.kw(recent=recent))
+        r = MemoryController(900).assemble(**self.kw(recent=recent))
         txt = r["layers"]["L2_recent"]
         assert "第9章" in txt          # 最新保留
         assert "第0章" not in txt      # 最旧被丢
+
+    def test_spare_budget_is_reclaimed(self):
+        """别的层用不完的额度要让给最近章节。
+
+        各层配额按比例切死、用不完也不外借的话，实测 100k 预算只用到 21.8%
+        （L1 用 6.4k/上限 20k，L2 用 11.5k/上限 38k）—— 而 L2「最近章节原文」
+        恰恰是越多越好的那一层。
+        """
+        recent = [f"第{i}章：" + "很长的内容" * 40 for i in range(10)]
+        # L2 配额 = 3000 × 0.38 ≈ 1140 tok，单条约 210 tok，只装得下 5 条；
+        # 但 L3/L4 全空，余量回收后应该能全装下
+        r = MemoryController(3000).assemble(**self.kw(recent=recent))
+        txt = r["layers"]["L2_recent"]
+        assert "第0章" in txt and "第9章" in txt, "余量没有被回收给最近章节"
+        rep = r["report"]
+        assert rep["used"] > 3000 * 0.5, f"预算仍然大量闲置：{rep['usage_pct']}%"
 
     def test_type_guard_rejects_dicts(self):
         """变量遮蔽把 dict 列表传进来 —— 踩过两次的坑必须有护栏。"""

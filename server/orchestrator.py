@@ -1578,26 +1578,54 @@ class Novelist:
                 return v
         return {}
 
-    def outline_digest(self, before: int, limit: int = 14000) -> str:
-        """已排好的细纲压成「N. 一句话」，供后续批次接续。"""
+    # 细纲生成的输入预算：60k tokens ≈ 80000 字符。128k 窗口下留足输出与其他
+    # 区块的余量，同时把「模型能看见多少已排内容」拉到最大 —— 看得越全，
+    # 伏笔铺得越准、批与批的接缝越顺。
+    OUTLINE_INPUT_CHARS = 80000
+
+    def outline_digest(self, before: int, full_span: int = 0,
+                       limit: int = 0) -> str:
+        """已排好的细纲，分层喂给下一批：近的完整，远的压缩。
+
+        全部压成一行会把最近几章的细节也丢掉 —— 而接缝处最需要的恰恰是
+        「上一章结在哪、谁还在场、埋了什么没收」这些细节。所以：
+          · 最近 full_span 章：**原文完整喂入**（单章约 456 字，20 章才 6k tok）
+          · 更早的：压成「N. 章名｜核心事件」一行
+        总量受 limit 约束，超了先砍最远的压缩行，再砍完整段。
+        """
+        limit = limit or self.OUTLINE_INPUT_CHARS
         co = self.p._load("chapter_outlines.json", {}) or {}
-        got = []
-        for k in sorted((int(x) for x in co), reverse=True):
-            if k >= before:
-                continue
+        keys = sorted(k for k in (int(x) for x in co) if k < before)
+        if not keys:
+            return ""
+        # 完整段能给多少给多少: 先按预算的六成留给完整细纲, 剩下的给压缩行。
+        # 原来固定给一批的量(18 章), 白白浪费了一半预算。
+        span = full_span or max(self.outline_batch(),
+                                int(limit * 0.6 / 480))
+        full_keys = keys[-span:]
+        brief_keys = keys[:-span] if len(keys) > span else []
+
+        def one_line(k: int) -> str:
             t = str(co[str(k)])
             head = t.split("\n")[0].strip()
-            core = ""
-            m = re.search(r"核心事件[：:]\s*(.+)", t)
-            if m:
-                core = m.group(1).strip()[:70]
-            else:                                   # 没有「核心事件」就取剧情1
-                m2 = re.search(r"剧情1[：:]\s*(.+)", t)
-                core = m2.group(1).strip()[:70] if m2 else t[:70]
-            got.append(f"{k}. {head[:24]}｜{core}")
-            if sum(len(x) for x in got) > limit:
-                break
-        return "\n".join(reversed(got))
+            m = re.search(r"核心事件[：:]\s*(.+)", t) or re.search(r"剧情1[：:]\s*(.+)", t)
+            core = m.group(1).strip()[:70] if m else t[:70]
+            return f"{k}. {head[:24]}｜{core}"
+
+        brief = [one_line(k) for k in brief_keys]
+        full = [f"—— 第{k}章 ——\n{str(co[str(k)]).strip()}" for k in full_keys]
+        # 先保完整段, 压缩行从最远处开始砍
+        while brief and sum(len(x) for x in brief) + sum(len(x) for x in full) > limit:
+            brief.pop(0)
+        while full and sum(len(x) for x in full) > limit:
+            full.pop(0)
+        out = []
+        if brief:
+            out.append("【更早各章（压缩，一行一章）】\n" + "\n".join(brief))
+        if full:
+            out.append("【最近各章（完整细纲，本批要接住的就是这些）】\n"
+                       + "\n\n".join(full))
+        return "\n\n".join(out)
 
     def outline_batch(self, want: int = 0) -> int:
         """一批排多少章细纲 —— 按输出上限算，不是拍一个 10。
@@ -1685,6 +1713,16 @@ class Novelist:
             cons.append("【已确立的事实，不得推翻或给出不同结论】\n" + established[:2500])
 
         bg = self.sanitize_facts(self.ground("plot", context=self.asset("outline.md")))
+        # 再查一轮「剧情素材」—— plot 那轮查的是写得对不对(器物称谓物价),
+        # 这一轮查的是接下来能写什么: 真实发生过的事、行内真实的做局手法、
+        # 制度上真实的漏洞。虚构不出来的东西, 现实里有现成的。
+        drive_ctx = (self.asset("outline.md")[:1500] + "\n\n【本批要排的章节范围】"
+                     + f"第 {start}-{start + count - 1} 章\n"
+                     + (vol.get("text", "")[:800] if vol else ""))
+        drive = self.sanitize_facts(self.ground("drive", context=drive_ctx))
+        if drive:
+            bg = (bg + "\n\n【可用作剧情素材的真实内容（不是查证，是拿来用）】\n"
+                  + drive) if bg else drive
         if bg:
             prompt += ("\n\n【现实参考资料 —— 本批剧情涉及的器物、行程、礼俗须符合下列常识；"
                        "资料里的朝代名不得出现在成稿里】\n" + bg[:5000])
