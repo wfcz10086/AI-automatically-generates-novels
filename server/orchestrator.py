@@ -969,6 +969,41 @@ class Novelist:
                 out.append(f"{nm}（此前出现 {hits} 次，已 {gap} 章未提）")
         return out[:5]
 
+    def normalize_body(self, text: str) -> str:
+        """成稿规范化 —— 确定性的格式问题，不该靠模型自觉，也不该靠人工校对。
+
+        这几类错一旦写进成稿，读者一眼就看得见，而它们的正确形态是**唯一确定**的：
+          · 正文里的 markdown 标题：章节正文是纯文本，`# 新官上任` 是格式漏出来的
+          · 引号风格：一本书要么全用弯引号，要么全用直角引号，不能第 20 章突然换
+        所以直接在落盘前改掉，而不是报个 issue 等模型下次注意。
+
+        英文残留（husband / Discount）不在这里处理 —— 换成什么词是语义判断，
+        猜错了比留着更糟，交给评审驱动的重写。
+        """
+        # 去掉正文里的 markdown 标题, 保留其文字内容（往往是小节名，有意义）
+        text = re.sub(r"^#{1,6}\s+(\S.*)$", r"\1", text, flags=re.M)
+        # 引号统一到全书主流风格
+        style = self.quote_style()
+        if style == "curly":
+            text = (text.replace(chr(0x300C), chr(0x201C))
+                        .replace(chr(0x300D), chr(0x201D)))
+        elif style == "corner":
+            text = (text.replace(chr(0x201C), chr(0x300C))
+                        .replace(chr(0x201D), chr(0x300D)))
+        return text
+
+    def quote_style(self) -> str:
+        """全书主流引号风格（前若干章说了算，后面的向它看齐）。"""
+        done = sorted(self.p.state.get("done", []))[:12]
+        c = k = 0
+        for i in done:
+            t = self.p.chapter(i)
+            c += t.count(chr(0x201C))
+            k += t.count(chr(0x300C))
+        if c + k < 20:
+            return ""
+        return "curly" if c > k else "corner"
+
     def signature_guard(self) -> str:
         """本书自己长出来的高频动作 —— 人设标志用滥就成了口癖。
 
@@ -1669,6 +1704,7 @@ class Novelist:
             elif t2 and too_short:
                 self._log(f"第{n}章重写结果过短({len(re.findall(chr(0x4e00)+'-'+chr(0x9fff), t2))}字)，弃用")
 
+        text = self.normalize_body(text)     # 落盘前统一格式，别让格式错进成稿
         self.p.write(self.p.chapter_path(n), text)
         a["target_words"] = target      # 交付率要用: 没有它就算不出模型少写了多少
         self.p.write(f"audit/{n:03d}.json", json.dumps(a, ensure_ascii=False, indent=2))

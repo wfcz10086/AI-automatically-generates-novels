@@ -48,6 +48,18 @@ gateways:
     context_window: 128000
     max_tokens: 8192
 
+  gw5:
+    type: openai_compat
+    label: "DeepSeek 网关"
+    base_url: ${NOVEL_GW5_URL}
+    api_key: ${NOVEL_GW5_KEY:-EMPTY}
+    default_model: ${NOVEL_GW5_MODEL}
+    reasoning_field: reasoning_content
+    thinking_style: effort
+    thinking_levels: {"off": low, "on": high}
+    context_window: 128000
+    max_tokens: 8192
+
 # 检索源 —— 与模型网关并列的一类 provider。加一家 = 加一段 YAML。
 # 写作时自动用于世界观/人物/剧情/正文的背景落地，不需要单独触发。
 search:
@@ -61,10 +73,11 @@ search:
       timeout: 20
 
 # 任务 -> 网关 的分层调度。创作类关思考（实测开思考挤爆 token 且不提质）
+# 本轮对照实验: 全流程开思考(档位型网关下 thinking=true 映射为 high)
 profiles:
-  planning:   {gateway: gw4, thinking: false, temperature: 0.80}
-  drafting:   {gateway: gw4, thinking: false, temperature: 0.92}
-  polishing:  {gateway: gw4, thinking: false, temperature: 0.85}
-  judging:    {gateway: gw4, thinking: true,  temperature: 0.30}
+  planning:   {gateway: gw5, thinking: true, temperature: 0.80}
+  drafting:   {gateway: gw5, thinking: true, temperature: 0.92}
+  polishing:  {gateway: gw5, thinking: true, temperature: 0.85}
+  judging:    {gateway: gw5, thinking: true, temperature: 0.30}
 
 default_profile: drafting
