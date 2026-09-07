@@ -962,7 +962,7 @@ def audit_api():
     return jsonify(audit(b.get("text", ""), b.get("blacklist"), int(b.get("target_words") or 0)))
 
 
-if __name__ == "__main__":
+def main() -> None:
     port = int(os.environ.get("NOVEL_PORT", 60001))
     print(f"→ http://127.0.0.1:{port}/   网关 {len(registry.gateways)} 个 / "
           f"类型 {len(registry.types)} 种 / 题材 {len(registry.genres)} 个")
@@ -970,6 +970,20 @@ if __name__ == "__main__":
     # Web 服务却没有 —— 改完代码不手动重启，界面就一直显示旧数据/旧页面，
     # 实测新建的项目在侧边栏里死活不出现，查了半天是服务跑的旧代码。
     # reloader 只看 server/ 与 web/，不看 projects/（书稿一直在变，会疯狂重启）。
+    # 自动重载遇到语法错误会直接退出, 服务从此不再起来 —— 实测改坏
+    # retrieval.py 之后 web 服务静默死掉, 过了一个多小时才被发现。
+    # 用一个看门脚本兜住: 进程退出就重启, 语法错误改回来后自动恢复。
+    if os.environ.get("NOVEL_SUPERVISED") != "1":
+        import subprocess
+        env = dict(os.environ, NOVEL_SUPERVISED="1")
+        while True:
+            code = subprocess.call([sys.executable, __file__], env=env)
+            if code == 0:
+                break
+            print(f"!! 服务退出（码 {code}），3 秒后重启", flush=True)
+            time.sleep(3)
+        return
+
     watch = [str(p) for p in (ROOT / "server").rglob("*.py")]
     watch += [str(p) for p in (ROOT / "web").rglob("*.js")]
     watch += [str(p) for p in (ROOT / "web").rglob("*.css")]
@@ -977,3 +991,7 @@ if __name__ == "__main__":
     app.run(host="0.0.0.0", port=port, threaded=True, debug=False,
             use_reloader=os.environ.get("NOVEL_NO_RELOAD") != "1",
             extra_files=watch)
+
+
+if __name__ == "__main__":
+    main()

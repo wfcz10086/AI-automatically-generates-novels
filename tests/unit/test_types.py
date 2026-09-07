@@ -420,3 +420,17 @@ def test_three_stage_flow_exists():
     for k in ("节奏", "伏笔", "重复", "人物", "接缝", "兑现"):
         assert k in rv, f"审阅漏了「{k}」这一项"
     assert "outline_review.md" in rv
+
+
+def test_web_service_survives_syntax_errors():
+    """自动重载遇到语法错误不能让服务永久死掉。
+
+    实测：改坏 retrieval.py 之后 web 服务静默退出，一个多小时后才被发现
+    ——「网页打不开」的原因是我改代码写坏了，而不是别的。
+    看门进程兜住：子进程非零退出就重启，语法改回来后自动恢复。
+    """
+    import inspect
+    from server import app as A
+    src = inspect.getsource(A.main)
+    assert "NOVEL_SUPERVISED" in src, "缺少看门进程"
+    assert "重启" in src
