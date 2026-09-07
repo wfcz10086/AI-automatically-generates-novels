@@ -1578,10 +1578,11 @@ class Novelist:
                 return v
         return {}
 
-    # 细纲生成的输入预算：60k tokens ≈ 80000 字符。128k 窗口下留足输出与其他
-    # 区块的余量，同时把「模型能看见多少已排内容」拉到最大 —— 看得越全，
-    # 伏笔铺得越准、批与批的接缝越顺。
-    OUTLINE_INPUT_CHARS = 80000
+    # 细纲生成的输入预算。理论上 128k 窗口能塞 60k tokens，但**网关对单次
+    # 请求体有写入耐受上限** —— 实测排到第 160 章时已排细纲累积到 9.6 万字符，
+    # 连同总纲与卷一起发出去约 66k tok，连续 7 次 write operation timed out。
+    # 上下文装得下 ≠ 一次发得过去。留到 40k 字符（约 30k tok）稳定。
+    OUTLINE_INPUT_CHARS = 40000
 
     def outline_digest(self, before: int, full_span: int = 0,
                        limit: int = 0) -> str:

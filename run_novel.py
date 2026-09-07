@@ -84,7 +84,10 @@ def cmd_outline(a):
     stamp = _code_stamp()
     while True:
         co = p._load("chapter_outlines.json", {}) or {}
-        miss = [i for i in range(1, total + 1) if str(i) not in co]
+        # 太短的当没排 —— 实测有 5 章只排出 55-190 字（多半是那一批被截断了），
+        # 留着比缺着更糟：后面的批次会把它当成已排好的内容去接
+        miss = [i for i in range(1, total + 1)
+                if str(i) not in co or len(str(co.get(str(i), ""))) < 200]
         if not miss:
             break
         start = miss[0]
