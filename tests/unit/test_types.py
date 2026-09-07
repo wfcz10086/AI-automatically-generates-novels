@@ -389,9 +389,10 @@ def test_outline_digest_is_layered(tmp_path):
 
     nv = Novelist(Project(str(d)))
     # 预算充足时全部完整喂（上下文够大就不该压）
-    out = nv.outline_digest(61)
+    out = nv.outline_digest(61, limit=200000)
     assert "【最近各章（完整细纲" in out, "近的没有完整喂"
     assert out.count("—— 第") == 60, "预算够却没全给完整版"
+    assert "【更早各章（压缩" not in out, "预算够却还在压缩"
 
     # 预算收紧时才分层：近的完整、远的压成一行
     out2 = nv.outline_digest(61, limit=12000)
