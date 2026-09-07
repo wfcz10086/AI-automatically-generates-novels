@@ -446,8 +446,9 @@ def test_separators_do_not_leak_into_outlines():
     import inspect
     from server.orchestrator import Novelist
     dg = inspect.getsource(Novelist.outline_digest)
-    assert "—— 第" not in dg, "分隔符仍长得像正文内容"
-    assert "[[CH" in dg, "没换成明显是系统标记的形式"
+    code = "\n".join(l for l in dg.splitlines() if not l.strip().startswith("#"))
+    assert "—— 第" not in code, "分隔符仍长得像正文内容"
+    assert "[[CH" in code, "没换成明显是系统标记的形式"
     dirty = "[[CH12]]\n第12章 标题\n剧情1：内容\n###fenge"
     assert Novelist.clean_outline(dirty).startswith("第12章"), "没清掉标记"
     assert "###fenge" not in Novelist.clean_outline(dirty)
