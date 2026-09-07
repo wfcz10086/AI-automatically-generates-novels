@@ -191,3 +191,31 @@ def test_meta_blocks_are_stripped_from_body():
                  "\n\n【伏笔登记】\n1. 骨殖火漆",
                  "\n\n【字数统计】本章 2613 字"):
         assert clean(body + tail) == body, f"未清除：{tail[:20]}"
+
+
+def test_place_name_prefix_not_glued():
+    """地名前缀不能硬取两字。
+
+    「孟州」只有一个前缀字，`[一-鿿]{2}(?:州|县…)` 会把它匹配成「在孟州」
+    「去孟州」「回孟州」三个不同地名 —— 同一个地方自己跟自己抢主场，
+    实测硬生生报出「主场地点漂移」，全书体检白扣 9 分。
+    """
+    from server.evaluator import book_audit
+    chs = {i: f"他在孟州住下。第二日去孟州城南，傍晚回孟州。孟州的雨没停。第{i}章。"
+           for i in range(1, 6)}
+    r = book_audit(chs)
+    drift = [i for i in r["issues"] if i["type"] == "主场地点漂移"]
+    assert not drift, f"同一个地名被拆成多个：{drift}"
+
+
+def test_expand_loops_until_floor():
+    """扩写要扩到达标为止，不是只扩一轮。
+
+    实测第 19 章 1117 → 1727 字仍差 473 字照样落盘，19 章里 8 章卡在地板下 ——
+    模型对「缺 1400 字」的响应通常只补一半。
+    """
+    import inspect
+    from server.orchestrator import Novelist
+    src = inspect.getsource(Novelist.step_chapter)
+    assert "for round_ in (1, 2)" in src, "扩写没有多轮"
+    assert "这是第二轮扩写" in src, "第二轮没告诉模型上一轮为何不够"

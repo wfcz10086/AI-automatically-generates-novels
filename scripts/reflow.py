@@ -59,11 +59,27 @@ def main() -> int:
                 f"- 不要在正文末尾附任何状态更新、伏笔登记、字数统计\n"
                 f"禁用套话：{'、'.join(nv.blacklist()[:40])}\n"
                 f"直接输出扩写后的完整正文，无前言。\n\n{body}")
-        t2 = clean(call("polishing", grow, max_tokens=8192).text)
-        cn2 = len(re.findall(r"[一-鿿]", t2))
-        if not t2 or cn2 <= cn * 1.15:
-            print(f"        扩写无效（{cn2} 字），保留原稿")
+        # 扩到达标为止, 最多两轮 —— 一轮补不满是常态, 模型对「缺 1400 字」
+        # 的响应通常只补一半
+        body2, cn2 = body, cn
+        for round_ in (1, 2):
+            if cn2 >= floor:
+                break
+            g = grow.replace(f"只有 {cn} 字", f"只有 {cn2} 字").replace(
+                f"缺 {target - cn} 字", f"缺 {target - cn2} 字")
+            if round_ == 2:
+                g = (f"⚠️ 这是第二轮扩写，上一轮只补到 {cn2} 字仍不达标"
+                     f"（下限 {floor} 字），这次必须写够。\n" + g)
+            t2 = clean(call("polishing", g.replace(body, body2), max_tokens=8192).text)
+            n2 = len(re.findall(r"[一-鿿]", t2))
+            if not t2 or n2 <= cn2 * 1.05:
+                print(f"        第{round_}轮扩写无效（{n2} 字）")
+                break
+            body2, cn2 = t2, n2
+        if cn2 <= cn * 1.05:
+            print(f"        扩写无效，保留原稿 {cn} 字")
             continue
+        t2 = body2
         a = audit(t2, extra_blacklist=nv.hard_blacklist(), target_words=target,
                   check_modern=nv.anachronism_check())
         a["target_words"] = target

@@ -333,9 +333,20 @@ def book_audit(chapters: Dict[int, str], *, characters: List[str] | None = None,
 
     # 4 地名/主场漂移
     # 只统计行政区; 「西门府/王府」这类宅邸不算主场, 否则必然误报漂移
-    places = Counter(w for w in re.findall(r"([一-鿿]{2}(?:县|州|府|镇|村|城))", allt)
-                     if not re.search(r"(?:府|宅|邸)$", w) or w.endswith(("州府", "京府"))
-                     or w[-1] in "县镇村城")
+    # 地名前缀不能硬取两字: 「孟州」只有一个前缀字, [一-鿿]{2} 会把它匹配成
+    # 「在孟州」「去孟州」「回孟州」三个不同地名, 于是同一个地方自己跟自己抢主场。
+    # 先剥掉动词/介词前缀, 再统计。
+    _LEAD = re.compile(r"^(?:在|去|回|到|往|自|离|赴|从|经|至|入|出|抵|返)")
+    raw_places = re.findall(r"([一-鿿]{1,3}(?:县|州|府|镇|村|城))", allt)
+    places = Counter()
+    for w in raw_places:
+        w = _LEAD.sub("", w)
+        if len(w) < 2:
+            continue
+        if re.search(r"(?:府|宅|邸)$", w) and not w.endswith(("州府", "京府")) \
+                and w[-1] not in "县镇村城":
+            continue
+        places[w] += 1
     # 出现在大多数章节里的地名是「城市底色」(如书中城市名), 不参与主场竞争判定
     ch_count = len(chapters)
     def coverage(w):

@@ -1543,31 +1543,36 @@ class Novelist:
         cw = self.style.get("chapterWords")
         floor = (int(cw[0]) if isinstance(cw, (list, tuple)) and len(cw) == 2
                  else int(target * 0.85))
-        short = a["stats"]["cn"] < floor
-        if short and text:
-            need = target - a["stats"]["cn"]  # 按目标补, 不是补到地板
-            grow = (f"下面这一章只有 {a['stats']['cn']} 字，目标 {target} 字，"
-                    f"缺 {need} 字。\n"
+        # 扩到达标为止, 最多两轮。原来只扩一轮就收工, 实测第 19 章
+        # 1117 → 1727 字仍差 473 字照样落盘 —— 19 章里有 8 章卡在地板下。
+        # 一轮补不满是常态: 模型对「缺 1400 字」的响应通常只补一半。
+        for round_ in (1, 2):
+            was = a["stats"]["cn"]
+            if was >= floor or not text:
+                break
+            grow = (f"下面这一章只有 {was} 字，目标 {target} 字，缺 {target - was} 字。\n"
                     f"请在**不改变任何已有情节与结局**的前提下扩写到 {target} 字左右：\n"
                     f"- 把一笔带过的关键场景演出来（对话、动作、交锋的来回）\n"
                     f"- 给已出场的配角补上反应与小动作\n"
                     f"- 补足做局/算账/谈判的具体过程，让读者跟得上推理\n"
                     f"- 不要加新人物、新地点、新情节线，不要写心理总结与环境铺陈\n"
-                    f"禁用套话：{'、'.join(self.blacklist()[:40])}\n"
+                    f"- 不要在正文末尾附任何状态更新、伏笔登记、字数统计\n"
+                    + (f"⚠️ 这是第二轮扩写，上一轮只补到 {was} 字仍不达标（下限 {floor} 字），"
+                       f"这次必须写够，把每一场戏都完整演出来。\n" if round_ == 2 else "")
+                    + f"禁用套话：{'、'.join(self.blacklist()[:40])}\n"
                     f"直接输出扩写后的完整正文，无前言。\n\n{text}")
             r3 = call("polishing", grow, on_delta, max_tokens=8192)
             t3 = clean(r3.text)
             cn3 = len(re.findall(r"[一-鿿]", t3))
-            was = a["stats"]["cn"]
-            if t3 and cn3 > was * 1.15:
-                a3 = audit(t3, extra_blacklist=self.hard_blacklist(),
-                           target_words=target,
-                           check_modern=self.anachronism_check())
-                text, a = t3, a3
-                a["expanded"] = True
-                self._log(f"第{n}章偏短，已扩写 {was} → {cn3} 字")
-            else:
-                self._log(f"第{n}章扩写无效，保留原稿 {a['stats']['cn']} 字")
+            if not t3 or cn3 <= was * 1.05:
+                self._log(f"第{n}章第{round_}轮扩写无效（{cn3} 字），保留 {was} 字")
+                break
+            a = audit(t3, extra_blacklist=self.hard_blacklist(),
+                      target_words=target, check_modern=self.anachronism_check())
+            text = t3
+            a["expanded"] = True
+            tag = "达标" if cn3 >= floor else f"仍差 {floor - cn3} 字"
+            self._log(f"第{n}章扩写第{round_}轮 {was} → {cn3} 字（{tag}）")
 
         # 不合格自动重写一次 (只做一轮, 避免无限循环烧钱)
         if a["score"] < retry_on_low and text:
