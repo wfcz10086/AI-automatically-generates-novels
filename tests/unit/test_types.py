@@ -219,3 +219,51 @@ def test_expand_loops_until_floor():
     src = inspect.getsource(Novelist.step_chapter)
     assert "for round_ in (1, 2)" in src, "扩写没有多轮"
     assert "这是第二轮扩写" in src, "第二轮没告诉模型上一轮为何不够"
+
+
+def test_hygiene_detectors():
+    """成稿卫生：英文残留 / 正文 markdown 标题 / 引号混用。
+
+    全是外部评审替我们抓到的 —— 框架此前一条都没检测：
+    「三日前差两百，三日后未必。husband，纸上算的账…」（该写「夫君」）、
+    「官课缴的是足数，没有使一点 Discount 的小钱」、
+    第 18 章正文里冒出 `# 新官上任，先看账` 一级标题。
+    """
+    from server.evaluator import audit
+    base = "他把算盘推开。\n\n" * 40
+    types = lambda t: [i["type"] for i in audit(t, target_words=600)["issues"]]
+    assert "英文残留" in types(base + "husband，纸上算的账落不到银子上。")
+    assert "正文出现markdown标题" in types("# 新官上任，先看账\n\n" + base)
+    assert "英文残留" not in types(base + "他看了看 CPU 的参数。")   # 专有名词豁免
+
+
+def test_quote_style_checked_across_chapters():
+    """整章换引号风格，单章内不混用，只能靠跨章比对。
+
+    实测第 20-21 章整章用「」，前 19 章全是 ""，读者一翻就出戏。
+    """
+    from server.evaluator import book_audit
+    curly = {i: "“他说。”" * 8 + f"第{i}章正文。" for i in range(1, 6)}
+    curly[6] = "「他说。」" * 8 + "第6章正文。"
+    r = book_audit(curly)
+    hits = [i for i in r["issues"] if i["type"] == "引号风格不统一"]
+    assert hits, "整章换引号风格没被抓到"
+    assert "6" in str(hits[0]["detail"])
+
+
+def test_signature_and_stale_cast_guards():
+    """人设标志动作限频 + 出场过又断线的角色。
+
+    「手指虚拨」是主角算账的记忆点，末章还要对账回响，所以不能进禁用表；
+    但 20 章 40 次（7.8/万字）每次决策都用，节奏就平了 —— 只限频不硬禁。
+    潘金莲第 8 章被买回、第 9 章还在炉边，之后十几章一句没提，而主角
+    对她欠着一笔良心债，人物就悬在半空。
+    """
+    import inspect
+    from server.orchestrator import Novelist
+    assert "def signature_guard" in inspect.getsource(Novelist)
+    assert "def stale_cast" in inspect.getsource(Novelist)
+    sg = inspect.getsource(Novelist.signature_guard)
+    assert "不是禁用词" in sg, "标志动作应限频而非硬禁"
+    cons = inspect.getsource(Novelist.build_context)
+    assert "出场过又断线的角色" in cons and "signature_guard()" in cons

@@ -948,6 +948,54 @@ class Novelist:
                 if c["name"] and c["name"] not in seen]
 
     # ---------- 口癖抑制 ----------
+    def stale_cast(self, n: int, gap: int = 8) -> List[str]:
+        """出场过、但已连续 gap 章没再出现的角色。
+
+        与 idle_cast()（档案里有、从未出现）不同：这些是读者认识的人，
+        突然消失比从未登场更伤 —— 尤其主角对他们还有未了的情感债。
+        """
+        done = sorted(self.p.state.get("done", []))
+        if len(done) < gap + 2:
+            return []
+        recent = "".join(self.p.chapter(i) for i in done[-gap:])
+        earlier = "".join(self.p.chapter(i) for i in done[:-gap])
+        out = []
+        for c in self.roster()[1:]:
+            nm = c["name"]
+            if not nm or nm in recent:
+                continue
+            hits = earlier.count(nm)
+            if hits >= 5:                      # 出场够多才算「读者记得」
+                out.append(f"{nm}（此前出现 {hits} 次，已 {gap} 章未提）")
+        return out[:5]
+
+    def signature_guard(self) -> str:
+        """本书自己长出来的高频动作 —— 人设标志用滥就成了口癖。
+
+        「手指虚拨」是主角算账的招牌动作, 也是要在末章对账时回响的记忆点,
+        所以不能进禁用表; 但实测 20 章里出现 40 次(7.8/万字), 每次决策都用,
+        节奏就平了。这里只做提醒与限频, 不做硬禁。
+        """
+        done = sorted(self.p.state.get("done", []))[-12:]
+        if len(done) < 4:
+            return ""
+        txt = "".join(self.p.chapter(i) for i in done)
+        cn = max(1, len(re.findall(r"[一-鿿]", txt)))
+        hot = []
+        for m, name in ((r"[手指]{1,2}(?:在[^，。]{0,8})?虚拨", "手指虚拨"),
+                        (r"眼皮(?:又)?抬了一下", "眼皮抬一下"),
+                        (r"嘴角(?:勾起|扯出|挑了)", "嘴角动作"),
+                        (r"喉结(?:滚|动)了", "喉结滚动")):
+            c = len(re.findall(m, txt))
+            if c / (cn / 10000) > 4:
+                hot.append(f"{name}（近{len(done)}章 {c} 次）")
+        if not hot:
+            return ""
+        return ("【标志动作已过密】" + "；".join(hot)
+                + " —— 这些是人设记忆点不是禁用词，但本章最多用 1 次，"
+                  "其余场合换同义表达（指头在袖里数 / 心里排了个次序 / "
+                  "心里过了一遍账 / 眼神在账页上顿住）。")
+
     def tic_guard(self, n: Optional[int] = None) -> str:
         """把已写章节的问题反馈给下一章 —— 全书 + 邻章窗口双重视角。
 
@@ -1072,6 +1120,16 @@ class Novelist:
         loose = self.basis_field("可以放开")
         if loose:
             cons.append("【本书可以放开的地方】" + loose.replace("\n", " ")[:200])
+        # 数字锁单独成块。canon 里其实记了「蒋家报价一千二百贯」, 但它混在 80 条
+        # 散文体事实里, 模型扫过去不会逐条比对数字。数字要单拎出来、短、可扫。
+        tm = self.p.state.get("terms", {}) or {}
+        if tm:
+            hot_tm = sorted(tm.items(), key=lambda kv: -kv[1].get("at", 0))[:12]
+            cons.append("【数字锁·已定死的数字，不得改口】"
+                        + "；".join(f"{k}={v['value']}（第{v['at']}章定）"
+                                   for k, v in hot_tm)
+                        + "。若剧情确需改动，必须在正文里明写「改标/重议/毁约」"
+                        "并交代原因，不得静默换个数字。")
         spec = self.ledger_spec()
         pw = self.p.state.get("power", {}) or {}
         if pw:
@@ -1120,8 +1178,19 @@ class Novelist:
         tg = self.tic_guard()
         if tg:
             cons.append("【口癖抑制】" + tg)
+        sg = self.signature_guard()
+        if sg:
+            cons.append(sg)
         cons.append("【配角配额】本章除主角外至少让 2 个配角有独立台词与动作，"
                     "配角不能只当背景板；不得给已知人物随意安排与其身份不符的官职。")
+        # 登场过又长期消失的角色 —— 不是「从未出现」而是「出现完就没了」。
+        # 实测潘金莲第 8 章被买回、第 9 章还在炉边坐着, 之后十几章一句没提,
+        # 而主角明明欠着她一笔良心债（「义字那一档，他拨了三回」）, 人物就悬在半空。
+        stale = self.stale_cast(n)
+        if stale:
+            cons.append("【出场过又断线的角色】" + "；".join(stale)
+                        + " —— 他们出场过就消失了，读者还记得。"
+                          "不必强行安排大戏，但要给一句状态交代（在做什么、什么处境）。")
         bl = self.blacklist()
         # 两类区别对待: 穿帮词是硬禁, 用滥的表达是限频 —— 一律硬禁会误伤正常写作
         hard = [w for w in bl if w in set(REAL_DYNASTIES) | set(
@@ -2193,6 +2262,13 @@ class Novelist:
             f"继位、失势都算；情绪波动、临时处境不算。没有就写「无」）\n"
             # 组织架构同理: 门派/军团/商号/朝堂派系是推动剧情的实体, 一直没人记账,
             # 于是同一个门派的掌门、堂口、实力在不同章节各写各的。
+            # 数字条款是最容易前后打架的东西: 竞标底价从第 10 章的八百贯，
+            # 到第 14 章变一千、第 15 章变五百 —— 因为「底价」既不是不可逆事实
+            # （不是死亡升迁背叛），也不是主角方的收支，三本台账全接不住。
+            f"数字约定：（本章**定下或引用**的规则性数字，格式 事项=数值，分号分隔。"
+            f"包括：竞标底价/标的价、对手报价、合同期限与分成比例、利率、违约金、"
+            f"约定的交付日期与数量、悬赏金额。**只记被当成规则来遵守的数字**，"
+            f"不记随口提到的价钱。没有就写「无」）\n"
             f"势力变动：（本章涉及的组织/门派/军团/商号/朝堂派系发生了什么结构性"
             f"变化，格式 势力名=当前掌事者/规模或实力/立场，分号分隔。"
             f"新建、易主、合并、覆灭、结盟、反目都算。没有就写「无」）\n\n"
@@ -2245,6 +2321,18 @@ class Novelist:
             if name and val:
                 st.setdefault("identity", {})[name] = {"at": n, "now": val}
 
+        # 数字条款台账: 一旦定下就不许改口, 除非正文明写「改标/重议/毁约」
+        terms = st.setdefault("terms", {})
+        for item in [x.strip() for x in
+                     re.split(r"[;；]", field("数字约定")) if "=" in x]:
+            k, _, v = item.partition("=")
+            k, v = k.strip()[:24], v.strip()[:60]
+            if k and v:
+                old_v = terms.get(k)
+                rec = {"at": n, "value": v}
+                if old_v and old_v.get("value") != v:
+                    rec["was"] = f"第{old_v['at']}章={old_v['value']}"
+                terms[k] = rec
         orgs = st.setdefault("orgs", {})
         for item in [x.strip() for x in re.split(r"[;；]", field("势力变动")) if "=" in x]:
             name, _, val = item.partition("=")

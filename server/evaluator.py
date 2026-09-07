@@ -181,6 +181,30 @@ def audit(text: str, extra_blacklist: List[str] | None = None,
         issues.append({"level": "low", "type": "动作修饰连挂",
                        "count": multi})
 
+    # 3.49 成稿卫生 —— 这几类是「一眼就看出来的低级错」, 读者比任何指标都敏感,
+    # 而框架此前一条都没检测。全是外部评审替我们抓到的。
+    #
+    # (a) 英文残留: 模型偶尔把「夫君」写成 husband、「折扣」写成 Discount。
+    #     中文小说正文里不该有成串英文(专有名词如 CPU/DNA 另说, 但历史文里没有)。
+    en = [w for w in re.findall(r"[A-Za-z]{3,}", text)
+          if w.lower() not in ("cpu", "dna", "gdp", "app", "kpi", "ceo", "cto")]
+    if en:
+        issues.append({"level": "high", "type": "英文残留",
+                       "count": len(en), "samples": list(dict.fromkeys(en))[:5]})
+
+    # (b) 正文里的 markdown 标题: 章节正文是纯文本, 出现 # 标题就是格式漏出来了
+    md_head = re.findall(r"^#{1,6}\s+\S.*$", text, re.M)
+    if md_head:
+        issues.append({"level": "mid", "type": "正文出现markdown标题",
+                       "samples": [h[:24] for h in md_head[:3]]})
+
+    # (c) 引号风格混用: 同一本书要么全用弯引号, 要么全用直角引号。
+    #     实测第 20-21 章突然整章换成「」, 前 19 章都是 “”, 像从别处粘来的。
+    n_curly, n_corner = text.count(chr(0x201C)), text.count(chr(0x300C))
+    if n_curly and n_corner and min(n_curly, n_corner) > max(n_curly, n_corner) * 0.15:
+        issues.append({"level": "low", "type": "引号风格混用",
+                       "detail": f"弯引号 {n_curly} / 直角引号 {n_corner}"})
+
     # 3.5 现代词泄漏 (历史/架空题材)
     if check_modern:
         mod = {w: text.count(w) for w in MODERN_TERMS if w in text}
@@ -330,6 +354,22 @@ def book_audit(chapters: Dict[int, str], *, characters: List[str] | None = None,
         if never:
             issues.append({"level": "low", "type": "角色档案未落地",
                            "detail": f"档案里有但正文从未出现: {'、'.join(never[:10])}"})
+
+    # 3.9 引号风格跨章不统一 —— 单章内不混用也可能整章换风格。
+    # 实测第 20-21 章整章用「」, 前 19 章全是 “”, 读者一翻就出戏。
+    styles = {}
+    for n, t in chapters.items():
+        c, k = t.count(chr(0x201C)), t.count(chr(0x300C))
+        if max(c, k) >= 5:
+            styles[n] = "curly" if c > k else "corner"
+    if len(set(styles.values())) > 1:
+        from collections import Counter as _C
+        tally = _C(styles.values())
+        major, _ = tally.most_common(1)[0]
+        odd = sorted(n for n, v in styles.items() if v != major)
+        issues.append({"level": "mid", "type": "引号风格不统一",
+                       "detail": f"全书主用{'弯引号' if major == 'curly' else '直角引号'}，"
+                                 f"这些章不一样：{odd[:8]}"})
 
     # 4 地名/主场漂移
     # 只统计行政区; 「西门府/王府」这类宅邸不算主场, 否则必然误报漂移

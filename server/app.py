@@ -381,6 +381,7 @@ LEDGER_KINDS = {
     "canon":    "不可逆事实",
     "identity": "身份变更",
     "orgs":     "势力架构",
+    "terms":    "数字条款",
     "roles":    "角色状态",
     "power":    "实力与地位",
     "ledger":   "资源账",
@@ -442,7 +443,8 @@ def project_ledgers(slug: str):
                 p.write("canon.json", json.dumps(cn, ensure_ascii=False, indent=2))
                 return jsonify({"ok": True, "left": len(cn)})
             return jsonify({"error": "out of range"}), 404
-        if kind in ("identity", "orgs", "roles", "power", "ledger", "timeline"):
+        if kind in ("identity", "orgs", "roles", "power", "ledger",
+                    "terms", "timeline"):
             d = p.state.get(kind) or {}
             if key in d:
                 d.pop(key)
@@ -474,6 +476,9 @@ def project_ledgers(slug: str):
                      for k, v in (st.get("identity") or {}).items()],
         "orgs": [{"key": k, "chapter": v.get("at"), "text": v.get("state")}
                  for k, v in (st.get("orgs") or {}).items()],
+        "terms": [{"key": k, "chapter": v.get("at"),
+                   "text": v.get("value") + (f"　⚠ 曾={v['was']}" if v.get("was") else "")}
+                  for k, v in (st.get("terms") or {}).items()],
         "roles": [{"key": k, "chapter": v.get("at"), "text": v.get("state")}
                   for k, v in (st.get("roles") or {}).items()],
         "power": [{"key": k, "chapter": v.get("at"), "text": v.get("state")}
