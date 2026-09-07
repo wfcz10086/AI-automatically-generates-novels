@@ -1727,9 +1727,16 @@ class Novelist:
         if cur:
             segs.append(cur)
 
-        issues, strong = [], []
+        part = self.p._load("outline_review.partial.json", {}) or {}
+        issues = list(part.get("issues") or [])
+        strong = list(part.get("strong") or [])
+        done_upto = int(part.get("done_upto") or 0)
+        if done_upto:
+            self._log(f"细纲审阅：接上次进度，已审到第 {done_upto} 章")
         for i, seg in enumerate(segs, 1):
             lo, hi = seg[0][0], seg[-1][0]
+            if hi <= done_upto:                 # 这一段上次已审过
+                continue
             body = "\n\n".join(t for _, t in seg)
             p = (f"你是网文主编，在动笔之前审读《{self.p.meta.get('title','')}》的细纲。\n\n"
                  f"【分卷】\n{vol_map}\n\n【总纲】\n{outline}\n\n"
@@ -1744,6 +1751,11 @@ class Novelist:
             issues += got
             strong += d.get("strong") or []
             self._log(f"细纲审阅 第{lo}-{hi}章 → {len(got)} 条")
+            # 每段落盘一次。分段跑十几分钟，中途超时或被停就全丢了 ——
+            # 实测跑到 5/6 段报出 25 条问题，进程一停，报告一个字都没留下。
+            self.p.write("outline_review.partial.json", json.dumps(
+                {"done_upto": hi, "issues": issues, "strong": strong},
+                ensure_ascii=False, indent=2))
 
         # 汇总一轮: 去重、剔除误报、补上跨段才看得见的问题
         verdict = ""
@@ -1786,6 +1798,7 @@ class Novelist:
         else:
             lines.append("## 未发现结构性问题")
         self.p.write("outline_review.md", "\n".join(lines))
+        (self.p.dir / "outline_review.partial.json").unlink(missing_ok=True)
         self._log(f"细纲审阅完成 {len(keys)} 章 → {len(issues)} 条问题")
         return {"verdict": verdict, "issues": issues, "strong": strong}
 
