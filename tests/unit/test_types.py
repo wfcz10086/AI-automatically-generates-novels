@@ -267,3 +267,63 @@ def test_signature_and_stale_cast_guards():
     assert "不是禁用词" in sg, "标志动作应限频而非硬禁"
     cons = inspect.getsource(Novelist.build_context)
     assert "出场过又断线的角色" in cons and "signature_guard()" in cons
+
+
+def test_project_can_be_archived_and_deleted():
+    """项目要能删。之前完全没有删除逻辑，只能手动 rm -rf。
+
+    默认归档（改名不删稿），彻底删除要显式传 hard；且 chapters 目录
+    15 分钟内动过就拒绝 —— 长跑可能正在写它。
+    """
+    import inspect
+    from server import app as A
+    src = inspect.getsource(A.project_delete)
+    assert "_archive_" in src, "缺少归档（默认不该真删）"
+    assert 'b.get("hard")' in src, "彻底删除没有独立开关"
+    assert "900" in src, "没有防误删正在写的书"
+
+
+def test_naming_step_exists():
+    """书名与简介是平台上决定点击率的东西，要能生成。
+
+    「西门庆的生意经」这种名字信息量够但太素 —— 读者扫过书城列表时，
+    三秒内要知道「谁 + 逆什么境 + 爽在哪」。
+    """
+    import inspect
+    from server.orchestrator import Novelist
+    src = inspect.getsource(Novelist.step_naming)
+    assert "书名候选" in src and "平台简介" in src and "标签" in src
+    assert "8 字以内" in src, "没有长度约束，会起出长名字"
+    assert "重生之XX的XX人生" in src, "没有禁掉烂大街句式"
+
+
+def test_long_run_does_not_clobber_meta_edits(tmp_path):
+    """长跑进程不能把界面上的设定改动冲掉。
+
+    长跑持有 meta 的内存副本几小时，期间用户改书名/改设定，下一次 save()
+    就整份覆盖回去 —— 而且悄无声息。实测改完书名 30 秒后又变回旧名，
+    tagline 直接消失。这是数据丢失级的 bug。
+    """
+    import json as _j
+    from server.orchestrator import Project
+
+    d = tmp_path / "书"
+    (d / "chapters").mkdir(parents=True)
+    (d / "project.json").write_text(_j.dumps(
+        {"title": "旧名", "type_id": "novel", "genre_id": "lishi",
+         "style_id": "qidian-lishi", "target_chapters": 10,
+         "target_words": 30000, "fields": {}}, ensure_ascii=False), encoding="utf-8")
+    (d / "state.json").write_text('{"done": [], "current": 0}', encoding="utf-8")
+
+    runner = Project(str(d))              # 「长跑进程」持有旧 meta
+    disk = _j.loads((d / "project.json").read_text(encoding="utf-8"))
+    disk["title"] = "新名"                # 「界面」改名
+    disk["tagline"] = "一句话简介"
+    (d / "project.json").write_text(_j.dumps(disk, ensure_ascii=False), encoding="utf-8")
+
+    runner.state["current"] = 1
+    runner.save()                          # 长跑写状态
+
+    after = _j.loads((d / "project.json").read_text(encoding="utf-8"))
+    assert after["title"] == "新名", "长跑把书名冲回旧值了"
+    assert after.get("tagline") == "一句话简介", "长跑把新增字段冲掉了"

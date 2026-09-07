@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import secrets
+import shutil
 from urllib.parse import quote
 import re
 import sys
@@ -246,7 +247,9 @@ def project_detail(slug: str):
         # 就会各踩各的坑（E2E 就在这上面栽过）—— 解析只在引擎里做一次。
         "roster": [c["name"] for c in Novelist(p).roster()],
         "basis": p.read("basis.md"),
+        "naming": p.read("naming.md"),
         "basis": p.read("basis.md"),
+        "naming": p.read("naming.md"),
         "world_bible": p.read("world_bible.md"),
         "characters": p.read("characters.md"),
         "outline": p.read("outline.md"),
@@ -341,6 +344,34 @@ def save_chapter_outline(slug: str, n: int):
     return jsonify({"ok": True, "n": n})
 
 
+@app.route("/api/projects/<slug>", methods=["DELETE"])
+def project_delete(slug: str):
+    """删除或归档一个项目。
+
+    默认**归档**（改名加 _archive_ 前缀），不是真删 —— 几十万字的稿子误删
+    没有后悔药，而且长跑可能正在写它。真删要显式传 hard=true，且会先确认
+    没有进程在写（chapters 目录 15 分钟内动过就拒绝）。
+    """
+    p = Project(slug)
+    if not p.dir.exists():
+        return jsonify({"error": "not found"}), 404
+    b = request.json or {}
+    cdir = p.dir / "chapters"
+    if cdir.exists() and (time.time() - cdir.stat().st_mtime) < 900:
+        return jsonify({"error": "这本书 15 分钟内还在写，先停掉长跑再删",
+                        "hint": "bash scripts/stop_run.sh"}), 409
+    if b.get("hard"):
+        shutil.rmtree(p.dir)
+        return jsonify({"ok": True, "action": "deleted", "slug": slug})
+    dst = p.dir.parent / f"_archive_{slug}"
+    i = 2
+    while dst.exists():
+        dst = p.dir.parent / f"_archive_{slug}_{i}"
+        i += 1
+    p.dir.rename(dst)
+    return jsonify({"ok": True, "action": "archived", "slug": dst.name})
+
+
 @app.route("/api/projects/<slug>/prompts", methods=["GET", "PUT"])
 def project_prompts(slug: str):
     """项目级提示词：查看当前生效模板 / 保存覆盖。"""
@@ -411,6 +442,8 @@ def project_pulse(slug: str):
     return jsonify({
         "done": len(done),
         "current": st.get("current", 0),
+        # 书名也要回传: 改了书名后已打开的页面标题还是旧的, 心跳只比章数比不出来
+        "title": p.meta.get("title", ""),
         "words": p.total_words,
         "updated_at": ts,
         # 窗口要比「写一章的耗时」宽裕: 一章含评审/自愈要 5-8 分钟, 300 秒会在
@@ -812,7 +845,9 @@ def step(slug: str):
         try:
             nv = Novelist(p)
             emit = lambda t: q.append(t)
-            if what == "basis":
+            if what == "naming":
+                nv.step_naming(emit)
+            elif what == "basis":
                 emit(nv.basis_card(force=True))
             elif what == "world_bible":
                 nv.step_world_bible(emit)

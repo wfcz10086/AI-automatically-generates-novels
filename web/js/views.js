@@ -213,6 +213,11 @@ const TabRender = {
       <div class="card"><div class="card-head"><div class="card-title">运行日志</div>
         <div class="card-actions"><button class="btn btn-sm btn-ghost" id="a-refresh">刷新</button></div></div>
         <div class="mono-log" id="log">${esc((p.state.log||[]).slice(-20).join('\n'))||'（暂无）'}</div></div>
+      <div class="card"><div class="card-head"><div class="card-title">项目管理</div>
+        <div class="card-sub">归档只是改名收起来，稿子还在磁盘上；彻底删除不可恢复</div>
+        <div class="card-actions">
+          <button class="btn btn-sm" id="a-archive">归档</button>
+          <button class="btn btn-sm btn-danger" id="a-drop">彻底删除</button></div></div></div>
       <div class="card"><div class="card-head"><div class="card-title">项目看板</div></div>
         <div class="mono-log" style="max-height:320px">${esc(p.board)}</div></div>`;
   },
@@ -243,6 +248,8 @@ const TabRender = {
               <button class="btn btn-sm btn-primary" id="kb-go">检索入库</button></div>
             <div id="kb-facts" class="scroll-y" style="max-height:360px;margin-top:8px">
               加载中…</div></details></div></div>
+      ${editableDoc('naming','书名 · 简介 · 标签', p.naming,
+        '<button class="btn btn-sm" id="s-naming">重新生成</button>')}
       ${editableDoc('basis','世界基底卡 · 本书红线', p.basis,
         '<button class="btn btn-sm" id="s-basis">重新判定</button>')}
       ${editableDoc('world_bible','世界观圣经', p.world_bible,
@@ -371,7 +378,27 @@ const TabRender = {
 };
 
 const TabMount = {
-  overview() { const r=$('#a-refresh'); if(r) r.onclick = () => openProject(S.cur.slug); },
+  overview() {
+    const r = $('#a-refresh'); if (r) r.onclick = () => openProject(S.cur.slug);
+    const slug = S.cur.slug, title = S.cur.meta.title || slug;
+    const drop = async (hard) => {
+      // 几十万字误删没有后悔药, 所以彻底删除要把书名打出来
+      if (hard) {
+        const typed = prompt(`彻底删除《${title}》，${(S.cur.state.done||[]).length} 章将永久消失。\n`
+                             + `确认请输入书名：`);
+        if (typed !== title) return toast('书名不符，已取消', 'err');
+      } else if (!confirm(`归档《${title}》？稿子还在磁盘上，随时可以找回。`)) return;
+      const res = await fetch(`/api/projects/${encodeURIComponent(slug)}`,
+        {method:'DELETE', headers:{'Content-Type':'application/json'},
+         body: JSON.stringify({hard})});
+      const j = await res.json();
+      if (!res.ok) return toast(j.error || '失败', 'err');
+      toast(j.action === 'deleted' ? '已彻底删除' : `已归档为 ${j.slug}`, 'ok');
+      S.cur = null; stopPulse(); go('dashboard'); refreshSidebar();
+    };
+    const ab = $('#a-archive'); if (ab) ab.onclick = () => drop(false);
+    const db = $('#a-drop');   if (db) db.onclick = () => drop(true);
+  },
   setup() {
     bindDocSaves();
     bindMenus();
@@ -444,6 +471,8 @@ const TabMount = {
     };
     const bb = $('#s-basis');
     if (bb) bb.onclick = () => runStep('basis', null, '重新判定世界基底');
+    const nb = $('#s-naming');
+    if (nb) nb.onclick = () => runStep('naming', null, '重新起名与写简介');
     $('#s-fields').onclick = async () => {
       const meta = S.cur.meta;
       meta.fields = {...(meta.fields||{}), premise: $('#e-premise').value,
@@ -836,6 +865,13 @@ function startPulse() {
       ? `<span class="badge badge-ok">写作中</span>
          <span class="card-sub">${p.done} 章 · ${fmtNum(p.words)} 字</span>`
       : `<span class="card-sub">${p.done} 章 · ${fmtNum(p.words)} 字</span>`;
+    // 书名改了也要重渲染 —— 只比章数的话，改完书名页面标题一直是旧的
+    if (p.title && S.cur.meta && p.title !== S.cur.meta.title) {
+      S.pulseSeen = p.done;
+      await refreshSidebar();
+      await openProject(S.cur.slug);
+      return;
+    }
     if (S.pulseSeen === null) { S.pulseSeen = p.done; return; }
     if (p.done !== S.pulseSeen) {               // 出新章了才重渲染, 免得白刷
       S.pulseSeen = p.done;

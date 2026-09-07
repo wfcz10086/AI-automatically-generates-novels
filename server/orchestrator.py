@@ -132,11 +132,41 @@ class Project:
                 return default
         return default
 
+    # 长跑进程会持有 meta 的内存副本几小时。期间用户在界面上改书名、改设定、
+    # 改提示词覆盖 —— 下一次 save() 就把这些改动整份冲掉, 而且悄无声息。
+    # 实测: 改完书名 30 秒后又变回旧名, tagline 直接消失。
+    # 所以 meta 落盘前先合并磁盘上的最新版本, 只用内存值覆盖本进程真正改过的键。
+    _META_OWNED = {"anchor", "prompt_overrides", "era", "history_mode"}
+
     def save(self):
-        (self.dir / "project.json").write_text(
-            json.dumps(self.meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        f = self.dir / "project.json"
+        merged = dict(self.meta)
+        try:
+            disk = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            disk = {}
+        if disk:
+            for k, v in disk.items():
+                # 磁盘上有、而本进程没主动改过的键, 以磁盘为准
+                if k not in self._META_OWNED and self.meta.get(k) != v:
+                    if k not in self._meta_touched:
+                        merged[k] = v
+            for k in disk:
+                if k not in merged and k not in self._meta_touched:
+                    merged[k] = disk[k]
+        self.meta = merged
+        f.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
         (self.dir / "state.json").write_text(
             json.dumps(self.state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    @property
+    def _meta_touched(self) -> set:
+        """本进程主动改过的 meta 键 —— 只有这些才该覆盖磁盘。"""
+        return getattr(self, "_touched", set()) | self._META_OWNED
+
+    def touch_meta(self, *keys: str) -> None:
+        """声明本进程要改这些 meta 键（保存时以内存值为准）。"""
+        self._touched = getattr(self, "_touched", set()) | set(keys)
 
     def read(self, name: str) -> str:
         p = self.dir / name
@@ -1362,6 +1392,48 @@ class Novelist:
         return f"\n\n【现实参考资料 —— {note}】\n" + bg[:limit]
 
     # ---------- 步骤 ----------
+    def step_naming(self, on_delta=None) -> Dict[str, Any]:
+        """起书名与写简介 —— 平台上决定点击率的两样东西。
+
+        「西门庆的生意经」这种名字信息量够但太素：读者扫过书城列表时，
+        三秒内要知道「谁 + 逆什么境 + 爽在哪」。简介同理，番茄的转化几乎
+        全靠前三行。所以这一步单独做，且给多个候选让人挑。
+        """
+        f = self.p.meta.get("fields", {}) or {}
+        style_name = self.style.get("name", "")
+        prompt = (
+            f"你是网文平台的编辑，专门给书起名、写简介。\n\n"
+            f"【题材】{self.genre.get('name','')} · {style_name}\n"
+            f"【一句话故事】{f.get('premise','')}\n"
+            f"【背景与主线】{self.era_brief(700)}\n"
+            f"【当前书名】{self.p.meta.get('title','')}（可能太素，需要更好的）\n\n"
+            f"先想清楚：读者在书城列表里扫过去，**三秒内**要看懂"
+            f"「主角是谁、逆的什么境、爽在哪」。\n\n"
+            f"输出（严格照格式，不要多余文字）：\n"
+            f"书名候选：（5 个，一行一个「- 」开头。要求：\n"
+            f"  · 8 字以内，读者一眼知道是什么故事\n"
+            f"  · 至少 2 个带钩子（身份反差 / 悬念 / 冲突），"
+            f"至少 1 个走「大俗大雅」路线\n"
+            f"  · 不要「之」字堆砌，不要「重生之XX的XX人生」这种烂大街句式\n"
+            f"  · 每个后面用括号注一句为什么这么起）\n"
+            f"一句话简介：（30 字以内，用来做书城的副标题。"
+            f"必须点出身份反差与最大的那个悬念）\n"
+            f"平台简介：（150-220 字，分 3 段，每段 1-2 句：\n"
+            f"  第一段：开局的死局 —— 主角眼下最要命的麻烦是什么\n"
+            f"  第二段：他凭什么破局 —— 金手指与打法，要具体\n"
+            f"  第三段：钩子 —— 抛出一个读者非想知道不可的问题，"
+            f"以问句或悬念句收尾。\n"
+            f"  忌讳：不要剧透终局、不要「一场惊天阴谋」这类空话、"
+            f"不要形容词堆砌）\n"
+            f"标签：（6-8 个平台标签，顿号分隔，如：历史同人、种田经商、"
+            f"权谋、扮猪吃虎）\n")
+        r = call("planning", prompt, on_delta, max_tokens=1500)
+        card = clean(r.text)
+        if card:
+            self.p.write("naming.md", card)
+            self._log(f"书名与简介 {len(card)} 字")
+        return {"text": card}
+
     def step_world_bible(self, on_delta=None) -> str:
         ctx = self.base_ctx()
         ov = self.prompt_override("world_bible")
@@ -2800,7 +2872,7 @@ class Novelist:
 
     def save_doc(self, name: str, text: str) -> Dict[str, Any]:
         """前端编辑保存 世界观/角色/总纲/守则/时代卡, 并做联动更新。"""
-        FILES = {"basis": "basis.md",
+        FILES = {"basis": "basis.md", "naming": "naming.md",
                  "world_bible": "world_bible.md", "characters": "characters.md",
                  "outline": "outline.md", "style_guide": "style_guide.md",
                  "era_card": "era_card.md"}
