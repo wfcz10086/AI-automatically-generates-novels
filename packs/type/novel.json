@@ -1,0 +1,109 @@
+{
+  "id": "novel",
+  "name": "长篇小说",
+  "icon": "📖",
+  "description": "网文长篇。大纲 → 章节细纲 → 正文，支持任意插入中间层级。",
+  "fields": [
+    {
+      "id": "premise",
+      "label": "一句话故事",
+      "type": "text",
+      "placeholder": "例如：我的第一本书"
+    },
+    {
+      "id": "background",
+      "label": "背景设定",
+      "type": "textarea"
+    },
+    {
+      "id": "characters",
+      "label": "人物设定",
+      "type": "textarea"
+    },
+    {
+      "id": "relationships",
+      "label": "角色关系",
+      "type": "textarea"
+    },
+    {
+      "id": "kb",
+      "label": "知识库",
+      "type": "textarea"
+    },
+    {
+      "id": "style",
+      "label": "写作风格",
+      "type": "textarea"
+    }
+  ],
+  "levels": [
+    {
+      "id": "outline",
+      "name": "总纲",
+      "single": true,
+      "prompt": "你是顶级网文策划。为《${title}》创作总纲。\n\n【题材规范】\n${genre_rules}\n\n【平台文风】\n${style_rules}\n\n【通用红线】\n${common_rules}\n\n【设定】\n背景：${background}\n人物：${characters}\n关系：${relationships}\n知识库：${kb}\n风格：${style}\n\n要求：\n1. 输出「世界观速览」「主角与金手指」「核心矛盾」「三幕结构」「爽点节奏表」五节\n2. 全书 ${target_chapters} 章 / 约 ${target_words} 字，按题材规范分配各阶段章节数\n3. 结尾先想好，反推伏笔\n4. 直接输出正文，不要任何前言、说明或 markdown 代码块"
+    },
+    {
+      "id": "volume",
+      "name": "分卷",
+      "splitter": "###fenge",
+      "prompt": "基于总纲，把《${title}》拆成 ${count} 卷。\n\n【总纲】\n${outline}\n\n【题材规范】\n${genre_rules}\n\n每卷输出：卷名 + 起止章号 + 本卷主线 + 本卷高潮 + 卷末钩子。\n卷与卷之间必须用一行 ###fenge 分隔。直接输出，无前言。"
+    },
+    {
+      "id": "chapter",
+      "name": "章节细纲",
+      "splitter": "###fenge",
+      "context": [
+        "outline",
+        "parent",
+        "prevSiblings:2"
+      ],
+      "prompt": "为《${title}》的「${parent_title}」写分章细纲。\n\n【总纲】\n${outline}\n\n【本卷】\n${parent}\n\n【上文衔接】\n${prev_summary}\n\n【题材规范】\n${genre_rules}\n\n生成第 ${range} 章的细纲，每章输出：\n第N章 章节名\n- 核心事件：\n- 出场人物：\n- 爽点：\n- 章末钩子：\n\n每章之间用一行 ###fenge 分隔。直接输出，无前言。"
+    },
+    {
+      "id": "content",
+      "name": "正文",
+      "context": [
+        "worldbible",
+        "characters",
+        "parent",
+        "prevSummary:3",
+        "styleGuide"
+      ],
+      "editor": "prose",
+      "prompt": "你是资深网文作者，正在写《${title}》第 ${index} 章。\n\n【世界观】\n${world_bible}\n\n【角色档案】\n${characters}\n\n【前情提要】\n${prev_summary}\n\n【本章细纲】\n${chapter_outline}\n\n【题材规范】\n${genre_rules}\n\n【平台文风】\n${style_rules}\n\n【禁用套话，出现即算失败】\n${cliche_blacklist}\n\n硬性要求：\n1. 字数 ${target_words} 字左右\n2. 直接写正文，第一句就进场景/冲突/动作，禁止任何前言、标题、说明\n3. 不得出现【】括号心理描写、markdown 粗体、分隔线、表格\n4. 对话中混入 30-40% 场景与动作，不要连续「A说B说」\n5. 章末留钩子\n6. 不要写「本章完」「未完待续」之类"
+    }
+  ],
+  "menus": {
+    "content": [
+      {
+        "name": "扩写",
+        "prompt": "把下面这段扩写到原来的 1.5 倍，增加细节和画面感，保持风格一致，直接输出改写结果：\n${selected_text}"
+      },
+      {
+        "name": "润色",
+        "prompt": "润色下面这段，让语言更凝练有力，保留全部剧情，直接输出：\n${selected_text}"
+      },
+      {
+        "name": "去 AI 味",
+        "prompt": "改写下面这段，去掉套话和 AI 腔（禁用：${cliche_blacklist}），句式长短交错，直接输出：\n${selected_text}"
+      },
+      {
+        "name": "加冲突",
+        "prompt": "在下面这段中升级戏剧冲突，保持合理性，直接输出：\n${selected_text}"
+      },
+      {
+        "name": "加钩子",
+        "prompt": "改写下面这段的结尾，留下一个让读者必须看下一章的钩子，直接输出：\n${selected_text}"
+      }
+    ]
+  },
+  "exporters": [
+    "txt",
+    "md",
+    "docx",
+    "epub"
+  ],
+  "defaultStyle": "fanqie-shuangwen",
+  "order": 1
+}

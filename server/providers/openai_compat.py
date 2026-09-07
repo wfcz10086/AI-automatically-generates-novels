@@ -1,0 +1,109 @@
+"""OpenAI 兼容供应商 (vLLM / 各类网关 / DeepSeek / 通义 / 302.AI / Ollama ...).
+
+绝大多数国内外服务都走这个类, 差异靠 providers.yaml 里的字段声明吃掉.
+"""
+from __future__ import annotations
+
+import json
+from typing import Iterator, List, Dict, Any
+
+import requests
+
+from .base import BaseProvider, Delta, ProviderError
+
+
+class OpenAICompatProvider(BaseProvider):
+    id = "openai_compat"
+    name = "OpenAI 兼容"
+
+    def _headers(self) -> Dict[str, str]:
+        return {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
+
+    def models(self) -> List[str]:
+        try:
+            r = requests.get(f"{self.base_url}/models", headers=self._headers(), timeout=15)
+            r.raise_for_status()
+            return [m["id"] for m in r.json().get("data", [])]
+        except Exception as e:  # 网关不可用不应该炸掉整个应用
+            raise ProviderError(f"拉取模型列表失败: {e}") from e
+
+    def stream(self, messages: List[Dict[str, str]], **kw) -> Iterator[Delta]:
+        """流式生成. 关键点见 base.py 的模块注释.
+
+        kw: model / temperature / max_tokens / thinking(bool)
+        """
+        self.last_usage = {}
+        thinking = kw.pop("thinking", False)
+        body: Dict[str, Any] = {
+            "model": kw.pop("model", self.cfg.get("default_model")),
+            "messages": messages,
+            "stream": True,
+            "temperature": kw.pop("temperature", 0.85),
+            "max_tokens": kw.pop("max_tokens", self.cfg.get("max_tokens", 8192)),
+        }
+        # 思考开关: 各家约定不同, 分两类。
+        #   开关型(vLLM/Qwen 系): enable_thinking = true/false, 可以彻底关掉
+        #   档位型(GLM 系):       thinking 只能调档 low/high/max, 关不掉 ——
+        #                         传 enable_thinking=false 会直接 400
+        #                         「该模型始终会思考，不支持关闭思考」
+        # 网关用 thinking_style 声明自己是哪一类。
+        style = (self.cfg.get("thinking_style") or "toggle").lower()
+        if style == "effort":
+            levels = self.cfg.get("thinking_levels") or {}
+            body["reasoning_effort"] = (levels.get("on", "high") if thinking
+                                        else levels.get("off", "low"))
+        else:
+            if not thinking:
+                body["enable_thinking"] = False
+                body["chat_template_kwargs"] = {"enable_thinking": False}
+            else:
+                body["enable_thinking"] = True
+        body.update(kw)
+
+        try:
+            resp = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers=self._headers(),
+                json=body,
+                stream=True,
+                timeout=(20, 600),
+            )
+        except Exception as e:
+            raise ProviderError(f"连接失败: {e}") from e
+
+        if resp.status_code != 200:
+            # requests 按 header 猜编码, 不少网关不带 charset 就退回 latin-1,
+            # 中文报错全变成乱码（实测「该模型始终会思考」变成一串 è¯¥æ¨¡å）
+            if not resp.encoding or resp.encoding.lower() in ("iso-8859-1", "latin-1"):
+                resp.encoding = "utf-8"
+            raise ProviderError(f"HTTP {resp.status_code}: {resp.text[:300]}")
+
+        # 流式响应同样要钉死 UTF-8: iter_lines(decode_unicode=True) 用的是
+        # resp.encoding, 网关不带 charset 时 requests 退回 latin-1, 中文正文
+        # 会整段变成 æä»£ä¸ç³ç±³ 这样的乱码 —— 不是模型的问题, 是解码的问题
+        if not resp.encoding or resp.encoding.lower() in ("iso-8859-1", "latin-1"):
+            resp.encoding = "utf-8"
+        for raw in resp.iter_lines(decode_unicode=True):
+            if not raw or not raw.startswith("data: "):
+                continue
+            payload = raw[6:].strip()
+            if payload == "[DONE]":
+                break
+            try:
+                chunk = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            d = self.adapt(choices[0].get("delta") or {})
+            if d:
+                yield d
+            u = chunk.get("usage")
+            if u:                       # vLLM/网关在末帧带 usage
+                self.last_usage = {"prompt": u.get("prompt_tokens"),
+                                   "completion": u.get("completion_tokens"),
+                                   "total": u.get("total_tokens")}

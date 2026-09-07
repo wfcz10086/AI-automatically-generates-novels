@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI 叙事内容生产线</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">✦</div>
+      <div class="brand-name">叙事生产线</div>
+      <div class="brand-ver" id="ver">v6</div>
+    </div>
+    <div class="side-body">
+      <div class="side-label">工作区</div>
+      <div class="nav-item active" data-view="dashboard"><span class="nav-ico">◈</span>工作台</div>
+      <div class="nav-item" data-view="settings"><span class="nav-ico">⚙</span>全局设置</div>
+      <div class="nav-item" data-view="packs"><span class="nav-ico">◰</span>插件包
+        <span class="nav-count" id="pack-count">–</span></div>
+      <div class="side-label">项目</div>
+      <div id="proj-list"></div>
+      <div class="nav-item" id="btn-new" style="margin-top:6px;color:var(--accent)">
+        <span class="nav-ico">＋</span>新建项目</div>
+    </div>
+    <div class="side-foot">
+      <div class="nav-item" id="btn-theme"><span class="nav-ico">◐</span>切换主题</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <h1 id="page-title">工作台</h1>
+      <div class="top-actions" id="top-actions"></div>
+    </header>
+    <div class="content"><div class="content-narrow" id="view"></div></div>
+  </main>
+</div>
+
+<div class="ctx-menu" id="ctx-menu"></div>
+<div class="modal-mask" id="modal-mask"><div class="modal" id="modal"></div></div>
+<div class="toast-wrap" id="toasts"></div>
+
+<script src="/js/api.js"></script>
+<script src="/js/ui.js"></script>
+<script src="/js/views.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>

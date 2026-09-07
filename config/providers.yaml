@@ -1,0 +1,70 @@
+# 模型网关配置
+# ⚠️ 本文件进 git，因此不得出现任何真实地址或密钥 —— 一律 ${ENV} 引用。
+#    真实值放 .env（已 gitignore）。加网关 = 加一段 YAML + 两个环境变量。
+
+gateways:
+  gw1:
+    type: openai_compat
+    label: "主力自建网关"
+    base_url: ${NOVEL_GW1_URL}
+    api_key: ${NOVEL_GW1_KEY:-EMPTY}
+    default_model: ${NOVEL_GW1_MODEL}
+    reasoning_field: reasoning        # vLLM 的非标准思考字段名
+    context_window: 110000
+    max_tokens: 8192
+
+  gw2:
+    type: openai_compat
+    label: "备用自建网关"
+    base_url: ${NOVEL_GW2_URL}
+    api_key: ${NOVEL_GW2_KEY:-EMPTY}
+    default_model: ${NOVEL_GW2_MODEL}
+    reasoning_field: reasoning
+    context_window: 80000
+    max_tokens: 8192
+
+  gw3:
+    type: openai_compat
+    label: "聚合网关"
+    base_url: ${NOVEL_GW3_URL}
+    api_key: ${NOVEL_GW3_KEY:-EMPTY}
+    default_model: ${NOVEL_GW3_MODEL}
+    reasoning_field: reasoning_content   # DeepSeek 系约定
+    context_window: 128000
+    max_tokens: 8192
+
+  gw4:
+    type: openai_compat
+    label: "GLM 网关"
+    base_url: ${NOVEL_GW4_URL}
+    api_key: ${NOVEL_GW4_KEY:-EMPTY}
+    default_model: ${NOVEL_GW4_MODEL}
+    reasoning_field: reasoning_content
+    # GLM 系关不掉思考, 只能调档: 传 enable_thinking=false 会直接 400
+    thinking_style: effort
+    # 键必须加引号: YAML 1.1 会把 on/off 解析成布尔 true/false,
+    # 于是 levels.get("on") 取不到值, 只能碰运气落到默认档
+    thinking_levels: {"off": low, "on": high}
+    context_window: 128000
+    max_tokens: 8192
+
+# 检索源 —— 与模型网关并列的一类 provider。加一家 = 加一段 YAML。
+# 写作时自动用于世界观/人物/剧情/正文的背景落地，不需要单独触发。
+search:
+  default: local_searxng
+  providers:
+    local_searxng:
+      type: searxng
+      label: "本地 SearXNG"
+      endpoint: ${NOVEL_SEARCH_URL:-http://127.0.0.1:18888}
+      lang: zh-CN
+      timeout: 20
+
+# 任务 -> 网关 的分层调度。创作类关思考（实测开思考挤爆 token 且不提质）
+profiles:
+  planning:   {gateway: gw4, thinking: false, temperature: 0.80}
+  drafting:   {gateway: gw4, thinking: false, temperature: 0.92}
+  polishing:  {gateway: gw4, thinking: false, temperature: 0.85}
+  judging:    {gateway: gw4, thinking: true,  temperature: 0.30}
+
+default_profile: drafting

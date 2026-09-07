@@ -1,0 +1,96 @@
+{
+  "id": "screenplay",
+  "name": "影视剧本",
+  "icon": "🎬",
+  "description": "标准影视剧本。故事大纲 → 分幕 → 分场 → 剧本页，导出 Fountain / FDX。",
+  "fields": [
+    {
+      "id": "logline",
+      "label": "一句话故事 (Logline)",
+      "type": "text"
+    },
+    {
+      "id": "theme",
+      "label": "主题",
+      "type": "text"
+    },
+    {
+      "id": "roles",
+      "label": "角色表",
+      "type": "table",
+      "columns": [
+        "角色",
+        "年龄",
+        "身份",
+        "人物小传"
+      ]
+    },
+    {
+      "id": "scenes",
+      "label": "主要场景",
+      "type": "list"
+    },
+    {
+      "id": "style",
+      "label": "影像风格",
+      "type": "textarea"
+    }
+  ],
+  "levels": [
+    {
+      "id": "story",
+      "name": "故事大纲",
+      "single": true,
+      "prompt": "你是资深编剧。为《${title}》写故事大纲。\n\nLogline：${logline}\n主题：${theme}\n角色表：${roles}\n主要场景：${scenes}\n影像风格：${style}\n\n【题材规范】\n${genre_rules}\n\n输出：一句话梗概 / 人物弧光 / 三幕结构（含两个转折点与中点）/ 主题表达。直接输出，无前言。"
+    },
+    {
+      "id": "act",
+      "name": "分幕",
+      "splitter": "###fenge",
+      "prompt": "基于故事大纲，拆成三幕。\n\n${story}\n\n每幕输出：幕名 + 起止时间码估算 + 本幕任务 + 幕末转折。幕之间用一行 ###fenge 分隔。直接输出。"
+    },
+    {
+      "id": "scene",
+      "name": "分场",
+      "splitter": "(?m)^\\s*\\d+[、.]?\\s*(?:内景|外景|INT|EXT)",
+      "context": [
+        "parent",
+        "prevSiblings:2"
+      ],
+      "prompt": "把「${parent_title}」拆成场次。\n\n【本幕】\n${parent}\n【角色表】\n${roles}\n\n每场严格用如下场头开始：\nN 内景/外景 地点 — 日/夜\n然后一行本场目的、一行冲突、一行出场人物。直接输出，无前言。"
+    },
+    {
+      "id": "page",
+      "name": "剧本页",
+      "editor": "fountain",
+      "context": [
+        "parent",
+        "prevSummary:2"
+      ],
+      "prompt": "把下面这场戏写成标准剧本页。\n\n【本场】\n${chapter_outline}\n【角色表】\n${roles}\n【前情】\n${prev_summary}\n\n格式要求（Fountain）：\n场头用「内景/外景 地点 — 日/夜」独占一行\n动作描写顶格，现在时，只写镜头能拍到的\n角色名单独一行且大写居中语义\n对白紧跟角色名\n括号提示尽量少\n禁止写心理活动、禁止小说化描写。直接输出剧本，无前言。"
+    }
+  ],
+  "menus": {
+    "page": [
+      {
+        "name": "台词更口语",
+        "prompt": "把下面的对白改得更口语、更符合人物身份，动作描写保持不变，直接输出：\n${selected_text}"
+      },
+      {
+        "name": "加潜台词",
+        "prompt": "改写下面这段，让人物不直说目的，用潜台词表达，直接输出：\n${selected_text}"
+      },
+      {
+        "name": "压缩节奏",
+        "prompt": "把下面这场戏压缩三分之一，保留冲突核心，直接输出：\n${selected_text}"
+      }
+    ]
+  },
+  "exporters": [
+    "txt",
+    "fountain",
+    "fdx",
+    "docx"
+  ],
+  "order": 3
+}

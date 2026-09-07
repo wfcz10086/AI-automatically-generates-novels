@@ -1,0 +1,31 @@
+# 密钥与端点 —— 绝不进 git
+.env
+.env.local
+config/providers.local.yaml
+
+# 运行产物
+projects/
+reports/
+*.db
+*.sqlite
+nohup.out
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# 测试产物（reports/ 忽略，但 docs/screenshots/ 里的展示图要进仓库）
+tests/e2e/screenshots/
+tests/e2e/trace/
+!docs/screenshots/
+
+# 编辑器
+.DS_Store
+.idea/
+.vscode/
+config/settings.local.yaml
+.longrun.*

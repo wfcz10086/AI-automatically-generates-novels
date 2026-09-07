@@ -1,0 +1,60 @@
+# SearXNG 配置 —— 本项目自带，随 docker compose 一起起来。
+# 只开 JSON API 与国内可用引擎；关掉批量 CAPTCHA 的上游。
+# [2026-07-24] 修: 上游 brave/ddg/startpage 全部 CAPTCHA/suspended,
+# 换成 bing/yandex/sogou/baidu/360search — 实测均返回 6-10 条.
+use_default_settings: true
+general:
+  debug: false
+  instance_name: "叙事生产线 · 资料检索"
+server:
+  secret_key: "${SEARXNG_SECRET:-change-me-local-only}"
+  limiter: false
+  image_proxy: false
+  port: 8888
+  bind_address: "0.0.0.0"
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats:
+    - html
+    - json
+ui:
+  static_use_hash: true
+engines:
+  # ── 关掉批量 CAPTCHA / 抛异常的 ──
+  - name: brave
+    disabled: true
+  - name: duckduckgo
+    disabled: true
+  - name: startpage
+    disabled: true
+  - name: qwant
+    disabled: true
+  - name: mojeek
+    disabled: true
+  # ── 打开实测稳定的 ──
+  - name: bing
+    disabled: false
+    shortcut: bi
+    engine: bing
+    timeout: 5.0
+  - name: yandex
+    disabled: false
+    shortcut: yd
+    engine: yandex
+    timeout: 6.0
+  - name: sogou
+    disabled: false
+    shortcut: sg
+    engine: sogou
+    timeout: 5.0
+  - name: baidu
+    disabled: false
+    shortcut: bd
+    engine: baidu
+    timeout: 5.0
+  - name: 360search
+    disabled: false
+    shortcut: 360
+    engine: 360search
+    timeout: 5.0

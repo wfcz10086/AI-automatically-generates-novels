@@ -1,0 +1,553 @@
+{
+  "id": "legacy-genre-menus",
+  "name": "v5.2 题材右键菜单",
+  "source": "static/config.js",
+  "menus": {
+    "都市重生": [
+      {
+        "name": "深化冲突",
+        "prompt": "基于背景：${background}\n人物：${characters}\n在保持合理性的前提下，将以下内容的冲突升级，制造更强的戏剧性：${selected_text}"
+      },
+      {
+        "name": "增加伏笔",
+        "prompt": "分析剧情：${plot}\n为以下内容设计巧妙的伏笔，为后续发展埋下种子：${selected_text}"
+      },
+      {
+        "name": "完善人物动机",
+        "prompt": "基于人物性格：${characters}\n关系：${relationships}\n补充和优化以下内容中人物的行动动机，使其更符合性格：${selected_text}"
+      },
+      {
+        "name": "强化感情线",
+        "prompt": "基于角色关系：${relationships}\n加强以下内容中的感情发展，让感情线更吸引人：${selected_text}"
+      },
+      {
+        "name": "优化节奏",
+        "prompt": "分析当前剧情走向，调整以下内容的节奏安排，确保张弛有度：${selected_text}"
+      },
+      {
+        "name": "扩充细节",
+        "prompt": "基于背景：${background}\n为以下内容补充更多细节，增强画面感和沉浸感：${selected_text}"
+      },
+      {
+        "name": "提升高潮",
+        "prompt": "在符合逻辑的前提下，将以下内容的高潮部分改写得更加震撼：${selected_text}"
+      },
+      {
+        "name": "商战升级",
+        "prompt": "在${selected_text}中加入一场高水平商业博弈，突出主角的商业才能"
+      },
+      {
+        "name": "危机应对",
+        "prompt": "为${selected_text}设置一个重大危机及其化解过程，展现主角的应变能力"
+      },
+      {
+        "name": "资源整合",
+        "prompt": "在${selected_text}中展现主角整合各方资源的手段与能力"
+      }
+    ],
+    "脑洞网文": [
+      {
+        "name": "设定解密",
+        "prompt": "在${selected_text}中揭示一个惊人的世界设定"
+      },
+      {
+        "name": "逆天改命",
+        "prompt": "为${selected_text}设计一个打破常规的逆转"
+      },
+      {
+        "name": "脑洞升级",
+        "prompt": "在${selected_text}中加入更疯狂的脑洞元素"
+      },
+      {
+        "name": "身份反转",
+        "prompt": "为${selected_text}设计一个意想不到的身份揭露"
+      },
+      {
+        "name": "规则突破",
+        "prompt": "在${selected_text}中打破既有规则限制"
+      },
+      {
+        "name": "时空交错",
+        "prompt": "为${selected_text}增加时空穿梭的元素"
+      },
+      {
+        "name": "异能觉醒",
+        "prompt": "描写${selected_text}中诡异的能力觉醒"
+      },
+      {
+        "name": "终极真相",
+        "prompt": "在${selected_text}中埋下终极真相的线索"
+      },
+      {
+        "name": "维度跨越",
+        "prompt": "为${selected_text}添加维度穿越的情节"
+      },
+      {
+        "name": "崩坏重构",
+        "prompt": "在${selected_text}中展现世界秩序的崩坏重组"
+      }
+    ],
+    "都市修仙": [
+      {
+        "name": "深化修炼",
+        "prompt": "基于修炼体系：${background}\n在${selected_text}中加入一场关键的修炼突破"
+      },
+      {
+        "name": "仙凡冲突",
+        "prompt": "在${selected_text}中制造修仙与现实世界的矛盾冲突"
+      },
+      {
+        "name": "强化战斗",
+        "prompt": "基于角色实力：${characters}\n优化${selected_text}中的修仙斗法场景"
+      },
+      {
+        "name": "增添机缘",
+        "prompt": "在${selected_text}中安排修仙机缘际遇"
+      },
+      {
+        "name": "道心考验",
+        "prompt": "为${selected_text}设置一个考验主角道心的情节"
+      },
+      {
+        "name": "势力对抗",
+        "prompt": "在${selected_text}中展现正邪两道势力的较量"
+      },
+      {
+        "name": "法宝炼制",
+        "prompt": "加入${selected_text}中的法宝炼制或获得过程"
+      },
+      {
+        "name": "布局天机",
+        "prompt": "在${selected_text}中埋下修仙劫数的伏笔"
+      },
+      {
+        "name": "完善人物",
+        "prompt": "基于人物性格：${characters}\n关系：${relationships}\n深化${selected_text}中人物的心境变化"
+      },
+      {
+        "name": "强化感情",
+        "prompt": "在${selected_text}中展现修仙路上的情缘牵绊"
+      }
+    ],
+    "都市高武": [
+      {
+        "name": "武道突破",
+        "prompt": "在${selected_text}中加入一场关键的武道突破"
+      },
+      {
+        "name": "格斗竞技",
+        "prompt": "为${selected_text}设计一场高水平的武道竞技"
+      },
+      {
+        "name": "势力冲突",
+        "prompt": "在${selected_text}中展现武道势力间的较量"
+      },
+      {
+        "name": "武学传承",
+        "prompt": "描写${selected_text}中获得武学传承的过程"
+      },
+      {
+        "name": "生死对决",
+        "prompt": "为${selected_text}安排一场生死决战"
+      },
+      {
+        "name": "武道资源",
+        "prompt": "在${selected_text}中展示武道资源的争夺"
+      },
+      {
+        "name": "暗劲交锋",
+        "prompt": "描写${selected_text}中的暗劲较量场景"
+      },
+      {
+        "name": "武道秘境",
+        "prompt": "为${selected_text}设计一处武道秘境探索"
+      },
+      {
+        "name": "武者集会",
+        "prompt": "在${selected_text}中展现武者间的集会交流"
+      },
+      {
+        "name": "武道考核",
+        "prompt": "描写${selected_text}中的武道等级考核"
+      }
+    ],
+    "末日系统": [
+      {
+        "name": "系统升级",
+        "prompt": "在${selected_text}中展现系统新功能开启"
+      },
+      {
+        "name": "危机降临",
+        "prompt": "为${selected_text}设计一场末日危机"
+      },
+      {
+        "name": "资源争夺",
+        "prompt": "描写${selected_text}中的生存资源争夺"
+      },
+      {
+        "name": "进化突破",
+        "prompt": "在${selected_text}中展示能力进化过程"
+      },
+      {
+        "name": "团队建设",
+        "prompt": "为${selected_text}增加生存团队的建设"
+      },
+      {
+        "name": "怪物狩猎",
+        "prompt": "在${selected_text}中描写狩猎变异生物"
+      },
+      {
+        "name": "庇护所建设",
+        "prompt": "描述${selected_text}中的庇护所建设"
+      },
+      {
+        "name": "势力冲突",
+        "prompt": "展现${selected_text}中的幸存者势力冲突"
+      },
+      {
+        "name": "特殊任务",
+        "prompt": "设计${selected_text}中的系统特殊任务"
+      },
+      {
+        "name": "末日探索",
+        "prompt": "描写${selected_text}中的废墟探索历程"
+      }
+    ],
+    "玄幻系统修仙": [
+      {
+        "name": "系统突破",
+        "prompt": "在${selected_text}中展现系统辅助突破"
+      },
+      {
+        "name": "玄幻历练",
+        "prompt": "为${selected_text}设计玄幻世界历练"
+      },
+      {
+        "name": "仙道机缘",
+        "prompt": "描写${selected_text}中的仙道机缘获得"
+      },
+      {
+        "name": "法宝炼制",
+        "prompt": "在${selected_text}中展示系统辅助炼器"
+      },
+      {
+        "name": "势力建设",
+        "prompt": "为${selected_text}增加修真势力的建设"
+      },
+      {
+        "name": "秘境探索",
+        "prompt": "在${selected_text}中描写玄幻秘境探索"
+      },
+      {
+        "name": "系统任务",
+        "prompt": "设计${selected_text}中的特殊系统任务"
+      },
+      {
+        "name": "天劫应对",
+        "prompt": "展现${selected_text}中的天劫渡化过程"
+      },
+      {
+        "name": "玄幻战斗",
+        "prompt": "描写${selected_text}中的玄幻战斗场景"
+      },
+      {
+        "name": "道法融合",
+        "prompt": "在${selected_text}中展示道法系统的融合"
+      }
+    ],
+    "霸总": [
+      {
+        "name": "商业布局",
+        "prompt": "在${selected_text}中展现一场惊心动魄的商业收购"
+      },
+      {
+        "name": "豪门对抗",
+        "prompt": "基于背景：${background}\n加入${selected_text}中的豪门势力较量"
+      },
+      {
+        "name": "霸道追爱",
+        "prompt": "基于角色关系：${relationships}\n深化${selected_text}中的霸道追求戏码"
+      },
+      {
+        "name": "家族纷争",
+        "prompt": "在${selected_text}中制造家族内部的权力争斗"
+      },
+      {
+        "name": "商战反转",
+        "prompt": "为${selected_text}设计一个商战局势的逆转"
+      },
+      {
+        "name": "感情危机",
+        "prompt": "在${selected_text}中制造感情信任的考验"
+      },
+      {
+        "name": "权力交锋",
+        "prompt": "加强${selected_text}中的权力博弈场面"
+      },
+      {
+        "name": "身世之谜",
+        "prompt": "在${selected_text}中埋下身世之谜的线索"
+      },
+      {
+        "name": "复仇布局",
+        "prompt": "展现${selected_text}中的商业复仇计划"
+      },
+      {
+        "name": "强化气场",
+        "prompt": "深化${selected_text}中霸总的强势魅力表现"
+      }
+    ],
+    "后悔流": [
+      {
+        "name": "深化后悔",
+        "prompt": "在${selected_text}中展现更深层的后悔情感"
+      },
+      {
+        "name": "愧疚折磨",
+        "prompt": "描写${selected_text}中的内心煎熬"
+      },
+      {
+        "name": "挽回行动",
+        "prompt": "设计${selected_text}中的弥补努力"
+      },
+      {
+        "name": "情感爆发",
+        "prompt": "在${selected_text}中展现压抑情感的爆发"
+      },
+      {
+        "name": "心理转变",
+        "prompt": "描述${selected_text}中的心理变化过程"
+      },
+      {
+        "name": "记忆闪回",
+        "prompt": "在${selected_text}中插入关键往事回忆"
+      },
+      {
+        "name": "救赎时刻",
+        "prompt": "设计${selected_text}中的救赎关键点"
+      },
+      {
+        "name": "原谅契机",
+        "prompt": "为${selected_text}创造和解的可能"
+      },
+      {
+        "name": "情感修复",
+        "prompt": "描写${selected_text}中的关系修复过程"
+      },
+      {
+        "name": "成长蜕变",
+        "prompt": "展现${selected_text}中的心智成长"
+      }
+    ],
+    "无敌文": [
+      {
+        "name": "实力暴涨",
+        "prompt": "在${selected_text}中展现实力暴涨过程"
+      },
+      {
+        "name": "强者碾压",
+        "prompt": "描写${selected_text}中的压倒性战斗"
+      },
+      {
+        "name": "底牌尽出",
+        "prompt": "设计${selected_text}中的底牌释放"
+      },
+      {
+        "name": "势力臣服",
+        "prompt": "在${selected_text}中展示敌对势力臣服"
+      },
+      {
+        "name": "境界突破",
+        "prompt": "描述${selected_text}中的境界突破"
+      },
+      {
+        "name": "装逼打脸",
+        "prompt": "在${selected_text}中安排装逼打脸情节"
+      },
+      {
+        "name": "霸道镇压",
+        "prompt": "设计${selected_text}中的强势镇压"
+      },
+      {
+        "name": "威压全场",
+        "prompt": "展现${selected_text}中的气势碾压"
+      },
+      {
+        "name": "无敌战斗",
+        "prompt": "描写${selected_text}中的无敌战斗"
+      },
+      {
+        "name": "称霸天下",
+        "prompt": "为${selected_text}设计称霸情节"
+      }
+    ],
+    "历史架空": [
+      {
+        "name": "历史转折",
+        "prompt": "在${selected_text}中设计关键的历史转折点"
+      },
+      {
+        "name": "权谋博弈",
+        "prompt": "展现${selected_text}中的朝堂权谋斗争"
+      },
+      {
+        "name": "军事战略",
+        "prompt": "描写${selected_text}中的军事战略部署"
+      },
+      {
+        "name": "变法改革",
+        "prompt": "设计${selected_text}中的变法改革过程"
+      },
+      {
+        "name": "民生发展",
+        "prompt": "展示${selected_text}中的民生发展变化"
+      },
+      {
+        "name": "外交较量",
+        "prompt": "描述${selected_text}中的国际外交博弈"
+      },
+      {
+        "name": "科技革新",
+        "prompt": "在${selected_text}中加入科技发展线索"
+      },
+      {
+        "name": "文化演变",
+        "prompt": "体现${selected_text}中的文化发展变迁"
+      },
+      {
+        "name": "势力消长",
+        "prompt": "描写${selected_text}中各方势力的消长"
+      },
+      {
+        "name": "历史影响",
+        "prompt": "展现${selected_text}中的蝴蝶效应"
+      }
+    ],
+    "都市种田养成": [
+      {
+        "name": "技术创新",
+        "prompt": "在${selected_text}中展示农业技术创新"
+      },
+      {
+        "name": "产业升级",
+        "prompt": "描述${selected_text}中的产业升级过程"
+      },
+      {
+        "name": "市场营销",
+        "prompt": "设计${selected_text}中的市场营销策略"
+      },
+      {
+        "name": "品牌打造",
+        "prompt": "展现${selected_text}中的农产品品牌化"
+      },
+      {
+        "name": "生态建设",
+        "prompt": "描写${selected_text}中的生态农业建设"
+      },
+      {
+        "name": "人才培养",
+        "prompt": "设计${selected_text}中的技术人才培养"
+      },
+      {
+        "name": "休闲农业",
+        "prompt": "展示${selected_text}中的观光农业发展"
+      },
+      {
+        "name": "社区营造",
+        "prompt": "描述${selected_text}中的乡村社区建设"
+      },
+      {
+        "name": "资源整合",
+        "prompt": "展现${selected_text}中的资源整合过程"
+      },
+      {
+        "name": "产业链条",
+        "prompt": "设计${selected_text}中的全产业链布局"
+      }
+    ],
+    "东方玄幻": [
+      {
+        "name": "问道天地",
+        "prompt": "在${selected_text}中展现问道求索过程"
+      },
+      {
+        "name": "神通大战",
+        "prompt": "描写${selected_text}中的神通法术对决"
+      },
+      {
+        "name": "势力争锋",
+        "prompt": "展示${selected_text}中的势力间较量"
+      },
+      {
+        "name": "仙缘机遇",
+        "prompt": "设计${selected_text}中的仙缘际遇"
+      },
+      {
+        "name": "大道感悟",
+        "prompt": "描述${selected_text}中的大道感悟"
+      },
+      {
+        "name": "天劫考验",
+        "prompt": "展现${selected_text}中的天劫历程"
+      },
+      {
+        "name": "神器炼制",
+        "prompt": "描写${selected_text}中的神器炼制"
+      },
+      {
+        "name": "秘境探索",
+        "prompt": "设计${selected_text}中的秘境探索"
+      },
+      {
+        "name": "因果轮回",
+        "prompt": "展示${selected_text}中的因果报应"
+      },
+      {
+        "name": "天道变化",
+        "prompt": "描述${selected_text}中的天道演变"
+      }
+    ],
+    "策略经营": [
+      {
+        "name": "战略规划",
+        "prompt": "在${selected_text}中展现企业战略规划"
+      },
+      {
+        "name": "资源整合",
+        "prompt": "描述${selected_text}中的资源整合优化"
+      },
+      {
+        "name": "市场扩张",
+        "prompt": "设计${selected_text}中的市场扩张策略"
+      },
+      {
+        "name": "团队管理",
+        "prompt": "展示${selected_text}中的团队管理方案"
+      },
+      {
+        "name": "危机处理",
+        "prompt": "描写${selected_text}中的危机应对过程"
+      },
+      {
+        "name": "产品创新",
+        "prompt": "展现${selected_text}中的产品研发创新"
+      },
+      {
+        "name": "品牌建设",
+        "prompt": "设计${selected_text}中的品牌塑造过程"
+      },
+      {
+        "name": "资本运作",
+        "prompt": "描述${selected_text}中的资本运作手段"
+      },
+      {
+        "name": "并购重组",
+        "prompt": "展示${selected_text}中的并购重组计划"
+      },
+      {
+        "name": "商业模式",
+        "prompt": "设计${selected_text}中的商业模式创新"
+      }
+    ]
+  }
+}

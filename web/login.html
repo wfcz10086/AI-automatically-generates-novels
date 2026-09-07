@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>登录 · 叙事生产线</title><link rel="stylesheet" href="/css/app.css"></head>
+<body style="display:grid;place-items:center;min-height:100vh">
+  <form class="card" style="width:340px" id="f">
+    <div style="display:flex;align-items:center;gap:9px;margin-bottom:18px">
+      <div class="brand-mark" style="width:26px;height:26px;border-radius:8px;
+        background:var(--accent);color:var(--accent-text);display:grid;place-items:center">✦</div>
+      <div style="font-weight:650">叙事生产线</div>
+    </div>
+    <div class="field"><label>访问密码</label>
+      <input class="input" id="p" type="password" autofocus autocomplete="current-password"></div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center">进入</button>
+    <div class="card-sub" id="e" style="color:var(--err);margin-top:10px;min-height:18px"></div>
+  </form>
+<script>
+document.getElementById('f').onsubmit = async e => {
+  e.preventDefault();
+  const r = await fetch('/api/login', {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({password: document.getElementById('p').value})});
+  if (r.ok) location.href = '/';
+  else document.getElementById('e').textContent = '密码错误';
+};
+</script></body></html>

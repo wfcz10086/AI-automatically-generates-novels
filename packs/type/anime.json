@@ -1,0 +1,92 @@
+{
+  "id": "anime",
+  "name": "动漫分镜",
+  "icon": "🎞",
+  "description": "动画/漫画分镜脚本。故事大纲 → 分话 → 分镜表（镜号/景别/画面/台词/时长），可导出分镜表与字幕。",
+  "fields": [
+    {
+      "id": "logline",
+      "label": "一句话故事",
+      "type": "text"
+    },
+    {
+      "id": "artstyle",
+      "label": "画风参考",
+      "type": "text",
+      "placeholder": "京阿尼日常 / 国漫玄幻 / 赛博废土"
+    },
+    {
+      "id": "roles",
+      "label": "角色表",
+      "type": "table",
+      "columns": [
+        "角色",
+        "年龄",
+        "外貌关键词",
+        "性格",
+        "口癖"
+      ]
+    },
+    {
+      "id": "style",
+      "label": "调性与节奏",
+      "type": "textarea"
+    }
+  ],
+  "levels": [
+    {
+      "id": "series",
+      "name": "企划大纲",
+      "single": true,
+      "prompt": "你是动画企划。为《${title}》写企划大纲，共 ${target_chapters} 话。\n\nLogline：${logline}\n画风：${artstyle}\n角色：${roles}\n调性：${style}\n\n【题材规范】\n${genre_rules}\n\n输出：世界观一页纸 / 主要角色设定要点 / 主线与副线 / 每话爽点节奏 / 关键名场面清单（至少 5 个可作 KV 的画面）。直接输出，无前言。"
+    },
+    {
+      "id": "episode",
+      "name": "分话大纲",
+      "splitter": "###fenge",
+      "context": [
+        "series",
+        "prevSiblings:2"
+      ],
+      "prompt": "基于企划大纲，写第 ${range} 话的分话大纲。\n\n${series}\n\n每话输出：话号 + 标题 + A/B 段落结构 + 本话高潮画面 + 下话预告钩子。话之间用一行 ###fenge 分隔。直接输出。"
+    },
+    {
+      "id": "storyboard",
+      "name": "分镜表",
+      "editor": "prose",
+      "context": [
+        "parent",
+        "prevSummary:2"
+      ],
+      "prompt": "把第 ${index} 话写成分镜表。\n\n【本话大纲】\n${chapter_outline}\n【角色】\n${roles}\n【画风】\n${artstyle}\n【前情】\n${prev_summary}\n\n严格按此格式，每个镜头一段：\n\n【镜${index}-N】景别：远景/全景/中景/近景/特写 ｜ 时长：Xs\n画面：（只写镜头能拍到的：构图、角色动作、光影、镜头运动）\n台词：角色名「台词」  （无台词写 —）\n音效：（无则写 —）\n\n要求：单话 40-70 个镜头；开场 3 镜必须抓人；每 8-10 镜有一次景别节奏变化；高潮镜给特写。直接输出，无前言。"
+    }
+  ],
+  "menus": {
+    "storyboard": [
+      {
+        "name": "加镜头节奏",
+        "prompt": "在下面这段分镜里插入景别变化与短镜快切，增强节奏，保持剧情不变，直接输出：\n${selected_text}"
+      },
+      {
+        "name": "强化画面感",
+        "prompt": "把下面分镜的画面描述改得更具体可画（构图、光影、镜头运动），直接输出：\n${selected_text}"
+      },
+      {
+        "name": "台词更动漫",
+        "prompt": "把下面的台词改成更符合动画调性的口语与口癖，直接输出：\n${selected_text}"
+      },
+      {
+        "name": "改成名场面",
+        "prompt": "把下面这段改写成一个可以做 KV 主视觉的名场面镜头，直接输出：\n${selected_text}"
+      }
+    ]
+  },
+  "exporters": [
+    "txt",
+    "md",
+    "srt",
+    "fountain"
+  ],
+  "defaultStyle": "manhua-fenjing",
+  "order": 4
+}

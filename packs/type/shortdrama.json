@@ -1,0 +1,77 @@
+{
+  "id": "shortdrama",
+  "name": "短剧剧本",
+  "icon": "📱",
+  "description": "竖屏短剧。分集大纲 → 单集 → 分镜台本，每集 1-2 分钟，强钩子高反转。导出 SRT 字幕。",
+  "fields": [
+    {
+      "id": "logline",
+      "label": "一句话故事",
+      "type": "text"
+    },
+    {
+      "id": "hook",
+      "label": "黄金三秒钩子",
+      "type": "text"
+    },
+    {
+      "id": "roles",
+      "label": "角色表",
+      "type": "table",
+      "columns": [
+        "角色",
+        "身份",
+        "人设标签"
+      ]
+    },
+    {
+      "id": "style",
+      "label": "调性",
+      "type": "textarea"
+    }
+  ],
+  "levels": [
+    {
+      "id": "series",
+      "name": "剧集大纲",
+      "single": true,
+      "prompt": "你是短剧编剧。为《${title}》写剧集大纲，共 ${target_chapters} 集，每集 1-2 分钟竖屏。\n\nLogline：${logline}\n黄金三秒钩子：${hook}\n角色：${roles}\n调性：${style}\n【题材规范】\n${genre_rules}\n\n输出：核心爽点公式 / 人物关系图 / 分集爽点节奏（每 3 集一个大反转，每集必须以悬念收尾）。直接输出。"
+    },
+    {
+      "id": "episode",
+      "name": "分集",
+      "splitter": "###fenge",
+      "context": [
+        "series",
+        "prevSiblings:2"
+      ],
+      "prompt": "基于剧集大纲，写第 ${range} 集的分集梗概。\n\n${series}\n\n每集输出：集号 + 标题 + 开场 3 秒钩子 + 本集事件 + 结尾悬念（必须让人想点下一集）。集之间用一行 ###fenge 分隔。直接输出。"
+    },
+    {
+      "id": "shot",
+      "name": "分镜台本",
+      "editor": "prose",
+      "context": [
+        "parent",
+        "prevSummary:2"
+      ],
+      "prompt": "把第 ${index} 集写成分镜台本。\n\n【本集梗概】\n${chapter_outline}\n【角色】\n${roles}\n【前情】\n${prev_summary}\n\n格式：\n【镜N】景别 | 画面描述\n角色：台词\n\n要求：开场 3 秒必须有钩子；总时长 60-120 秒；台词短促口语；结尾断在悬念上。直接输出。"
+    }
+  ],
+  "menus": {
+    "shot": [
+      {
+        "name": "加反转",
+        "prompt": "在下面这段里加一个观众想不到的反转，直接输出：\n${selected_text}"
+      }
+    ]
+  },
+  "exporters": [
+    "txt",
+    "srt",
+    "fountain",
+    "docx"
+  ],
+  "defaultStyle": "duanju-hook",
+  "order": 2
+}

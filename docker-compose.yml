@@ -1,0 +1,47 @@
+# 一条命令起全套：Web 服务 + 自带的 SearXNG 资料检索
+#   cp .env.example .env && vim .env      # 填模型网关
+#   docker compose up -d                  # → http://localhost:60001/
+services:
+  app:
+    build: .
+    container_name: novel-studio
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      NOVEL_PORT: 60001
+      NOVEL_SEARCH_URL: http://searxng:8080    # 容器内直连自带检索
+      TZ: Asia/Shanghai
+    ports:
+      - "${NOVEL_PORT:-60001}:60001"
+    volumes:
+      - ./projects:/app/projects             # 稿件持久化在宿主机
+      - ./config:/app/config                 # 配置可热改
+      - ./packs:/app/packs                   # 插件包可热加
+    depends_on:
+      searxng:
+        condition: service_healthy
+
+  # 自带的资料检索。世界观 / 人物 / 剧情 / 正文四处会自动用到它。
+  # 不想用可以 `docker compose up -d app`，检索会自动降级为纯内部记忆。
+  searxng:
+    image: searxng/searxng:latest
+    container_name: novel-searxng
+    restart: unless-stopped
+    volumes:
+      - ./deploy/searxng:/etc/searxng:rw
+    environment:
+      SEARXNG_BASE_URL: http://localhost:8080/
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-change-me-local-only}
+      TZ: Asia/Shanghai
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    logging:
+      driver: json-file
+      options: {max-size: "20m", max-file: "3"}
+    deploy:
+      resources:
+        limits: {memory: 1G}
