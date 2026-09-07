@@ -931,4 +931,14 @@ if __name__ == "__main__":
     port = int(os.environ.get("NOVEL_PORT", 60001))
     print(f"→ http://127.0.0.1:{port}/   网关 {len(registry.gateways)} 个 / "
           f"类型 {len(registry.types)} 种 / 题材 {len(registry.genres)} 个")
-    app.run(host="0.0.0.0", port=port, threaded=True, debug=False)
+    # 代码变了自动重启。长跑 worker 早就有热轮转（每章开工前核对代码戳），
+    # Web 服务却没有 —— 改完代码不手动重启，界面就一直显示旧数据/旧页面，
+    # 实测新建的项目在侧边栏里死活不出现，查了半天是服务跑的旧代码。
+    # reloader 只看 server/ 与 web/，不看 projects/（书稿一直在变，会疯狂重启）。
+    watch = [str(p) for p in (ROOT / "server").rglob("*.py")]
+    watch += [str(p) for p in (ROOT / "web").rglob("*.js")]
+    watch += [str(p) for p in (ROOT / "web").rglob("*.css")]
+    watch += [str(p) for p in (ROOT / "config").glob("*.yaml")]
+    app.run(host="0.0.0.0", port=port, threaded=True, debug=False,
+            use_reloader=os.environ.get("NOVEL_NO_RELOAD") != "1",
+            extra_files=watch)

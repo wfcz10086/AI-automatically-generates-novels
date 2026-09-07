@@ -98,85 +98,118 @@ def main() -> int:
 
 
 def fix_terms(nv, done, dry: bool) -> int:
-    """数字条款一致性修复。
+    """数量约定一致性修复 —— 让模型直接读正文，不做正则预筛。
 
-    竞标底价从第 10 章的八百贯，到第 14 章变一千、第 15 章变五百 —— 这类
-    「同一笔买卖的规则参数前后打架」既不是格式问题（没有唯一正确形态），
-    也不是单章问题（要跨章看才发现）。所以：让模型通读所有涉及该数字的章节，
-    自己判定哪个是权威值、哪些章要改，再逐章定点重写。
+    正则预筛看着省 token，实则漏掉最容易出错的那一类：「一成干股」「三日为限」
+    「分十四个月付清」「五五分账」都不带「数字+贯/两」的形状，而这些恰恰是
+    前后最容易打架的约定。规则匹配只认它设计者想得到的形状，想不到的就漏。
+
+    改为按窗口把正文原文喂给模型，让它自己认哪些是「被当成规则遵守的数量」，
+    再自己判断哪些对不上。窗口按上下文预算切，跨窗口的冲突交给最后一轮汇总。
     """
     import re as _re
-    # 先把带数字条款的段落摘出来, 不用全文喂
-    # 两路扫：① 带关键词的（底价/报价/期限…）② 裸数额（八百贯、六百五十贯）。
-    # 只认关键词会漏掉「八百贯，卖了你那身好皮也凑不出」这种句子 —— 而冲突
-    # 恰恰藏在这类裸数字里。
-    KW = _re.compile(r"[^。！？\n]{0,40}"
-                     r"(?:底价|标底|起标|报价|递价|喊价|标的|期限|分成|利息|月息|"
-                     r"违约|定金|赎金|悬赏|折价|买扑)[^。！？\n]{0,40}")
-    AMT = _re.compile(r"[^。！？\n]{0,30}"
-                      r"[一二三四五六七八九十百千万零两\d]{2,8}(?:贯|两|石|匹|亩)"
-                      r"[^。！？\n]{0,30}")
-    ctx, seen = [], set()
+    win, cur, cur_len = [], [], 0
+    # 单窗口 25k 字符 ≈ 19k tok。60k 会写超时（网关对单次请求体有耐心上限），
+    # 而且窗口越大模型越容易漏看中间段落。宁可多切几窗再汇总。
+    budget = 25000
     for n in done:
         t = nv.p.chapter(n)
-        for pat, cap in ((KW, 6), (AMT, 8)):
-            for h in pat.findall(t)[:cap]:
-                h = h.strip()
-                key = (n, h[:24])
-                if len(h) > 6 and key not in seen:
-                    seen.add(key)
-                    ctx.append(f"第{n}章：{h}")
-    if not ctx:
-        print("没有可比对的数字条款")
-        return 0
-    print(f"\n扫出 {len(ctx)} 条带数字的表述，交给模型比对…")
+        if not t:
+            continue
+        piece = f"\n\n========== 第{n}章 ==========\n{nv.condense(t, 3500)}"
+        if cur and cur_len + len(piece) > budget:
+            win.append(cur)
+            cur, cur_len = [], 0
+        cur.append(piece)
+        cur_len += len(piece)
+    if cur:
+        win.append(cur)
+    print(f"\n正文分 {len(win)} 个窗口交给模型通读…")
 
-    p = ("下面是一部小说里所有涉及**规则性数字**的句子（竞标底价、报价、期限、"
-         "分成、利率等），按章号排列。请找出**同一件事在不同章节数字对不上**的地方。\n\n"
-         + "\n".join(ctx[:200]) +
-         "\n\n只输出 JSON（不要代码围栏）：\n"
-         '{"conflicts":[{"item":"码头竞标底价","canonical":"八百贯",'
-         '"why":"第10章反复出现三次且驱动了后续借钱情节，应以此为准",'
-         '"fix":[{"ch":14,"from":"标底一千贯","to":"标底八百贯"}]}]}\n'
-         "要求：canonical 选**最早确立且被后续情节依赖**的那个值；"
-         "fix 里逐条列出要改的章号与原文片段。没有冲突就输出 {\"conflicts\":[]}。")
-    try:
-        r = call("judging", p, max_tokens=2000)
-        m = _re.search(r"\{.*\}", clean(r.text), _re.S)
-        data = json.loads(m.group(0)) if m else {}
-    except Exception as e:
-        print(f"比对失败：{e}")
-        return 1
-    conf = data.get("conflicts") or []
+    ASK = (
+        "你在给一部长篇小说做**数量一致性校对**。下面是正文原文。\n\n"
+        "请自己找出文中所有**被当成规则来遵守的数量约定**，包括但不限于：\n"
+        "金额与底价、报价、分成比例（一成干股/五五分账/对半）、期限（三日为限/"
+        "分十四个月付清）、利率（三分利/月息）、数目（多少人、多少船、多少石）、"
+        "折算关系（一贯=多少文、一两银=多少贯）。**不要只看带数字的句子** —— "
+        "「对半分」「翻了一倍」「抽一成」这类也算。\n\n"
+        "然后判断哪些地方**对不上**：\n"
+        "① 同一件事在不同章节数值不同，且正文**没有交代原因**\n"
+        "② 算术错误（利息、总价、折算算不通）\n"
+        "③ 违反已定的规则（如低于底价却没被判废标）\n\n"
+        "⚠️ 数字变了不一定是错：正文若交代了改标、抬价、重议、毁约、折价、"
+        "贬值，那是剧情推进，**不要报**。\n\n"
+        "只输出 JSON，不要代码围栏，不要在 JSON 之后追加说明：\n"
+        '{"conflicts":[{"item":"某笔借契的日息","canonical":"一日五钱",'
+        '"why":"立契写明三分利，五百贯按三分利日息就是五钱；后文写成一两五钱，'
+        '多算三倍，全书无改息交代","fix":[{"ch":16,"from":"一日一两五钱",'
+        '"to":"一日五钱"}]}]}\n'
+        "没有冲突就输出 {\"conflicts\":[]}。\n\n")
+
+    def ask(payload: str):
+        r = call("judging", ASK + payload, max_tokens=3000)
+        raw = _re.sub(r"^```[a-z]*\s*|\s*```$", "", clean(r.text).strip(), flags=_re.M)
+        for m in _re.finditer(r"\{", raw):     # 括号配平逐个试解析
+            depth, end = 0, None
+            for i in range(m.start(), len(raw)):
+                if raw[i] == "{":
+                    depth += 1
+                elif raw[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+            if not end:
+                continue
+            try:
+                cand = json.loads(raw[m.start():end])
+            except Exception:
+                continue
+            if isinstance(cand, dict) and "conflicts" in cand:
+                return cand.get("conflicts") or []
+        print(f"  解析不出 JSON，模型原话：{raw[:200]}")
+        return []
+
+    conf = []
+    for i, w in enumerate(win, 1):
+        got = ask("".join(w))
+        print(f"  窗口 {i}/{len(win)}（{len('' .join(w)):,} 字）→ {len(got)} 条")
+        conf += got
+    if len(win) > 1 and conf:            # 跨窗口的冲突再汇总一轮
+        merged = ask("下面是分窗口初判的结果，请去重并剔除误报（尤其是被剧情交代过的变化），"
+                     "输出最终 JSON：\n" + json.dumps({"conflicts": conf}, ensure_ascii=False))
+        if merged:
+            conf = merged
+
     if not conf:
-        print("未发现数字冲突")
+        print("未发现数量冲突")
         return 0
-
     for c in conf:
         print(f"\n【{c.get('item')}】权威值：{c.get('canonical')}")
-        print(f"  理由：{c.get('why','')[:80]}")
+        print(f"  理由：{str(c.get('why', ''))[:100]}")
         for f in c.get("fix", []):
             print(f"  第{f.get('ch')}章：{f.get('from')} → {f.get('to')}")
     if dry:
         return 0
 
-    # 逐章重写：只改数字与因之失真的表述，其余不动
     todo = {}
     for c in conf:
         for f in c.get("fix", []):
-            todo.setdefault(int(f["ch"]), []).append(
-                f"{c['item']}应为「{c['canonical']}」：{f.get('from')} → {f.get('to')}")
+            try:
+                todo.setdefault(int(f["ch"]), []).append(
+                    f"{c['item']}应为「{c['canonical']}」：{f.get('from')} → {f.get('to')}")
+            except (KeyError, ValueError, TypeError):
+                continue
     for n, items in sorted(todo.items()):
         raw = nv.p.chapter(n)
         if not raw:
             continue
-        prompt = (f"下面这一章里的数字与全书其他章节对不上，请改正：\n"
+        prompt = (f"下面这一章里的数量与全书其他章节对不上，请改正：\n"
                   + "\n".join(f"- {x}" for x in items) +
                   "\n\n要求：\n"
-                  "- 只改这些数字，以及**因为数字变了而说不通的那几句**"
-                  "（比如「低于底价却没当场废标」这类）\n"
+                  "- 只改这些数量，以及**因为它变了而说不通的那几句**\n"
                   "- 其余一字不改：不重写、不调段落、不改标点、不加情节\n"
-                  "- 改完自己核一遍：这一章里所有金额之间要算得通\n"
+                  "- 改完自己核一遍：这一章里所有数量之间要算得通\n"
                   f"直接输出修改后的完整正文，无前言。\n\n{raw}")
         t2 = nv.normalize_body(clean(call("polishing", prompt, max_tokens=8192).text))
         c1 = len(_re.findall(r"[一-鿿]", raw))

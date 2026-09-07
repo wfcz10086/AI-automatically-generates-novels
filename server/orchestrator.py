@@ -1595,7 +1595,10 @@ class Novelist:
             # 装配量的 27%, 五层记忆白装
             world_digest=L["L1_resident"],
             alias_rule=self.protagonist_alias(),
-            style_pack=st,
+            # 题材包若有自己的爽点结构(如同人「用他认的道理将死他」)，
+            # 覆盖文风包的通用版本 —— 越贴题材越管用
+            style_pack=({**st, "pleasureBeats": self.genre["pleasureBeats"]}
+                        if self.genre.get("pleasureBeats") else st),
             extra_directive=self.prompt_override("content_extra"),
             global_rules=self.cfg.get("anti_ai_rules") or [],
             directives=self.cfg.get("chapter_directives") or [],

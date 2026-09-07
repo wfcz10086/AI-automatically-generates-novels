@@ -137,6 +137,17 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
         # 起点历史可以到 60 字。全局纪律里只能写个泛泛区间, 这里按包覆盖。
         seg.append(f"⚠️ 【段落节奏】每段 {pc[0]}-{pc[1]} 字，一段只写一个动作或"
                    f"一句话；超过 {pc[1]} 字必须断段。手机端阅读，长段劝退。")
+    pb = sp.get("pleasureBeats") or {}
+    if pb.get("beats"):
+        # 只说「每章一个爽点」模型就写成「谈成了/赢了」—— 赢了但不爽。
+        # 爽点是结构：压→显→翻→补刀，缺哪一拍读者的气都出不透。
+        seg.append("\n🔥 【爽点结构·本章至少完整走一遍】\n"
+                   + "\n".join(pb["beats"])
+                   + ("\n  别犯这些毛病：" + "；".join(pb.get("antipatterns", []))
+                      if pb.get("antipatterns") else ""))
+    ag = sp.get("antagonist") or {}
+    if ag.get("rules"):
+        seg.append("\n【对手规格】" + "；".join(ag["rules"]))
     db = sp.get("descriptionBudget") or {}
     if db.get("note"):
         seg.append("⚠️ 【描写配给】" + db["note"])

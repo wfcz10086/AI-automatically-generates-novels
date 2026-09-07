@@ -73,11 +73,12 @@ search:
       timeout: 20
 
 # 任务 -> 网关 的分层调度。创作类关思考（实测开思考挤爆 token 且不提质）
-# 本轮对照实验: 全流程开思考(档位型网关下 thinking=true 映射为 high)
+# 分层调度。创作类关思考 —— 对照实验结论: deepseek-v4-flash 全流程开思考后
+# 角色档案少 41%、时代红线卡少 65%、细纲慢 2.6 倍，产出更薄而不是更好。
 profiles:
-  planning:   {gateway: gw5, thinking: true, temperature: 0.80}
-  drafting:   {gateway: gw5, thinking: true, temperature: 0.92}
-  polishing:  {gateway: gw5, thinking: true, temperature: 0.85}
-  judging:    {gateway: gw5, thinking: true, temperature: 0.30}
+  planning:   {gateway: gw4, thinking: false, temperature: 0.80}
+  drafting:   {gateway: gw4, thinking: false, temperature: 0.92}
+  polishing:  {gateway: gw4, thinking: false, temperature: 0.85}
+  judging:    {gateway: gw4, thinking: true,  temperature: 0.30}
 
 default_profile: drafting
