@@ -6,7 +6,9 @@ generation:
   chapter_words_min: 2200        # 单章字数下限
   chapter_words_max: 3000        # 单章字数上限
   chapter_words_tolerance: 0.25  # 允许偏离比例，超出计入扣分
-  outline_batch: 10              # 每批生成多少章细纲
+  outline_batch: 0               # 每批生成多少章细纲。0 = 按输出上限自动算
+                                 # （8192 tok 约能排 20 章）。10 太少：写第 5 章时
+                                 # 模型只知道 1-10 章，第 30 章的伏笔无从铺起
   max_tokens_draft: 8192         # 单次正文生成上限
   max_tokens_plan: 8000
   context_budget: auto           # 记忆体预算。auto = 按网关窗口推导（窗口 - 输出预留 - 安全垫）

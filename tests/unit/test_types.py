@@ -345,3 +345,21 @@ def test_english_residue_is_a_hard_gate():
     fx = inspect.getsource(Novelist.fix_english)
     assert "其余一字不改" in fx
     assert "c1 * 0.15" in fx, "缺字数守卫，模型会顺手重写整章"
+
+
+def test_outline_batch_is_computed_not_hardcoded():
+    """细纲批量按输出上限算，不是拍一个 10。
+
+    10 章太少：写第 5 章时模型只知道 1-10 章要发生什么，第 30 章的伏笔
+    无从铺起，批与批之间的节奏也接不上。真实约束是输出 token 上限 ——
+    单章细纲约 456 字 ≈ 342 tok，8192 的上限能装 20 出头。
+    """
+    import inspect
+    from server.orchestrator import Novelist
+    src = inspect.getsource(Novelist.outline_batch)
+    assert "max_tokens_draft" in src, "批量没跟输出上限挂钩"
+    dg = inspect.getsource(Novelist.outline_digest)
+    assert "核心事件" in dg, "已排细纲没压成摘要喂回去"
+    gen = inspect.getsource(Novelist.step_chapter_outlines)
+    assert "outline_digest(" in gen, "后续批次看不到前面排了什么"
+    assert "self.outline_batch(count)" in gen

@@ -1578,8 +1578,43 @@ class Novelist:
                 return v
         return {}
 
+    def outline_digest(self, before: int, limit: int = 14000) -> str:
+        """已排好的细纲压成「N. 一句话」，供后续批次接续。"""
+        co = self.p._load("chapter_outlines.json", {}) or {}
+        got = []
+        for k in sorted((int(x) for x in co), reverse=True):
+            if k >= before:
+                continue
+            t = str(co[str(k)])
+            head = t.split("\n")[0].strip()
+            core = ""
+            m = re.search(r"核心事件[：:]\s*(.+)", t)
+            if m:
+                core = m.group(1).strip()[:70]
+            else:                                   # 没有「核心事件」就取剧情1
+                m2 = re.search(r"剧情1[：:]\s*(.+)", t)
+                core = m2.group(1).strip()[:70] if m2 else t[:70]
+            got.append(f"{k}. {head[:24]}｜{core}")
+            if sum(len(x) for x in got) > limit:
+                break
+        return "\n".join(reversed(got))
+
+    def outline_batch(self, want: int = 0) -> int:
+        """一批排多少章细纲 —— 按输出上限算，不是拍一个 10。
+
+        10 章太少：写第 5 章时模型只知道 1-10 章要发生什么，第 30 章的伏笔
+        无从铺起，批与批之间的节奏也接不上。批量的真实约束是**输出 token 上限**：
+        单章细纲约 456 字 ≈ 342 tok，8192 的上限能装 20 出头，留两成余量取 20。
+        """
+        per = 480                                     # 单章细纲字数上限（含格式）
+        cap = int(self.g.get("max_tokens_draft", 8192))
+        fit = max(4, int(cap * 0.8 / (per * 0.75)))   # 留两成余量
+        cfg = int(self.g.get("outline_batch") or 0)
+        return max(4, min(want or cfg or fit, fit))
+
     def step_chapter_outlines(self, start: int, count: int, on_delta=None) -> List[str]:
-        """分批生成章节细纲, 每批 count 章 —— 一次性生成 200 章细纲必然崩."""
+        """分批生成章节细纲。批量由 outline_batch() 按输出上限算。"""
+        count = self.outline_batch(count)
         ctx = self.base_ctx()
         ctx.update({
             "outline": self.p.read("outline.md"),
@@ -1608,6 +1643,12 @@ class Novelist:
         if vol:
             outline_ctx = (f"【本卷：{vol['name']}（第{vol['start']}-{vol['end']}章）】\n"
                            f"{vol['text']}\n\n【全书总纲摘要】\n" + outline_ctx)
+        # 已排好的细纲压成一行一章喂回去 —— 不给的话，这一批不知道上一批
+        # 埋了什么、铺到哪一步，接缝处必然重复或断裂。
+        prior = self.outline_digest(start)
+        if prior:
+            outline_ctx += ("\n\n【前面各章已排好的内容（一行一章，本批必须接住）】\n"
+                            + prior)
             cons.append(f"本批章节属于「{vol['name']}」，必须服务于本卷主线与卷末钩子，"
                         f"不得越出本卷进度")
         prompt = compile_outline_prompt(

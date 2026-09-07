@@ -82,7 +82,7 @@ def cmd_run(a):
 
     print("[4/4] 逐章生成")
     stamp = _code_stamp()
-    batch = p.cfg["generation"]["outline_batch"]
+    batch = nv.outline_batch()      # 0 = 按输出上限自动算，见 outline_batch()
     start = (p.state.get("current") or 0) + 1
     end = min(start + a.chapters - 1, p.meta["target_chapters"])
     n = start
