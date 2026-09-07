@@ -327,3 +327,21 @@ def test_long_run_does_not_clobber_meta_edits(tmp_path):
     after = _j.loads((d / "project.json").read_text(encoding="utf-8"))
     assert after["title"] == "新名", "长跑把书名冲回旧值了"
     assert after.get("tagline") == "一句话简介", "长跑把新增字段冲掉了"
+
+
+def test_english_residue_is_a_hard_gate():
+    """英文残留要当场改，不能靠分数管。
+
+    实测第 5 章「若是都头 private 自己动手」检测器报了 high（扣 15 分），
+    但全章 85 分高于合格线 70，重写闸门不触发 —— 于是这个一眼可见的低级错
+    就落盘了。这类错的正确形态是语义判断（husband 该是「夫君」还是「官人」
+    看语境），所以不做机械替换，让模型定点改，并用字数守卫防它顺手重写。
+    """
+    import inspect
+    from server.orchestrator import Novelist
+    assert "def fix_english" in inspect.getsource(Novelist)
+    src = inspect.getsource(Novelist.step_chapter)
+    assert "fix_english(" in src, "落盘前没有英文修复"
+    fx = inspect.getsource(Novelist.fix_english)
+    assert "其余一字不改" in fx
+    assert "c1 * 0.15" in fx, "缺字数守卫，模型会顺手重写整章"

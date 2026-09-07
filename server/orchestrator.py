@@ -999,6 +999,42 @@ class Novelist:
                 out.append(f"{nm}（此前出现 {hits} 次，已 {gap} 章未提）")
         return out[:5]
 
+    _EN_OK = {"cpu", "dna", "gdp", "app", "kpi", "ceo", "cto"}
+
+    def english_hits(self, t: str) -> List[str]:
+        return [w for w in re.findall(r"[A-Za-z]{3,}", t)
+                if w.lower() not in self._EN_OK]
+
+    def fix_english(self, n: int, text: str, a: Dict[str, Any],
+                    target: int, on_delta=None):
+        """英文残留定点修复。
+
+        这类错读者一眼就看见, 而且正确形态是语义判断（husband 该是「夫君」
+        还是「官人」要看语境）, 所以不做机械替换, 让模型改; 但只准它改这几个词,
+        字数变化超过 15% 就判定它顺手重写了, 弃用。
+        """
+        en = self.english_hits(text)
+        if not en:
+            return text, a
+        prompt = (f"下面这章正文里混进了英文单词：{'、'.join(dict.fromkeys(en))}。\n"
+                  f"请换成符合本书语境的中文，**其余一字不改**：不重写、不调段落、"
+                  f"不改标点、不增删情节。\n直接输出修改后的完整正文，无前言。\n\n{text}")
+        try:
+            t2 = self.normalize_body(clean(call("polishing", prompt, on_delta,
+                                                max_tokens=8192).text))
+        except Exception as e:
+            self._log(f"第{n}章英文修复失败: {str(e)[:40]}")
+            return text, a
+        c1 = len(re.findall(r"[一-鿿]", text))
+        c2 = len(re.findall(r"[一-鿿]", t2))
+        if not t2 or self.english_hits(t2) or abs(c2 - c1) > c1 * 0.15:
+            self._log(f"第{n}章英文修复无效（{en}），保留原稿")
+            return text, a
+        a2 = audit(t2, extra_blacklist=self.hard_blacklist(), target_words=target,
+                   check_modern=self.anachronism_check())
+        self._log(f"第{n}章英文残留已改：{'、'.join(dict.fromkeys(en))}")
+        return t2, a2
+
     def normalize_body(self, text: str) -> str:
         """成稿规范化 —— 确定性的格式问题，不该靠模型自觉，也不该靠人工校对。
 
@@ -1780,6 +1816,10 @@ class Novelist:
                 self._log(f"第{n}章重写结果过短({len(re.findall(chr(0x4e00)+'-'+chr(0x9fff), t2))}字)，弃用")
 
         text = self.normalize_body(text)     # 落盘前统一格式，别让格式错进成稿
+        # 英文残留必须当场改掉, 不能靠分数管 —— 实测第 5 章「若是都头 private
+        # 自己动手」检测器报了 high, 但全章 85 分高于合格线, 重写闸门不触发,
+        # 于是这个一眼可见的低级错就落盘了。换成什么词是语义判断, 所以定点重写。
+        text, a = self.fix_english(n, text, a, target, on_delta)
         self.p.write(self.p.chapter_path(n), text)
         a["target_words"] = target      # 交付率要用: 没有它就算不出模型少写了多少
         self.p.write(f"audit/{n:03d}.json", json.dumps(a, ensure_ascii=False, indent=2))
