@@ -1584,6 +1584,17 @@ class Novelist:
     # 上下文装得下 ≠ 一次发得过去。留到 40k 字符（约 30k tok）稳定。
     OUTLINE_INPUT_CHARS = 40000
 
+    @staticmethod
+    def clean_outline(t: str) -> str:
+        """清掉细纲里混进来的系统标记与分隔符。
+
+        喂给模型的分隔符会被它当成格式学走：实测「—— 第N章 ——」原样出现在
+        15 章的细纲正文开头。标记是给流水线看的，不该进产物。
+        """
+        t = re.sub(r"^\s*(?:\[\[CH\d+\]\]|——\s*第\d+章\s*——|###fenge)\s*$",
+                   "", t, flags=re.M)
+        return t.strip()
+
     def outline_digest(self, before: int, full_span: int = 0,
                        limit: int = 0) -> str:
         """已排好的细纲，分层喂给下一批：近的完整，远的压缩。
@@ -1614,7 +1625,9 @@ class Novelist:
             return f"{k}. {head[:24]}｜{core}"
 
         brief = [one_line(k) for k in brief_keys]
-        full = [f"—— 第{k}章 ——\n{str(co[str(k)]).strip()}" for k in full_keys]
+        # 分隔符不能长得像内容 —— 实测用「—— 第N章 ——」当分隔符, 模型把它
+        # 当成细纲格式学了去, 15 章的细纲正文里都带上了这一行。
+        full = [f"[[CH{k}]]\n{str(co[str(k)]).strip()}" for k in full_keys]
         # 先保完整段, 压缩行从最远处开始砍
         while brief and sum(len(x) for x in brief) + sum(len(x) for x in full) > limit:
             brief.pop(0)
@@ -1649,82 +1662,123 @@ class Novelist:
         下一卷开头。这些只有把全书细纲摊开才看得见，而且**现在改一行字，
         比写完二十万字再返工便宜一百倍**。
 
-        输出写进 outline_review.md，问题清单同时落进 repair_queue，
-        逐章生成时会把「本章要注意什么」带进约束层。
+        分段读再汇总，不一次吞：160 章细纲 9.7 万字符，一次发出去 33k tok
+        模型直接返回空。分段还有个好处 —— 每段能看到剧情点细节，
+        一次吞就只能压成一行，反而看不出重复桥段。
         """
         co = self.p._load("chapter_outlines.json", {}) or {}
         if len(co) < 5:
             return {"error": "细纲太少，先生成细纲"}
         keys = sorted(int(k) for k in co)
-        # 全书细纲摊开给模型看。60k 预算下 346 章一行一章绰绰有余，
-        # 但审阅要看得见剧情点，所以按预算能给多少完整给多少。
-        budget = self.OUTLINE_INPUT_CHARS
-        body, used = [], 0
-        for k in keys:
-            t = str(co[str(k)]).strip()
-            if used + len(t) > budget:
-                m = re.search(r"核心事件[：:]\s*(.+)", t) or re.search(r"剧情1[：:]\s*(.+)", t)
-                t = f"第{k}章 {t.splitlines()[0][:20]}｜{(m.group(1) if m else t)[:60]}"
-            body.append(t)
-            used += len(t)
         vols = self.p._load("volumes.json", []) or []
         vol_map = "\n".join(f"{v.get('start')}-{v.get('end')} {v.get('name','')}"
                             for v in vols)
-        prompt = (
-            f"你是网文主编，在**动笔之前**审读《{self.p.meta.get('title','')}》的全书细纲。\n\n"
-            f"【分卷】\n{vol_map}\n\n"
-            f"【总纲】\n{self.asset('outline.md')[:4000]}\n\n"
-            f"【全书细纲】共 {len(keys)} 章\n" + "\n\n".join(body) + "\n\n"
-            f"逐章写的时候看不出整体毛病，请把全书摊开来看这六件事：\n"
-            f"1. **节奏**：是不是章章高潮（读者会疲）或连着三章没事发生（读者会跑）？"
-            f"每 4-6 章该有一个小高潮，卷末该有大高潮\n"
-            f"2. **伏笔**：哪些埋了没人收？哪些收得太快（埋下三章就兑现，没有煎熬）？"
-            f"哪些收得太晚（超过 40 章，读者早忘了）？\n"
-            f"3. **重复**：有没有同一个桥段换个人名又演一遍"
-            f"（又一次公堂对质、又一次半夜递话、又一次账本翻案）？\n"
-            f"4. **人物**：谁连着二十章没露面？谁从头到尾只是背景板？"
-            f"主角是不是每章都在赢，没有真正吃过亏？\n"
-            f"5. **接缝**：卷末钩子接不接得上下一卷开头？跨卷的线有没有断？\n"
-            f"6. **兑现**：总纲承诺的东西（终局、爽点节奏表、伏笔总账），"
-            f"细纲里有没有对应的章节去落实？\n\n"
-            f"只输出 JSON，不要代码围栏，不要在 JSON 之后追加说明：\n"
-            f'{{"verdict":"一句话总评","issues":[{{"kind":"节奏|伏笔|重复|人物|接缝|兑现",'
-            f'"where":"第X-Y章","what":"问题是什么","fix":"具体怎么改，改哪一章的哪一点"}}],'
-            f'"strong":["写得好的地方，保持"]}}\n'
-            f"issues 按严重程度排序，最多 12 条。没问题就给空数组。")
-        r = call("judging", prompt, on_delta, max_tokens=3000)
-        raw = re.sub(r"^```[a-z]*\s*|\s*```$", "", clean(r.text).strip(), flags=re.M)
-        data = {}
-        for m in re.finditer(r"\{", raw):
-            depth, end = 0, None
-            for i in range(m.start(), len(raw)):
-                if raw[i] == "{":
-                    depth += 1
-                elif raw[i] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        end = i + 1
-                        break
-            if not end:
-                continue
-            try:
-                cand = json.loads(raw[m.start():end])
-            except Exception:
-                continue
-            if isinstance(cand, dict) and "issues" in cand:
-                data = cand
-                break
-        if not data:
-            self._log("细纲审阅：解析失败")
-            return {"error": "解析失败", "raw": raw[:400]}
+        outline = self.asset("outline.md")[:3000]
 
-        lines = [f"# 细纲审阅（{len(keys)} 章）", "",
-                 f"**总评**：{data.get('verdict','')}", ""]
-        if data.get("strong"):
-            lines += ["## 写得好的地方"] + [f"- {x}" for x in data["strong"]] + [""]
-        if data.get("issues"):
+        CHECKS = ("1. **节奏**：是不是章章高潮（读者会疲）或连着三章没事发生"
+                  "（读者会跑）？每 4-6 章该有小高潮，卷末该有大高潮\n"
+                  "2. **伏笔**：哪些埋了没人收？哪些埋下三章就兑现（没有煎熬）？"
+                  "哪些超过 40 章才收（读者早忘了）？\n"
+                  "3. **重复**：有没有同一个桥段换个人名又演一遍"
+                  "（又一次公堂对质、又一次半夜递话、又一次账本翻案）？\n"
+                  "4. **人物**：谁连着二十章没露面？谁从头到尾只是背景板？"
+                  "主角是不是每章都在赢、没真正吃过亏？\n"
+                  "5. **接缝**：卷末钩子接不接得上下一卷开头？跨卷的线有没有断？\n"
+                  "6. **兑现**：总纲承诺的东西（终局、爽点节奏表、伏笔总账），"
+                  "细纲里有没有对应章节去落实？\n")
+        JSON_FMT = ('只输出 JSON，不要代码围栏，不要在 JSON 之后追加说明：\n'
+                    '{"issues":[{"kind":"节奏|伏笔|重复|人物|接缝|兑现",'
+                    '"where":"第X-Y章","what":"问题是什么",'
+                    '"fix":"具体怎么改，改哪一章的哪一点"}],'
+                    '"strong":["写得好的地方"]}\n'
+                    "没问题就给空数组。")
+
+        def parse(txt: str) -> Dict[str, Any]:
+            raw = re.sub(r"^```[a-z]*\s*|\s*```$", "", clean(txt).strip(), flags=re.M)
+            for m in re.finditer(r"\{", raw):
+                depth, end = 0, None
+                for i in range(m.start(), len(raw)):
+                    if raw[i] == "{":
+                        depth += 1
+                    elif raw[i] == "}":
+                        depth -= 1
+                        if depth == 0:
+                            end = i + 1
+                            break
+                if not end:
+                    continue
+                try:
+                    cand = json.loads(raw[m.start():end])
+                except Exception:
+                    continue
+                if isinstance(cand, dict) and "issues" in cand:
+                    return cand
+            return {}
+
+        # 分段: 每段约 18000 字符, 能看到剧情点细节
+        segs, cur, cur_len = [], [], 0
+        for k in keys:
+            t = str(co[str(k)]).strip()
+            if cur and cur_len + len(t) > 18000:
+                segs.append(cur)
+                cur, cur_len = [], 0
+            cur.append((k, t))
+            cur_len += len(t)
+        if cur:
+            segs.append(cur)
+
+        issues, strong = [], []
+        for i, seg in enumerate(segs, 1):
+            lo, hi = seg[0][0], seg[-1][0]
+            body = "\n\n".join(t for _, t in seg)
+            p = (f"你是网文主编，在动笔之前审读《{self.p.meta.get('title','')}》的细纲。\n\n"
+                 f"【分卷】\n{vol_map}\n\n【总纲】\n{outline}\n\n"
+                 f"【本段细纲：第 {lo}-{hi} 章】\n{body}\n\n"
+                 f"请看这六件事（只报本段内看得出的问题）：\n{CHECKS}\n{JSON_FMT}")
+            try:
+                d = parse(call("judging", p, on_delta, max_tokens=2500).text)
+            except Exception as e:
+                self._log(f"细纲审阅第{i}段失败: {str(e)[:40]}")
+                continue
+            got = d.get("issues") or []
+            issues += got
+            strong += d.get("strong") or []
+            self._log(f"细纲审阅 第{lo}-{hi}章 → {len(got)} 条")
+
+        # 汇总一轮: 去重、剔除误报、补上跨段才看得见的问题
+        verdict = ""
+        if issues:
+            one_line = []
+            for k in keys:
+                t = str(co[str(k)])
+                m = re.search(r"核心事件[：:]\s*(.+)", t) or re.search(r"剧情1[：:]\s*(.+)", t)
+                one_line.append(f"{k}. {t.splitlines()[0][:20]}｜{(m.group(1) if m else t)[:50]}")
+            p = (f"下面是分段审读《{self.p.meta.get('title','')}》细纲得到的问题清单，"
+                 f"以及全书一行一章的梗概。\n\n"
+                 f"【全书梗概】\n" + "\n".join(one_line)[:20000] + "\n\n"
+                 f"【分段初判】\n" + json.dumps({"issues": issues}, ensure_ascii=False)[:12000] +
+                 f"\n\n请：① 去重合并；② 剔除误报（分段时看不到全局，"
+                 f"有些「伏笔没收」其实后面收了）；③ 补上**跨段才看得见**的问题"
+                 f"（跨卷断线、全书节奏、某人物长期缺席）；④ 按严重程度排序，最多 12 条。\n"
+                 f"另给一句 verdict 总评。\n\n"
+                 '只输出 JSON：{"verdict":"…","issues":[…],"strong":[…]}')
+            try:
+                d = parse(call("judging", p, on_delta, max_tokens=3000).text)
+                if d.get("issues") is not None:
+                    issues = d["issues"]
+                    strong = d.get("strong") or strong
+                    verdict = d.get("verdict", "")
+            except Exception as e:
+                self._log(f"细纲审阅汇总失败: {str(e)[:40]}")
+
+        lines = [f"# 细纲审阅（第 {keys[0]}-{keys[-1]} 章，共 {len(keys)} 章）", ""]
+        if verdict:
+            lines += [f"**总评**：{verdict}", ""]
+        if strong:
+            lines += ["## 写得好的地方"] + [f"- {x}" for x in dict.fromkeys(strong)] + [""]
+        if issues:
             lines += ["## 要改的地方", ""]
-            for i, x in enumerate(data["issues"], 1):
+            for i, x in enumerate(issues, 1):
                 lines.append(f"### {i}. [{x.get('kind','')}] {x.get('where','')}")
                 lines.append(f"- 问题：{x.get('what','')}")
                 lines.append(f"- 怎么改：{x.get('fix','')}")
@@ -1732,9 +1786,8 @@ class Novelist:
         else:
             lines.append("## 未发现结构性问题")
         self.p.write("outline_review.md", "\n".join(lines))
-        self._log(f"细纲审阅 {len(keys)} 章 → {len(data.get('issues', []))} 条问题 "
-                  f"/ {r.elapsed:.1f}s")
-        return data
+        self._log(f"细纲审阅完成 {len(keys)} 章 → {len(issues)} 条问题")
+        return {"verdict": verdict, "issues": issues, "strong": strong}
 
     def step_chapter_outlines(self, start: int, count: int, on_delta=None) -> List[str]:
         """分批生成章节细纲。批量由 outline_batch() 按输出上限算。"""
@@ -1826,7 +1879,7 @@ class Novelist:
         parts = [clean(x) for x in re.split(r"###fenge", r.text) if x.strip()]
         outlines = self.p._load("chapter_outlines.json", {})
         for i, part in enumerate(parts):
-            outlines[str(start + i)] = part
+            outlines[str(start + i)] = self.clean_outline(part)
         self.p.write("chapter_outlines.json", json.dumps(outlines, ensure_ascii=False, indent=2))
         self._log(f"细纲 {start}-{start+len(parts)-1} 共 {len(parts)} 章 / {r.elapsed:.1f}s")
         return parts

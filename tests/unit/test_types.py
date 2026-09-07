@@ -391,13 +391,13 @@ def test_outline_digest_is_layered(tmp_path):
     # 预算充足时全部完整喂（上下文够大就不该压）
     out = nv.outline_digest(61, limit=200000)
     assert "【最近各章（完整细纲" in out, "近的没有完整喂"
-    assert out.count("—— 第") == 60, "预算够却没全给完整版"
+    assert out.count("[[CH") == 60, "预算够却没全给完整版"
     assert "【更早各章（压缩" not in out, "预算够却还在压缩"
 
     # 预算收紧时才分层：近的完整、远的压成一行
     out2 = nv.outline_digest(61, limit=12000)
     assert "【更早各章（压缩" in out2, "预算不足时没有压缩远端"
-    n_full = out2.count("—— 第")
+    n_full = out2.count("[[CH")
     assert 1 <= n_full < 60, f"完整段章数不合理：{n_full}"
     head, tail = out2.split("【最近各章（完整细纲", 1)
     assert "剧情2：" in tail, "完整段丢了剧情点"
@@ -435,3 +435,21 @@ def test_web_service_survives_syntax_errors():
     src = inspect.getsource(A.main)
     assert "NOVEL_SUPERVISED" in src, "缺少看门进程"
     assert "重启" in src
+
+
+def test_separators_do_not_leak_into_outlines():
+    """喂给模型的分隔符不能被它当成格式学走。
+
+    实测用「—— 第N章 ——」当已排细纲的分隔符，模型把它当成细纲格式，
+    15 章的细纲正文开头都带上了这一行 —— 标记是给流水线看的，不该进产物。
+    """
+    import inspect
+    from server.orchestrator import Novelist
+    dg = inspect.getsource(Novelist.outline_digest)
+    assert "—— 第" not in dg, "分隔符仍长得像正文内容"
+    assert "[[CH" in dg, "没换成明显是系统标记的形式"
+    dirty = "[[CH12]]\n第12章 标题\n剧情1：内容\n###fenge"
+    assert Novelist.clean_outline(dirty).startswith("第12章"), "没清掉标记"
+    assert "###fenge" not in Novelist.clean_outline(dirty)
+    gen = inspect.getsource(Novelist.step_chapter_outlines)
+    assert "clean_outline(part)" in gen, "落盘前没清洗"
