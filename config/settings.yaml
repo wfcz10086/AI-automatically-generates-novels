@@ -11,6 +11,9 @@ generation:
                                  # 模型只知道 1-10 章，第 30 章的伏笔无从铺起
   max_tokens_draft: 8192         # 单次正文生成上限
   max_tokens_plan: 8000
+  # 排纲单独一档：一批要出十几二十章细纲，8000 装不下，最后一章必被截断。
+  # 输出上限只是天花板，按实际生成计费，给宽一点没有代价。
+  max_tokens_outline: 16000
   context_budget: auto           # 记忆体预算。auto = 按网关窗口推导（窗口 - 输出预留 - 安全垫）
   output_reserve: 8192           # 给正文输出留的 token
   safety_margin: 4000            # 中文 token 估算误差的安全垫

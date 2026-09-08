@@ -745,6 +745,13 @@ def active_threads(threads: Sequence[Dict[str, Any]], n: int) -> List[Dict[str, 
 
 
 def thread_brief(threads: Sequence[Dict[str, Any]], n: int) -> str:
+    """注入排纲的支线约束块。
+
+    带上「前几次是怎么露面的」，因为只要求「必须推进」会推出四章一个模子 ——
+    实测某书的暗线每 12 章按时露面四次，四次全是同一套：主帅核账 → 部下催战
+    → 主帅先问粮 → 行商带来南边闲话 → 下两道令 → 一句意味深长的话。
+    节奏机制保证了「露面」，保证不了「露面方式不同」，得把上次的写法喂回去。
+    """
     live = active_threads(threads, n)
     if not live:
         return ""
@@ -757,7 +764,29 @@ def thread_brief(threads: Sequence[Dict[str, Any]], n: int) -> str:
                      f"每 {t['cadence']} 章至少露一次，已隔 {gap} 章）{due}")
         if t.get("beats"):
             lines.append(f"    节点：{' → '.join(t['beats'])}")
+        how = t.get("recent_how") or []
+        if how:
+            lines.append(f"    前几次这样露的面：{'；'.join(how[-3:])}")
+            lines.append(f"    ⚠ 本批**必须换一种方式**推进它：换场景、换视角人物、"
+                         f"换事件类型、换它与主线咬合的方式。重复上面的套路算不合格。")
     return "\n".join(lines)
+
+
+def thread_repetitive(threads: Sequence[Dict[str, Any]]) -> List[str]:
+    """连着几次用同一种方式露面的支线 —— 按时出场了，但读起来是同一章。"""
+    out = []
+    for t in threads or []:
+        how = [str(x) for x in (t.get("recent_how") or [])]
+        if len(how) < 3:
+            continue
+        # 判重交给字面重合度: 三次描述里两两都高度相似才报, 单纯用词像不算
+        def sim(a, b):
+            sa, sb = set(a), set(b)
+            return len(sa & sb) / max(1, len(sa | sb))
+        pairs = [sim(how[-1], how[-2]), sim(how[-2], how[-3]), sim(how[-1], how[-3])]
+        if sum(1 for x in pairs if x > 0.5) >= 2:
+            out.append(f"{t['name']}：连着三次用同一套写法露面（{how[-1][:40]}…）")
+    return out
 
 
 def thread_overdue(threads: Sequence[Dict[str, Any]], n: int) -> List[str]:

@@ -1786,6 +1786,35 @@ class Novelist:
                               + (f"，它的关键节点是：{' → '.join(x['beats'])}"
                                  if x.get("beats") else "")})
 
+        # ①b 戏份很重、却不在任何阶段功能位上的人 —— 骨架不知道他为什么存在，
+        #     于是他只会一直做同一件事（实测某配角 8 章全是采买记账）。
+        assigned = {sc.canon_name(nm, al)
+                    for s in self.stages()
+                    for v in (s.get("roles") or {}).values() for nm in v}
+        for nm, cs in app.items():
+            if len(cs) >= 8 and sc.canon_name(nm, al) not in assigned and nm != hero:
+                chs = window(cs[-1] - 1, upto, want=2)
+                if chs:
+                    jobs.append({"kind": "有戏无位", "chapters": chs,
+                                 "demand": f"「{nm}」已出场 {len(cs)} 章（第 {cs[0]}-{cs[-1]} 章），"
+                                           f"戏份不轻，却不在任何阶段的功能位上 —— "
+                                           f"骨架不知道他为什么存在，他就只会一直做同一件事。"
+                                           f"这几章里给他一件**与他此前做的事不同类**的戏："
+                                           f"让他挡一次、给一次、付一次代价、或与主角有一次分歧"})
+
+        # ①c 支线露面方式重复
+        for x in sc.thread_repetitive(thr):
+            m2 = re.search(r"^([^：]+)", x)
+            nm = m2.group(1) if m2 else ""
+            tt = next((y for y in thr if y["name"] == nm), None)
+            if tt:
+                chs = window(tt.get("last_touched") or tt["span"][0],
+                             min(upto, tt["span"][1]), want=2)
+                if chs:
+                    jobs.append({"kind": "支线写法重复", "chapters": chs,
+                                 "demand": f"{x}。这几章里换一种方式推进它：换场景、"
+                                           f"换视角人物、换事件类型、换它与主线咬合的方式"})
+
         # ② 张力被静默消解
         app = self.outline_cast()
         for s in sc.silent_resolution(self.tensions(), app, upto, aliases=al):
@@ -1960,8 +1989,9 @@ class Novelist:
             "双方同框、或一方为此付出代价、或明写了它的进展\n"
             "- ladder：本批**实质推进**了的线（power／pleasure／persona）。"
             "只是维持现状不算，要看得出比上一批往前走了\n"
-            "- threads：本批**真的推进**了的支线编号（S 后面的数字）。"
-            "该支线的人或组织有实际戏份才算，只被提一句不算\n"
+            "- threads：本批**真的推进**了的支线，每条给出编号与 how。"
+            "该支线的人或组织有实际戏份才算，只被提一句不算。"
+            "how 要写清「这次是怎么露的面」——下一批要靠它避免重复写法\n"
             "拿不准就不填，宁缺毋滥。")
         try:
             data = sc.parse_json(clean(call("polishing", prompt, max_tokens=1200).text))
@@ -2015,14 +2045,24 @@ class Novelist:
             self.p.write("ladders.json", json.dumps(lad, ensure_ascii=False, indent=2))
         got["threads"] = 0
         by_tid = {x["id"]: x for x in thr}
-        for i in (data.get("threads") or [])[:8]:
+        for item in (data.get("threads") or [])[:8]:
+            # 兼容两种回法: 光给编号, 或给 {id, how}
+            how = ""
+            if isinstance(item, dict):
+                raw_id, how = item.get("id"), str(item.get("how") or "")[:60]
+            else:
+                raw_id = item
             try:
-                x = by_tid.get(int(i))
+                x = by_tid.get(int(raw_id))
             except (ValueError, TypeError):
                 continue
-            if x:
-                x["last_touched"] = end
-                got["threads"] += 1
+            if not x:
+                continue
+            x["last_touched"] = end
+            if how:
+                # 只留最近三次 —— 再多既占提示词又没有判别价值
+                x["recent_how"] = ((x.get("recent_how") or []) + [how])[-3:]
+            got["threads"] += 1
         if got["threads"]:
             self.p.write("threads.json", json.dumps(thr, ensure_ascii=False, indent=2))
         st = self.p.state
@@ -2103,10 +2143,23 @@ class Novelist:
         # 分隔符不能长得像内容 —— 实测用「—— 第N章 ——」当分隔符, 模型把它
         # 当成细纲格式学了去, 15 章的细纲正文里都带上了这一行。
         full = [f"[[CH{k}]]\n{str(co[str(k)]).strip()}" for k in full_keys]
-        # 先保完整段, 压缩行从最远处开始砍
-        while brief and sum(len(x) for x in brief) + sum(len(x) for x in full) > limit:
+
+        # 超预算时**降级**, 不是丢弃：最老的完整段压成一行, 排到压缩区末尾。
+        # 原来是反过来的 —— 先把压缩行从最远处砍光, 完整段一章不让, 于是
+        # 前面几十章直接从上下文里消失, 连一行摘要都不剩, 而近处的二三十章
+        # 完整细纲吃掉了全部预算。一行一百字承载一整章, 完整段一章四百多字,
+        # 预算紧张时该让的是完整段。
+        def total():
+            return sum(len(x) for x in brief) + sum(len(x) for x in full)
+
+        while total() > limit and len(full) > 3:
+            k = full_keys[len(full_keys) - len(full)]
+            full.pop(0)
+            brief.append(one_line(k))
+        # 全降成一行还是装不下, 才从最远处开始真丢
+        while brief and total() > limit:
             brief.pop(0)
-        while full and sum(len(x) for x in full) > limit:
+        while len(full) > 1 and total() > limit:
             full.pop(0)
         out = []
         if brief:
@@ -2116,6 +2169,33 @@ class Novelist:
                        + "\n\n".join(full))
         return "\n\n".join(out)
 
+    @staticmethod
+    def split_outline(text: str, want: int = 0) -> List[str]:
+        """把一批细纲切成单章 —— 分隔符靠不住，得有兜底。
+
+        约定的分隔符是 ###fenge，但模型时不时整批不输出它。原来直接
+        re.split 一刀切，切不开就返回一整块，然后被当成**第一章**存进
+        chapter_outlines.json —— 实测存进去两条：一条 7659 字里裹着 11 章，
+        一条 6004 字里裹着 8 章。后面的批次以为这些章已排好，接着往下排，
+        于是同一段剧情既在第 53 章里，又在第 54-63 章里各存了一份。
+
+        兜底判据是**切出来的块数明显少于要的章数**，这时改按「第N章」
+        标题行重切。标题行是四种内容类型共用的格式，比分隔符可靠得多。
+        """
+        parts = [clean(x) for x in re.split(r"###fenge", text or "") if x.strip()]
+        if want and len(parts) >= max(2, int(want * 0.6)):
+            return parts
+        heads = list(re.finditer(r"^\s*第\s*\d{1,4}\s*章", text or "", re.M))
+        if len(heads) <= len(parts):
+            return parts
+        out = []
+        for i, m in enumerate(heads):
+            end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+            seg = clean(text[m.start():end])
+            if seg.strip():
+                out.append(seg)
+        return out or parts
+
     def outline_batch(self, want: int = 0) -> int:
         """一批排多少章细纲 —— 按输出上限算，不是拍一个 10。
 
@@ -2123,8 +2203,19 @@ class Novelist:
         无从铺起，批与批之间的节奏也接不上。批量的真实约束是**输出 token 上限**：
         单章细纲约 456 字 ≈ 342 tok，8192 的上限能装 20 出头，留两成余量取 20。
         """
-        per = 480                                     # 单章细纲字数上限（含格式）
-        cap = int(self.g.get("max_tokens_draft", 8192))
+        # 单章字数**按实测算，不写死**：格式一改（比如新增「承接」字段），
+        # 写死的 480 就低估了，批量不跟着降，每批最后一章必被截断 ——
+        # 实测加了承接字段后单章从 456 涨到 515+，18 章的批量正好超出上限。
+        co = self.p._load("chapter_outlines.json", {})
+        got = [len(str(v)) for v in co.values() if len(str(v)) > 200]
+        per = 480
+        if len(got) >= 6:
+            # 按**均值**留一成五的余量，不是按分位数。一批的总长是求和，
+            # 会向 n×均值收敛，不会 n 章全撞上最长的那种；按 85 分位估
+            # 等于按最坏情况给每一章配额，实测把批量从 14 压到 10，白扔容量。
+            per = max(420, int(sum(got) / len(got) * 1.15))
+        cap = int(self.g.get("max_tokens_outline")
+                  or self.g.get("max_tokens_draft", 8192))
         fit = max(4, int(cap * 0.8 / (per * 0.75)))   # 留两成余量
         cfg = int(self.g.get("outline_batch") or 0)
         return max(4, min(want or cfg or fit, fit))
@@ -2294,6 +2385,15 @@ class Novelist:
         cons = []
         if anchor.get("dynasty"):
             cons.append(f"朝代只叫「{anchor['dynasty']}」，禁用：{'、'.join(anchor['forbidden'][:10])}")
+        # 时代红线卡原来只在**写正文**时注入，排纲阶段完全看不见 ——
+        # 于是细纲里会冒出差着一百二十年的年号（政和年间写成「嘉熙年前」），
+        # 等写正文时才发现，那一章的剧情已经按错的年代排好了。
+        era = self.asset("era_card.md", cap=3000)
+        if era:
+            cons.append("【时代红线卡 —— 排纲就要守，别等写正文才发现穿帮】\n" + era)
+        cons.append("纪年只用本书时代真实存在的年号或纪年方式；拿不准就写"
+                    "「某年春」「入冬前」这类相对时间，**绝不许编一个年号**，"
+                    "更不许用本朝之后才有的年号。")
         if anchor.get("main_place"):
             cons.append(f"主场固定在「{anchor['main_place']}」")
         cons.append("每章主角之外必须有 2 个以上配角有独立戏份")
@@ -2401,14 +2501,15 @@ class Novelist:
         if bg:
             prompt += ("\n\n【现实参考资料 —— 本批剧情涉及的器物、行程、礼俗须符合下列常识；"
                        "资料里的朝代名不得出现在成稿里】\n" + bg[:5000])
-        r = call("planning", prompt, on_delta, max_tokens=8000)
-        parts = [clean(x) for x in re.split(r"###fenge", r.text) if x.strip()]
+        r = call("planning", prompt, on_delta,
+                 max_tokens=int(self.g.get("max_tokens_outline") or 8000))
+        parts = self.split_outline(r.text, count)
         outlines = self.p._load("chapter_outlines.json", {})
         # 章号以**正文里写的**为准, 不能按顺序硬编号。实测要它排 37-54,
         # 它排出的是「第75章…第87章」, 而 str(start+i) 把这些内容存成了
         # 第 37-50 章 —— 键和内容对不上, 写正文时按第 37 章取到的是第 75 章的剧情。
         end = start + count - 1
-        kept, drift, out_of_range = 0, [], []
+        kept, drift, out_of_range, truncated = 0, [], [], []
         for i, part in enumerate(parts):
             m = re.search(r"第\s*(\d{1,4})\s*章", part[:60])
             idx = int(m.group(1)) if m else start + i
@@ -2417,14 +2518,24 @@ class Novelist:
             if not (start <= idx <= end):
                 out_of_range.append(idx)
                 continue                      # 越界的丢掉, 下一轮重排
-            outlines[str(idx)] = self.clean_outline(part)
+            body = self.clean_outline(part)
+            # 截断守卫：一批的最后一章常被输出上限切掉半句。原来只按长度筛
+            # (<200 字当没排)，可截断的章往往有四五百字，照样落盘 ——
+            # 于是细纲里留下「第三天乖乖回来」「应二」这种断句，后面的批次
+            # 还会把它当成排好的内容去接。改为按**尾字段**判定完整。
+            if not re.search(r"(章末钩子|钩子)\s*[:：]\s*\S", body):
+                truncated.append(idx)
+                continue
+            outlines[str(idx)] = body
             kept += 1
         self.register_new_cast(parts)
         self.p.write("chapter_outlines.json", json.dumps(outlines, ensure_ascii=False, indent=2))
         note = ""
+        if truncated:
+            note += f"，丢弃截断 {len(truncated)} 章（{truncated[:4]}）"
         if out_of_range:
-            note = f"，丢弃越界 {len(out_of_range)} 章（{out_of_range[:4]}）"
-        elif drift:
+            note += f"，丢弃越界 {len(out_of_range)} 章（{out_of_range[:4]}）"
+        if drift and not note:
             note = f"，章号偏移 {len(drift)} 处（如 {drift[0][0]}→{drift[0][1]}）"
         self._log(f"细纲 {start}-{end} 收 {kept} 章 / {r.elapsed:.1f}s{note}")
         if kept:
