@@ -71,6 +71,15 @@ search:
       endpoint: ${NOVEL_SEARCH_URL:-http://127.0.0.1:18888}
       lang: zh-CN
       timeout: 20
+      # 只打实测有效的引擎，按质量排序（用 !bang 定向，engines= 参数无效）。
+      # 实测同一条中文考据检索：
+      #   yandex 15 条，中文站命中率最高（国学网/政府站/学术专栏）
+      #   bing   10 条，其中 4 条是 TikTok 与抖音教程 —— 保留但排在后面
+      #   baidu / sogou    Suspended: CAPTCHA（实例被封，配代理才能用）
+      #   google cse       too many requests
+      #   wikipedia / duckduckgo / scholar   零响应
+      # 换实例或修好上面几家之后，把它们按质量插进这个列表即可。
+      engines: [yandex, bing]
 
 # 任务 -> 网关 的分层调度。创作类关思考（实测开思考挤爆 token 且不提质）
 # 分层调度。创作类关思考 —— 对照实验结论: deepseek-v4-flash 全流程开思考后

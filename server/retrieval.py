@@ -115,51 +115,169 @@ class Retriever:
                 "message": "这个关键词一条都没搜到，换个说法或换个角度",
                 "query": need.get("query", "")}
 
-    def fact_for(self, need: Dict[str, str]) -> Optional[Dict[str, Any]]:
-        """一个知识点: 先查已建立的事实卡, 没有才联网, 查完写回记忆索引。"""
+    # ---------------- 主题归一 ----------------
+    #: 归一化时丢掉的虚词与标点。模型每次换个说法（「宋代货币购买力与贯」/
+    #: 「宋代钱两贯的换算与购买力」/「宋代货币购买力 贯 网文换算」）就绕过缓存，
+    #: 实测一本书 387 次检索里有近百次是在重复查同一件事。
+    _NOISE = re.compile(r"[\s·、,，/|｜:：的与和及在为对了个]+")
+
+    @classmethod
+    def _key(cls, topic: str) -> str:
+        return cls._NOISE.sub("", str(topic or ""))[:24]
+
+    def _by_key(self) -> Dict[str, str]:
+        return {self._key(k): k for k in self.facts}
+
+    # ---------------- 结果过滤: 一条一条交给模型 ----------------
+    _TAG = re.compile(r"(?is)<(script|style|nav|footer|header|aside)[^>]*>.*?</\1>")
+    _ANY_TAG = re.compile(r"(?s)<[^>]+>")
+
+    def _page_text(self, url: str, cap: int = 6000) -> str:
+        """抓页面正文。
+
+        只吃搜索引擎返回的 60-120 字摘要片段，是摘要质量的天花板 ——
+        实测事实卡里会出现「第三条结果答非所问，讲南唐与金陵沿革」这种话，
+        因为模型手里只有片段，没有正文可读。
+        """
+        try:
+            import requests
+            r = requests.get(url, timeout=12, headers={
+                "User-Agent": "Mozilla/5.0 (compatible; novelbot/1.0)"})
+            r.encoding = r.apparent_encoding or r.encoding
+            if r.status_code != 200 or "html" not in r.headers.get("content-type", "html"):
+                return ""
+            h = self._TAG.sub(" ", r.text)
+            txt = self._ANY_TAG.sub(" ", h)
+            txt = re.sub(r"&[a-z]{2,8};", " ", txt)
+            txt = re.sub(r"[ \t\r\f\v]+", " ", txt)
+            txt = re.sub(r"\n\s*\n+", "\n", txt)
+            return txt.strip()[:cap]
+        except Exception:
+            return ""
+
+    def _judge(self, topic: str, hits: List[Dict[str, Any]]) -> List[int]:
+        """逐条判定哪些结果真的回答了这个问题。
+
+        原来是把 4 条片段一股脑拼起来让模型压成卡片 —— 垃圾把好料稀释掉，
+        模型只能在噪声里挑，挑不出来就整条弃掉（实测拒绝率 53%）。
+        改成先一条一条过筛，只把留下的送去摘要。
+        """
+        if not hits:
+            return []
+        if not self.summarize:
+            return list(range(len(hits)))
+        listing = "\n".join(
+            f"{i+1}. [{h.get('engine','')}] {h.get('title','')[:70]}\n"
+            f"   {h.get('url','')[:90]}\n   {(h.get('content') or '')[:220]}"
+            for i, h in enumerate(hits))
+        ask = (f"我要查的是：**{self.era} {topic}**\n\n"
+               f"下面是搜索引擎返回的结果，逐条判断它**是不是真的在讲这件事**。\n"
+               f"以下一律判为无关：搜索引擎首页、导航站、短视频/社交平台、"
+               f"电商与广告、与主题无关的百科泛述（如查「市舶司公凭」却返回"
+               f"「宋朝历史简介」）、正文为空。\n"
+               f"宁可少留，不要留错 —— 留错一条，整张事实卡就被污染。\n\n"
+               f"{listing}\n\n"
+               f"只输出有关的编号，逗号分隔，如：1,4。一条都没有就输出：无")
+        try:
+            out = (self.summarize(ask) or "").strip()
+        except Exception:
+            return list(range(len(hits)))
+        if "无" in out and not re.search(r"\d", out):
+            return []
+        return [int(x) - 1 for x in re.findall(r"\d+", out)
+                if 0 <= int(x) - 1 < len(hits)][:5]
+
+    def _reformulate(self, topic: str, tried: List[str]) -> str:
+        """换个角度重写检索式。
+
+        一发不中就把主题永久标记为「无关」，是原来最大的浪费 ——
+        「北宋买扑盐引制度」「宋代市舶司公凭」这些明明查得到的题目，
+        就因为第一条式子没中，全书再也不会去查第二次。
+        """
+        if not self.plan:
+            return ""
+        ask = (f"我要查的是：**{self.era} {topic}**\n"
+               f"下面这些检索式都没查到有用的资料：\n"
+               + "\n".join(f"- {q}" for q in tried[-4:]) +
+               f"\n\n换一个角度重写检索式。可以：换更常见的说法、"
+               f"换成学术/史料里的正式名称、拆成更小的子问题、"
+               f"去掉限定词只留核心名词、或改查这件事所属的更大类目。\n"
+               f"只输出一行新的检索式，不要解释。")
+        try:
+            q = (self.plan(ask) or "").strip().splitlines()[0]
+        except Exception:
+            return ""
+        q = q.strip().strip("「」\"'` ")[:80]
+        return q if q and q not in tried and len(q) > 3 else ""
+
+    def fact_for(self, need: Dict[str, str], rounds: int = 3) -> Optional[Dict[str, Any]]:
+        """一个知识点: 内部先查, 联网重试, 逐条过滤, 抓正文再摘, 落盘复用。"""
         topic = need["topic"]
-        if topic in self.facts:
+        if topic in self.facts and self.facts[topic].get("card"):
+            return self.facts[topic]
+        # 同义主题已经查过就直接复用, 不再重复联网
+        twin = self._by_key().get(self._key(topic))
+        if twin and twin != topic and (self.facts[twin] or {}).get("card"):
+            self.facts[topic] = dict(self.facts[twin], alias_of=twin)
+            self._save()
             return self.facts[topic]
         if not (self.enable_web and self.sx and self.sx.available()):
             return None
 
-        hits = self.sx.search(need["query"], k=4)
-        if not hits:
-            self.facts[topic] = {"topic": topic, "card": "", "sources": [],
-                                 "built_at": time.strftime("%F %T")}
-            self._save()
-            return None
+        prev = self.facts.get(topic) or {}
+        tried: List[str] = list(prev.get("tried") or [])
+        q = need.get("query") or f"{self.era} {topic}"
+        for rnd in range(max(1, rounds)):
+            if not q:
+                break
+            tried.append(q)
+            hits = self.sx.search(q, k=6)
+            self._last_raw = "\n".join(
+                f"- {h['title']}：{h['content'][:300]}" for h in hits)
+            self._last_urls = [h["url"] for h in hits]
+            keep = [hits[i] for i in self._judge(topic, hits)]
+            if keep:
+                card = self._build_card(topic, keep)
+                if card:
+                    rec = {"topic": topic, "card": card,
+                           "sources": [h["url"] for h in keep[:3]],
+                           "tried": tried, "rounds": rnd + 1,
+                           "built_at": time.strftime("%F %T")}
+                    self.facts[topic] = rec
+                    self._save()
+                    self.mem.add("fact", f"fact-{topic}", f"考据·{topic}", card)
+                    return rec
+            q = self._reformulate(topic, tried)
 
-        raw = "\n".join(f"- {h['title']}：{h['content'][:300]}" for h in hits)
-        self._last_raw = raw
-        self._last_urls = [h["url"] for h in hits]
-        card = raw[:800]
-        if self.summarize:
-            got = self.summarize(
-                f"下面是检索「{self.era} {topic}」得到的结果。\n"
-                f"先判断这些结果是否真的回答了「{topic}」这个问题。\n"
-                f"- 如果**没有**（结果是无关的百科泛述、广告、或答非所问），"
-                f"只回复两个字：无\n"
-                f"- 如果有，压成 5 条以内的写作硬事实，每条一句话带具体数字；"
-                f"互相矛盾的标「存疑」；不确定的不要写\n"
-                f"直接输出，无前言。\n\n{raw[:4000]}") or ""
-            got = got.strip()
-            # 无关就不入库 —— 垃圾卡片既占预算又误导
-            if got in ("无", "", "None") or "无法生成" in got or "未包含" in got:
-                self.facts[topic] = {"topic": topic, "card": "", "sources": [],
-                                     "rejected": True, "built_at": time.strftime("%F %T")}
-                self._save()
-                return None
-            card = got
-
-        rec = {"topic": topic, "card": card,
-               "sources": [h["url"] for h in hits[:3]],
-               "built_at": time.strftime("%F %T")}
-        self.facts[topic] = rec
+        # 全轮失败: 记下试过哪些式子, **不写死** —— 下次换了角度还能再试
+        self.facts[topic] = {"topic": topic, "card": "", "sources": [],
+                             "rejected": True, "tried": tried,
+                             "built_at": time.strftime("%F %T")}
         self._save()
-        # 写回内部记忆 —— 下次同类问题直接内部命中, 不再联网
-        self.mem.add("fact", f"fact-{topic}", f"考据·{topic}", card)
-        return rec
+        return None
+
+    def _build_card(self, topic: str, keep: List[Dict[str, Any]]) -> str:
+        """把留下的结果压成事实卡 —— 前两条抓正文, 其余用摘要片段。"""
+        parts = []
+        for i, h in enumerate(keep[:4]):
+            body = self._page_text(h["url"]) if i < 2 else ""
+            src = body or (h.get("content") or "")
+            if len(src) < 20:
+                continue
+            parts.append(f"【来源{i+1}｜{h.get('title','')[:60]}】\n{src[:4000]}")
+        raw = "\n\n".join(parts) or self._last_raw
+        if not self.summarize:
+            return raw[:800]
+        got = (self.summarize(
+            f"下面是关于「{self.era} {topic}」的资料原文。\n"
+            f"压成 5 条以内的**写作硬事实**，每条一句话，尽量带具体数字、"
+            f"名称、年份。互相矛盾的标「存疑」；资料里没有的**不要补**。\n"
+            f"只写与「{topic}」直接相关的，无关内容一律丢掉。\n"
+            f"如果资料里确实没有能用的内容，只回复两个字：无\n"
+            f"直接输出，无前言。\n\n{raw[:12000]}") or "").strip()
+        if got in ("无", "", "None") or "无法生成" in got or "未包含" in got:
+            return ""
+        return got
 
     # ---------------- 由大模型决定查什么 ----------------
     def query_for_topic(self, topic: str, era: str = "") -> str:

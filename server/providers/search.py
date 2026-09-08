@@ -13,8 +13,17 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+#: 结构性垃圾域名 —— 这类站点无论查什么都不可能是考据资料，零成本先滤掉，
+#: 省得占着名额去消耗模型的判定。语义上的答非所问不在这里管（规则判不准），
+#: 交给检索层的逐条 AI 过滤。
+#: 名单来源：实测一次中文考据检索里，bing 返回的 10 条有 4 条是
+#: 「TikTok - Make Your Day」和「抖音企业号怎么注册-百度经验」。
 JUNK_HOST = re.compile(
-    r"(imagecompressor|11zon|pdf2go|onlineconvert|resize-image|freepik|shutterstock)", re.I)
+    r"(imagecompressor|11zon|pdf2go|onlineconvert|resize-image|freepik|shutterstock"
+    r"|tiktok\.|douyin\.|kuaishou\.|xiaohongshu\.|bilibili\.com/video"
+    r"|jingyan\.baidu\.com|zhidao\.baidu\.com|wenku\.baidu\.com"
+    r"|taobao\.|tmall\.|jd\.com|1688\.com|pinduoduo"
+    r"|/(?:login|register|signup)(?:$|\?))", re.I)
 
 
 class BaseSearch:
@@ -25,6 +34,11 @@ class BaseSearch:
         self.endpoint = (cfg.get("endpoint") or "").rstrip("/")
         self.timeout = int(cfg.get("timeout") or 20)
         self.lang = cfg.get("lang") or "zh-CN"
+        # 定向引擎。实例启用 85 家，实测只有 3 家真在服务（baidu/sogou 被
+        # CAPTCHA 封、google cse 限流、wikipedia 无响应），而 bing 返回的
+        # 大半是短视频与百科泛述。按质量排序、只打有效的那几家，比让实例
+        # 用默认混合要干净得多。
+        self.engines: List[str] = [str(x) for x in (cfg.get("engines") or []) if x]
         self._cache: Optional[Path] = None
 
     def bind_cache(self, d: Path) -> "BaseSearch":
@@ -81,11 +95,20 @@ class SearxNGSearch(BaseSearch):
             return False
 
     def _fetch(self, query: str, k: int) -> List[Dict[str, Any]]:
+        # engines= 参数在这版实例上不生效（指定 google 照样返回 bing+yandex），
+        # 实际管用的是查询串前缀的 !bang 语法。
+        q = " ".join(f"!{e}" for e in self.engines) + (" " if self.engines else "") + query
         r = requests.get(f"{self.endpoint}/search",
-                         params={"q": query, "format": "json", "language": self.lang},
+                         params={"q": q, "format": "json", "language": self.lang},
                          timeout=self.timeout)
         r.raise_for_status()
-        return r.json().get("results", [])[:k]
+        res = r.json().get("results", [])
+        if self.engines:      # 按配置里的引擎顺序排优先级
+            rank = {e: i for i, e in enumerate(self.engines)}
+            res.sort(key=lambda it: min(
+                [rank.get(x, 99) for x in (it.get("engines") or [it.get("engine", "")])]
+                or [99]))
+        return res[:k]
 
 
 class OpenSearchCompat(BaseSearch):
