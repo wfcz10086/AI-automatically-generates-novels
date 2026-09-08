@@ -5,6 +5,7 @@ config/providers.local.yaml
 
 # 运行产物
 projects/
+.cache/
 reports/
 *.db
 *.sqlite

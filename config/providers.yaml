@@ -63,8 +63,20 @@ gateways:
 # 检索源 —— 与模型网关并列的一类 provider。加一家 = 加一段 YAML。
 # 写作时自动用于世界观/人物/剧情/正文的背景落地，不需要单独触发。
 search:
-  default: local_searxng
+  default: bocha
   providers:
+    # 按次计费的中文搜索 API。密钥走 .env（NOVEL_BOCHA_KEY），绝不进 git。
+    # 结果跨书共享缓存（.cache/search），真实请求逐次计数（search_usage.json），
+    # 缓存命中不计费。
+    bocha:
+      type: bocha
+      label: "博查 AI 搜索"
+      api_key: ${NOVEL_BOCHA_KEY:-EMPTY}
+      timeout: 30
+      freshness: noLimit
+
+    # 备用源，保留可插拔。实测本地实例名义启用 85 家、实际只有 2 家在服务，
+    # 且 bing 返回的一半是短视频与电商 —— 只在博查不可用时兜底。
     local_searxng:
       type: searxng
       label: "本地 SearXNG"

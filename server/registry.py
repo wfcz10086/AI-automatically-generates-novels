@@ -109,7 +109,11 @@ class Registry:
         if name not in self._searchers:
             c = self.search_cfg[name]
             cls = SEARCH_TYPES.get(c.get("type", "searxng"), NullSearch)
-            self._searchers[name] = cls(c)
+            # 在这里就把缓存与计数目录绑好, 而不是等调用方自己 bind_cache ——
+            # 漏绑的后果不是报错, 是**静默地既不缓存也不计数**, 按次计费的源上
+            # 这等于白烧额度还查不出烧在哪。目录挂仓库级, 跨书共享。
+            self._searchers[name] = cls(c).bind_cache(
+                Path(__file__).resolve().parents[1] / ".cache" / "search")
         return self._searchers[name]
 
     def resolve(self, profile: Optional[str] = None, **override) -> tuple[BaseProvider, Dict[str, Any]]:

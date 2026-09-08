@@ -66,8 +66,9 @@ class Retriever:
         self.era = era
         self.enable_web = enable_web
         self.summarize = summarize
-        self.sx = (registry.searcher(endpoint).bind_cache(project_dir / "research")
-                   if enable_web else None)
+        # 缓存与计数由 registry 统一绑好（仓库级 .cache/search，跨书共享）——
+        # 按次计费的源下，「同一个宋代盐引怎么走」不该因为换本书就再花一次额度。
+        self.sx = registry.searcher(endpoint) if enable_web else None
         self.facts_path = project_dir / "facts.json"
         self.facts: Dict[str, Any] = {}
         if self.facts_path.exists():
@@ -133,11 +134,9 @@ class Retriever:
     _ANY_TAG = re.compile(r"(?s)<[^>]+>")
 
     def _page_text(self, url: str, cap: int = 6000) -> str:
-        """抓页面正文。
+        """抓页面正文 —— **默认不用**，留给确实需要读长文的调用方。
 
-        只吃搜索引擎返回的 60-120 字摘要片段，是摘要质量的天花板 ——
-        实测事实卡里会出现「第三条结果答非所问，讲南唐与金陵沿革」这种话，
-        因为模型手里只有片段，没有正文可读。
+        事实卡链路只吃检索源自带的 summary（见 _build_card 的说明）。
         """
         try:
             import requests
@@ -257,14 +256,21 @@ class Retriever:
         return None
 
     def _build_card(self, topic: str, keep: List[Dict[str, Any]]) -> str:
-        """把留下的结果压成事实卡 —— 前两条抓正文, 其余用摘要片段。"""
+        """把留下的结果压成事实卡 —— 只用检索源给的摘要, 不抓原文。
+
+        抓正文看着能提质, 实际代价大于收益: 每条多一次 HTTP、超时与反爬各占一份,
+        抓回来还得从整页导航广告里再剥一次正文。而按次计费的搜索源自带 summary,
+        长度已经是 SearXNG 片段的一个数量级以上（600 字 vs 60-120 字），
+        对「压成 5 条硬事实」这个用途足够了。
+        真正提质的是**前面那道逐条过滤**, 不是往模型嘴里多塞几千字网页噪声。
+        """
         parts = []
-        for i, h in enumerate(keep[:4]):
-            body = self._page_text(h["url"]) if i < 2 else ""
-            src = body or (h.get("content") or "")
+        for i, h in enumerate(keep[:5]):
+            src = (h.get("content") or "").strip()
             if len(src) < 20:
                 continue
-            parts.append(f"【来源{i+1}｜{h.get('title','')[:60]}】\n{src[:4000]}")
+            date = f"·{h['published']}" if h.get("published") else ""
+            parts.append(f"【来源{i+1}｜{h.get('title','')[:60]}{date}】\n{src}")
         raw = "\n\n".join(parts) or self._last_raw
         if not self.summarize:
             return raw[:800]
@@ -274,7 +280,7 @@ class Retriever:
             f"名称、年份。互相矛盾的标「存疑」；资料里没有的**不要补**。\n"
             f"只写与「{topic}」直接相关的，无关内容一律丢掉。\n"
             f"如果资料里确实没有能用的内容，只回复两个字：无\n"
-            f"直接输出，无前言。\n\n{raw[:12000]}") or "").strip()
+            f"直接输出，无前言。\n\n{raw[:9000]}") or "").strip()
         if got in ("无", "", "None") or "无法生成" in got or "未包含" in got:
             return ""
         return got
