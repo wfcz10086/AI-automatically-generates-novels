@@ -19,6 +19,7 @@ from typing import Dict, Any, List, Optional, Iterator, Callable
 from .registry import registry, ROOT
 from .prompt_engine import render, budget, est_tokens
 from .evaluator import audit, book_audit, window_audit
+from . import stagecraft as sc
 from .retrieval import Retriever
 from .prompt_compiler import (compile_chapter_prompt, compile_outline_prompt,
                                to_plot_list)
@@ -999,6 +1000,92 @@ class Novelist:
                 out.append(f"{nm}（此前出现 {hits} 次，已 {gap} 章未提）")
         return out[:5]
 
+    # ---------------- 阶段骨架 · 张力 · 承诺 ----------------
+    # 这三样是「种子发散」的骨: 总纲(种子)先长成阶段骨架, 骨架再派生功能位与人,
+    # 每一批细纲都长在骨架上, 而不是只看前一批的摘要往下接。
+
+    def _ask_planner(self, q: str, cap: int = 4000) -> str:
+        return clean(call("planning", q, max_tokens=cap).text)
+
+    def name_aliases(self) -> Dict[str, str]:
+        """主角别名 -> 本名。不合一的话主角会被判定全书没出过场。"""
+        pair = self.alias_pair() or []
+        if len(pair) < 2:
+            return {}
+        real = sc.canon_name(pair[0])
+        return {sc.canon_name(pair[1]): real, str(pair[1]): real}
+
+    def stages(self, rebuild: bool = False) -> List[Dict[str, Any]]:
+        cached = self.p._load("stages.json", [])
+        if cached and not rebuild:
+            return cached
+        outline = self.asset("outline.md")
+        if not outline.strip():
+            return []
+        total = int(self.p.meta.get("target_chapters") or 0) or 100
+        got = sc.build_stages(outline=outline, total_chapters=total,
+                              title=self.p.meta.get("title", ""), genre=self.genre,
+                              roster=[c["name"] for c in self.roster()],
+                              ask=self._ask_planner)
+        if got:
+            self.p.write("stages.json", json.dumps(got, ensure_ascii=False, indent=2))
+            self._log(f"阶段骨架 {len(got)} 段")
+        return got
+
+    def tensions(self, rebuild: bool = False) -> List[Dict[str, Any]]:
+        st = self.p.state
+        if st.get("tensions") and not rebuild:
+            return st["tensions"]
+        got = sc.build_tensions(outline=self.asset("outline.md"),
+                                characters=self.p.read("characters.md"),
+                                title=self.p.meta.get("title", ""), ask=self._ask_planner)
+        if got:
+            st["tensions"] = got
+            self.p.save()
+        return got
+
+    def promises(self, rebuild: bool = False) -> List[Dict[str, Any]]:
+        st = self.p.state
+        if st.get("promises") and not rebuild:
+            return st["promises"]
+        got = sc.build_promises(outline=self.asset("outline.md"),
+                                title=self.p.meta.get("title", ""), ask=self._ask_planner)
+        if got:
+            st["promises"] = got
+            self.p.save()
+        return got
+
+    def outline_cast(self, before: Optional[int] = None) -> Dict[str, List[int]]:
+        return sc.cast_appearances(self.p._load("chapter_outlines.json", {}),
+                                   before=before, aliases=self.name_aliases())
+
+    def stale_cast_planned(self, start: int, gap: int = 25,
+                           min_hits: int = 5) -> List[str]:
+        """排纲阶段的断线检测。
+
+        stale_cast() 读的是**正文**, 排纲时一章正文都还没有, 所以整个排纲过程
+        没有任何东西在看「谁掉线了」—— 实测 346 章排完, 主角最大的情感债
+        出场 2 章后消失, 开局关键配角断线 206 章。
+        """
+        app = self.outline_cast(before=start)
+        out = []
+        for nm, cs in app.items():
+            if len(cs) >= min_hits and start - cs[-1] > gap:
+                out.append((start - cs[-1], f"{nm}（已排 {len(cs)} 章有戏，"
+                                            f"第 {cs[-1]} 章后再没出现，断 {start - cs[-1]} 章）"))
+        return [x for _, x in sorted(out, reverse=True)[:5]]
+
+    def standby_cast(self) -> List[str]:
+        """备选角色: 阶段骨架点了名、花名册里还没有的人。
+
+        白名单原来是二元的(在册/不在册), 于是总纲承诺过的人只要开书那次没被
+        写进 characters.md, 全书就再也不会出场 —— 实测一部水浒同人里,
+        108 将除武松、鲁智深外全部零出场, 因为花名册只登记了 14 人。
+        """
+        return [nm for nm, _ in sc.unregistered(self.stages(),
+                                                [c["name"] for c in self.roster()],
+                                                self.name_aliases())][:24]
+
     _EN_OK = {"cpu", "dna", "gdp", "app", "kpi", "ceo", "cto"}
 
     def english_hits(self, t: str) -> List[str]:
@@ -1593,7 +1680,146 @@ class Novelist:
         """
         t = re.sub(r"^\s*(?:\[\[CH\d+\]\]|——\s*第\d+章\s*——|###fenge)\s*$",
                    "", t, flags=re.M)
+        # 模型爱给整批加一个 markdown 大标题, 而分段切开后它就落在首章头上 ——
+        # 实测「# 《大宋奸商西门庆》第161-178章细纲」被当成第 161 章的正文存了进去。
+        t = re.sub(r"^\s*#{1,6}\s*《?[^\n]{0,40}?》?\s*第\s*\d+\s*[-—~至]\s*\d+\s*"
+                   r"章[^\n]{0,12}\s*$", "", t, flags=re.M)
+        # 申报行是给流水线看的手续, 登记完就不该留在细纲产物里
+        t = re.sub(r"^\s*新角色\s*[:：].*$", "", t, flags=re.M)
         return t.strip()
+
+    def outline_sweep(self, start: int, end: int) -> Dict[str, int]:
+        """一批细纲排完后的连续性巡检 —— 排纲阶段的**生产者**。
+
+        原来 step_chapter_outlines 会读 pending_foreshadow() 拼进约束，可全书
+        没有任何地方在排纲阶段调用过 add_foreshadow()：伏笔只在**正文**写完后由
+        _extract() 落库。于是纯排纲跑到 346 章，伏笔表 0 行，那段「未回收伏笔」
+        永远是空字符串 —— 有消费者没有生产者。
+
+        这里把生产端补上。一批一次调用，四个产出：埋了哪些伏笔、兑现了哪些、
+        推进了哪些总纲承诺、碰了哪些关系张力。全部写回状态，下一批直接吃。
+        """
+        co = self.p._load("chapter_outlines.json", {})
+        body = "\n\n".join(f"[第{n}章]\n{co[str(n)]}"
+                            for n in range(start, end + 1) if str(n) in co)
+        if not body.strip():
+            return {}
+        pend = self.p.mem.pending_foreshadow()
+        cands = ([x for x in pend if start - x["planted"] >= 20][:8]
+                 + [x for x in pend if start - x["planted"] < 20][-10:])
+        cands = list({f["id"]: f for f in cands}.values())
+        proms = self.promises()
+        tens = self.tensions()
+
+        blocks = [f"【本批细纲：第{start}-{end}章】\n{self.condense(body, 20000)}"]
+        if cands:
+            blocks.append("【尚未兑现的伏笔】\n" + "\n".join(
+                f"{i+1}. （第{f['planted']}章埋）{f['text'][:50]}"
+                for i, f in enumerate(cands)))
+        if proms:
+            blocks.append("【总纲承诺清单】\n" + "\n".join(
+                f"P{p['id']}. [{p.get('kind','')}] {p['text'][:60]}" for p in proms))
+        if tens:
+            blocks.append("【关系张力】\n" + "\n".join(
+                f"T{i+1}. {' ↔ '.join(x['between'])}：{x['about'][:50]}"
+                for i, x in enumerate(tens)))
+        prompt = (
+            "你在给一部长篇作品做**排纲阶段的连续性记账**。下面是刚排好的一批细纲，"
+            "以及全书当前的伏笔／承诺／张力清单。\n\n"
+            + "\n\n".join(blocks) +
+            "\n\n请判断四件事，只输出 JSON，不要代码围栏：\n"
+            '{"plant":[{"ch":163,"text":"某处埋下的悬念，一句话"}],'
+            '"resolve":[2,5],"advanced":[1,4],"touched":[1]}\n'
+            "- plant：本批**新埋下**的悬念/伏笔（最多 6 条，写清是哪一章埋的）\n"
+            "- resolve：本批**明确兑现或解开**的伏笔编号。只是提到、只是继续铺垫、"
+            "只是相关，都不算\n"
+            "- advanced：本批**实质推进**了的承诺编号（P 后面的数字）。"
+            "只是提了一嘴不算，要真往前走了一步\n"
+            "- touched：本批**正面碰到**的张力编号（T 后面的数字）。"
+            "双方同框、或一方为此付出代价、或明写了它的进展\n"
+            "拿不准就不填，宁缺毋滥。")
+        try:
+            data = sc.parse_json(clean(call("polishing", prompt, max_tokens=1200).text))
+        except Exception as e:
+            self._log(f"细纲巡检跳过: {e}")
+            return {}
+
+        got = {"plant": 0, "resolve": 0, "advanced": 0, "touched": 0}
+        for f in (data.get("plant") or [])[:6]:
+            txt = str((f or {}).get("text") or "").strip()
+            if len(txt) < 4:
+                continue
+            try:
+                ch = int((f or {}).get("ch") or start)
+            except (TypeError, ValueError):
+                ch = start
+            self.p.mem.add_foreshadow(max(start, min(end, ch)), txt[:60])
+            got["plant"] += 1
+        for i in (data.get("resolve") or [])[:6]:
+            try:
+                c = cands[int(i) - 1]
+            except (ValueError, TypeError, IndexError):
+                continue
+            self.p.mem.resolve_foreshadow(c["id"], end)
+            got["resolve"] += 1
+        by_id = {p["id"]: p for p in proms}
+        for i in (data.get("advanced") or [])[:10]:
+            try:
+                pr = by_id.get(int(i))
+            except (ValueError, TypeError):
+                continue
+            if pr:
+                pr["last_advanced"] = end
+                got["advanced"] += 1
+        for i in (data.get("touched") or [])[:8]:
+            try:
+                tens[int(i) - 1]["last_touched"] = end
+                got["touched"] += 1
+            except (ValueError, TypeError, IndexError):
+                continue
+        st = self.p.state
+        st["promises"], st["tensions"] = proms, tens
+        self.p.save()
+        self._log(f"细纲巡检 {start}-{end}：埋伏笔 {got['plant']}／回收 {got['resolve']}"
+                  f"／推进承诺 {got['advanced']}／触及张力 {got['touched']}")
+        return got
+
+    _DECLARE = re.compile(r"^\s*新角色\s*[:：]\s*(.+)$", re.M)
+
+    def register_new_cast(self, texts: List[str]) -> List[str]:
+        """把本批申报的新角色登记进花名册。
+
+        白名单挡住凭空造人是对的（否则满地跑龙套、重名、写完就忘），但原来
+        只有禁令没有手续 —— 于是需要新人时模型只能硬用旧人，或者干脆绕开剧情。
+        这里补上正规通道：申报 → 查重 → 建档 → 下一批自动可用。
+        """
+        known = {sc.canon_name(c["name"]) for c in self.roster()}
+        known |= set(self.name_aliases())
+        new: List[str] = []
+        seen: set = set()
+        for txt in texts:
+            for m in self._DECLARE.finditer(txt or ""):
+                f = [x.strip() for x in re.split(r"[|｜]", m.group(1))]
+                nm = sc.canon_name(f[0] if f else "")
+                if not nm or len(nm) > 8 or nm in known or nm in seen:
+                    continue
+                if len(f) < 4 or not f[3]:      # 挂靠是硬要求, 不挂靠不予登记
+                    self._log(f"新角色「{nm}」未写挂靠对象，不予登记")
+                    continue
+                seen.add(nm)
+                new.append(f"### 姓名：{nm}\n"
+                           f"身份：{f[1][:40]}\n"
+                           f"由来：{f[2][:60]}\n"
+                           f"挂靠：{f[3][:40]}\n"
+                           f"备注：排纲阶段申报登记\n")
+        if not new:
+            return []
+        cur = self.p.read("characters.md")
+        self.p.write("characters.md", cur.rstrip() + "\n\n" + "\n".join(new))
+        self.p.write("roster.json", "null")      # 让 roster() 重新解析
+        names = [n.splitlines()[0].split("：")[-1] for n in new]
+        self._log(f"登记新角色 {len(names)} 人：{'、'.join(names)}")
+        return names
 
     def outline_digest(self, before: int, full_span: int = 0,
                        limit: int = 0) -> str:
@@ -1822,6 +2048,26 @@ class Novelist:
         if anchor.get("main_place"):
             cons.append(f"主场固定在「{anchor['main_place']}」")
         cons.append("每章主角之外必须有 2 个以上配角有独立戏份")
+
+        # 「种子发散」的约束层: 这一批长在阶段骨架上, 而不是只接着上一批往下写。
+        stages = self.stages()
+        cur_stage = sc.stage_of(stages, start)
+        if cur_stage:
+            cons.append(sc.stage_brief(cur_stage, start))
+            vac = sc.vacancies(cur_stage)
+            if vac:
+                cons.append(f"本阶段「{'、'.join(vac)}」还没有人担当 —— "
+                            f"本批要么让已有角色补上这一位，要么按下面的手续登记新人")
+        tb = sc.tension_brief(self.tensions(), start)
+        if tb:
+            cons.append(tb)
+        pb = sc.promise_brief(self.promises(), start)
+        if pb:
+            cons.append(pb)
+        gone = self.stale_cast_planned(start)
+        if gone:
+            cons.append("【以下角色已经断线，本批择机让他们重新入场或明写其去向，"
+                        "不许当作不存在】\n" + "\n".join(f"- {g}" for g in gone))
         if self.prompt_override("chapter_outline_extra"):
             cons.append(self.prompt_override("chapter_outline_extra"))
         cons.append(self.genre_rules()[:800])
@@ -1846,6 +2092,7 @@ class Novelist:
             genre_line=f"{self.genre.get('name','')}/{self.style.get('name','')}".strip("/"),
             world_digest=self.asset("world_bible.md"),
             roster_names=[c["name"] for c in self.roster()] or ["主角"],
+            standby_names=self.standby_cast(),
             outline=outline_ctx,
             prev_summary=self.prev_summary(start),
             constraints="\n".join(cons),
@@ -1906,6 +2153,7 @@ class Novelist:
                 continue                      # 越界的丢掉, 下一轮重排
             outlines[str(idx)] = self.clean_outline(part)
             kept += 1
+        self.register_new_cast(parts)
         self.p.write("chapter_outlines.json", json.dumps(outlines, ensure_ascii=False, indent=2))
         note = ""
         if out_of_range:
@@ -1913,6 +2161,8 @@ class Novelist:
         elif drift:
             note = f"，章号偏移 {len(drift)} 处（如 {drift[0][0]}→{drift[0][1]}）"
         self._log(f"细纲 {start}-{end} 收 {kept} 章 / {r.elapsed:.1f}s{note}")
+        if kept:
+            self.outline_sweep(start, end)
         return parts
 
     def step_chapter(self, n: int, on_delta=None, retry_on_low: int | None = None) -> Dict[str, Any]:

@@ -190,6 +190,7 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
 def compile_outline_prompt(*, title: str, start: int, count: int,
                            genre_line: str, world_digest: str,
                            roster_names: List[str], outline: str,
+                           standby_names: Optional[List[str]] = None,
                            prev_summary: str, constraints: str,
                            plots_per_chapter: int = 6,
                            used_titles: Optional[List[str]] = None) -> str:
@@ -201,7 +202,12 @@ def compile_outline_prompt(*, title: str, start: int, count: int,
         f"你是{genre_line}的网文策划。为《{title}》写第 {start}-{start+count-1} 章的细纲。\n\n"
         f"#总纲\n{outline}\n\n"
         f"#世界观速览\n{world_digest}\n\n"
-        f"#可用角色（只能从中挑，不得凭空造人）\n{'、'.join(roster_names)}\n\n"
+        f"#可用角色\n"
+        f"**主力**（有完整档案，随时可用）：{'、'.join(roster_names)}\n"
+        + (f"**备选**（总纲或阶段骨架点过名，还没建档；本批要用就直接用，"
+           f"用了会自动补档）：{'、'.join(standby_names)}\n" if standby_names else "")
+        + f"以上都不够用时，可以**申报**新人，但必须走手续（见下方输出格式），"
+          f"不许在剧情里凭空冒出一个没申报过的名字。\n\n"
         f"#前情\n{prev_summary}\n\n"
         f"{used_block}"
         f"#必守约束\n{constraints}\n\n"
@@ -214,4 +220,7 @@ def compile_outline_prompt(*, title: str, start: int, count: int,
         f"（每章 {plots_per_chapter} 条剧情，要能直接照着写，不要写成概括）\n"
         f"爽点：…\n"
         f"章末钩子：…\n\n"
+        f"确有必要引入新角色时，在该章末尾单起一行申报（没有就不写）：\n"
+        f"新角色：姓名|身份|因何而来|挂靠于（已有的某个角色或某个组织）\n"
+        f"—— 挂靠是硬要求：新人必须依附已有的人或势力，不能是孤魂野鬼。\n\n"
         f"直接输出，无前言。")
