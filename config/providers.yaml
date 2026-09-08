@@ -103,6 +103,11 @@ profiles:
   planning:   {gateway: gw4, thinking: false, temperature: 0.80}
   drafting:   {gateway: gw4, thinking: false, temperature: 0.92}
   polishing:  {gateway: gw4, thinking: false, temperature: 0.85}
-  judging:    {gateway: gw4, thinking: true,  temperature: 0.30}
+  # judging 也关思考。GLM 系关不掉思考、只能调档，而推理与答案共用同一个
+  # max_tokens：实测同一段细纲审阅，开思考 268s 且首次可见输出为 0 字符
+  # （靠「关思考重试」才拿到结果，等于每次跑两遍、第一遍纯烧），
+  # 关思考 59s 直接出结果，问题还多报一条（6 vs 5）。
+  # 换成思考真正管用的网关时，把这里改回 true。
+  judging:    {gateway: gw4, thinking: false, temperature: 0.30}
 
 default_profile: drafting

@@ -318,7 +318,12 @@ def call(profile: str, prompt: str, on_delta: Optional[Callable[[str], None]] = 
         if on_delta and out:
             on_delta(out)
     if not out and _retry:       # ★ 兜底 2: 关思考重试, 把 token 全给正文
-        print("  [call] 输出为空, 关思考重试", flush=True)
+        # 这条兜底救得了单次调用，却会**把双倍开销藏起来**：实测细纲审阅每一段
+        # 都先烧光预算只产出思考、再靠这次重试拿结果，日志上只有一行「输出为空」，
+        # 看不出这个档位在该网关上根本不该开思考。所以把代价打在明处。
+        print(f"  [call] {profile} 输出为空（思考吃光了 {kw.get('max_tokens')} "
+              f"预算、耗时 {time.time() - t0:.0f}s），关思考重试 —— "
+              f"这一次等于白跑，考虑把该档位的 thinking 关掉", flush=True)
         return call(profile, prompt, on_delta, system, max_tokens, _retry=False)
     res = GenResult(text=out, reasoning=rsn, elapsed=time.time() - t0,
                     chars=len(out), usage=dict(raw_usage))
