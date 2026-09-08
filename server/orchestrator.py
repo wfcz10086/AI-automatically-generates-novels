@@ -1031,6 +1031,17 @@ class Novelist:
     def _ask_planner(self, q: str, cap: int = 4000) -> str:
         return clean(call("planning", q, max_tokens=cap).text)
 
+    def hard_rules(self) -> List[str]:
+        """本书铁律 —— 每一章都必须成立的设定约束。
+
+        与题材纪律、文风纪律不同，这些是**这一本书特有**、且违反一次就穿帮的
+        东西：金手指的用法与代价、某样资源的死数、某个能力的边界。
+        写在设定文档里没用 —— 设定只在开书那几次被完整读过，写到第两百章
+        早没人记得。所以它们和红线一样进约束层，排纲与写正文两处都带。
+        """
+        return [str(x).strip() for x in (self.p.meta.get("hard_rules") or [])
+                if str(x).strip()][:12]
+
     def dials(self) -> Dict[str, int]:
         """本书的两个旋钮：本书设置优先于全局默认。"""
         return dl.normalize({**(self.cfg.get("dials") or {}),
@@ -2666,6 +2677,10 @@ class Novelist:
         pb = sc.promise_brief(self.promises(), start)
         if pb:
             cons.append(pb)
+        hr = self.hard_rules()
+        if hr:
+            cons.append("【本书铁律（违反一次就穿帮，每章都要成立）】\n"
+                        + "\n".join(f"- {x}" for x in hr))
         cons.append(dl.brief(self.dials()))
         st_ = self.p.state
         mb = sc.mode_brief(st_.get("resolution_modes") or [], start)
@@ -2869,7 +2884,11 @@ class Novelist:
             extra_directive=self.prompt_override("content_extra"),
             global_rules=self.cfg.get("anti_ai_rules") or [],
             directives=self.cfg.get("chapter_directives") or [],
-            character_rules=(self.cfg.get("character_rules") or []) + [dl.brief(self.dials())],
+            character_rules=((self.cfg.get("character_rules") or [])
+                             + ([("【本书铁律，违反一次就穿帮】\n"
+                                  + "\n".join(f"- {x}" for x in self.hard_rules()))]
+                                if self.hard_rules() else [])
+                             + [dl.brief(self.dials())]),
             roster=rost, protagonist=((self.alias_pair() or [None])[0]
                                       or (rost[0]["name"] if rost else "")),
             relations=f.get("relationships", ""),
