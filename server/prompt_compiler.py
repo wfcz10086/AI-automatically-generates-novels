@@ -211,16 +211,28 @@ OUTLINE_FIELDS = [
 OUTLINE_REQUIRED = [f for f, req, _ in OUTLINE_FIELDS if req]
 
 
-def outline_format_block(plots_per_chapter: int = 6) -> str:
-    """按字段契约生成「每章按此格式输出」那一段。"""
+def outline_format_block(plots_per_chapter: int = 6, cap: int = 0) -> str:
+    """按字段契约生成「每章按此格式输出」那一段。
+
+    `cap` 是单章细纲的字数上限。不给上限的话细纲会一路发胖：实测某书
+    从第 1-50 章的 617 字/章涨到第 201-250 章的 1266 字，翻了一倍多，
+    而没有任何东西在看着它。细纲写到正文的一半长，写正文就变成了扩写，
+    成品会像注水的细纲。
+    """
     lines = ["第N章 章节名"]
     for name, _req, hint in OUTLINE_FIELDS:
         if name == "剧情1":
             lines.append(f"剧情1：{hint}")
             lines.append("剧情2：…")
             lines.append("剧情3：…")
+            per = int(cap / max(1, plots_per_chapter) * 0.8) if cap else 0
             lines.append(f"（每章 {plots_per_chapter} 条剧情，要能直接照着写，"
                          f"不要写成概括）")
+            if cap:
+                lines.append(f"⚠ **一条剧情一句话，{per} 字以内**；"
+                             f"整章细纲控制在 {cap} 字以内。"
+                             f"细纲是给写手的路条，不是正文的缩写 —— "
+                             f"写满了，写正文就只剩扩写，成品会平。")
         else:
             lines.append(f"{name}：{hint}")
     return "\n".join(lines)
@@ -232,6 +244,7 @@ def compile_outline_prompt(*, title: str, start: int, count: int,
                            standby_names: Optional[List[str]] = None,
                            prev_summary: str, constraints: str,
                            plots_per_chapter: int = 6,
+                           outline_cap: int = 0,
                            character_rules: Optional[List[str]] = None,
                            used_titles: Optional[List[str]] = None) -> str:
     """编译分章细纲提示词 —— 输出编号剧情清单，而不是散文。"""
@@ -261,7 +274,7 @@ def compile_outline_prompt(*, title: str, start: int, count: int,
         f"#必守约束\n{constraints}\n\n"
         f"{rules_block}"
         f"每章严格按下面格式输出，章与章之间用一行 ###fenge 分隔：\n\n"
-        f"{outline_format_block(plots_per_chapter)}\n"
+        f"{outline_format_block(plots_per_chapter, outline_cap)}\n"
         f"（本批第一章的「承接」要接住【前情】里给出的上一章结尾）\n"
         f"⚠ 五个字段一个都不能少，尤其是**爽点**与**章末钩子**："
         f"不许把钩子塞进剧情条目里，缺字段的章会被整章丢弃重排。\n\n"

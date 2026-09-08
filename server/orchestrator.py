@@ -2408,6 +2408,30 @@ class Novelist:
             out.extend(by_heading(seg))
         return out or by_heading(text or "")
 
+    #: 细纲与正文的健康比例。1:4 意味着一章 2700 字的正文配约 675 字细纲 ——
+    #: 每条剧情一句话。比这密，写正文就退化成扩写；比这稀，写手没有抓手。
+    OUTLINE_RATIO = 4
+
+    def outline_cap(self) -> int:
+        """单章细纲的字数上限，按正文目标推出来，不写死。"""
+        return max(320, min(900, int(self.target_words() / self.OUTLINE_RATIO)))
+
+    def outline_bloat(self, window: int = 40) -> List[str]:
+        """细纲发胖检测 —— 一路涨一倍没人管，是实测踩过的坑。"""
+        co = self.p._load("chapter_outlines.json", {})
+        ks = sorted(int(k) for k in co)
+        if len(ks) < window * 2:
+            return []
+        cap = self.outline_cap()
+        recent = [len(str(co[str(n)])) for n in ks[-window:]]
+        avg = sum(recent) // len(recent)
+        if avg <= cap * 1.35:
+            return []
+        first = [len(str(co[str(n)])) for n in ks[:window]]
+        return [f"最近 {window} 章细纲均 {avg} 字，上限 {cap} 字"
+                f"（开篇 {window} 章是 {sum(first)//len(first)} 字）—— "
+                f"细纲发胖，写正文会退化成扩写"]
+
     def outline_batch(self, want: int = 0) -> int:
         """一批排多少章细纲 —— 按输出上限算，不是拍一个 10。
 
@@ -2706,6 +2730,7 @@ class Novelist:
                          (re.search(r"第\s*\d+\s*章\s*(.+)", v)
                           for v in self.p._load("chapter_outlines.json", {}).values())
                          if m],
+            outline_cap=self.outline_cap(),
             plots_per_chapter=max(3, int(
                 self.target_words() / (int(self.style.get("blockWords") or 500) * 0.8))))
         # 细纲生成之前也要召回已确立的事实 —— 否则会写出自相矛盾的剧情。
