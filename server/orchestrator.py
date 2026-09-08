@@ -269,6 +269,11 @@ def _record(profile: str, prompt_chars: int, res: "GenResult") -> None:
                  "estimated": not (u.get("prompt") or u.get("completion"))}
 
 
+#: 开着思考时输出上限放大的倍数。推理与答案共用同一个 max_tokens，
+#: 不放大的话小预算的判定任务永远只吐出思考、答案被截在门外。
+THINK_BUDGET_X = 3
+
+
 def call(profile: str, prompt: str, on_delta: Optional[Callable[[str], None]] = None,
          system: str = "", max_tokens: Optional[int] = None,
          _retry: bool = True) -> GenResult:
@@ -282,6 +287,18 @@ def call(profile: str, prompt: str, on_delta: Optional[Callable[[str], None]] = 
         kw["thinking"] = False
     if max_tokens:
         kw["max_tokens"] = max_tokens
+    # 思考 token 也算在 max_tokens 里 —— 关不掉思考的网关（GLM 系只能调档，
+    # thinking_style: effort）上，一个 2500 预算的判定任务会被推理吃光，
+    # 可见输出 0 字符，然后走「关思考重试」，等于这次判定白做一遍。
+    # 实测：16384 的预算全进思考，content 为空。
+    # 开着思考时把输出上限放大，给推理留出自己的地方，别挤掉答案。
+    if kw.get("thinking"):
+        gw = (registry.gateways.get(
+            (registry.profiles.get(profile) or {}).get("gateway", "")) or {})
+        if gw.get("thinking_style") == "effort":
+            ceiling = int(gw.get("max_tokens") or 8192)
+            kw["max_tokens"] = min(ceiling, max(int(kw.get("max_tokens") or 2000)
+                                                * THINK_BUDGET_X, 6000))
     msgs = ([{"role": "system", "content": system}] if system else []) + \
            [{"role": "user", "content": prompt}]
     t0 = time.time()
