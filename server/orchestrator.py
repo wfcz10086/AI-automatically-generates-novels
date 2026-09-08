@@ -19,6 +19,7 @@ from typing import Dict, Any, List, Optional, Iterator, Callable
 from .registry import registry, ROOT
 from .prompt_engine import render, budget, est_tokens
 from .evaluator import audit, book_audit, window_audit
+from . import dials as dl
 from . import stagecraft as sc
 from .retrieval import Retriever
 from .prompt_compiler import (OUTLINE_REQUIRED, outline_format_block,
@@ -1030,6 +1031,11 @@ class Novelist:
     def _ask_planner(self, q: str, cap: int = 4000) -> str:
         return clean(call("planning", q, max_tokens=cap).text)
 
+    def dials(self) -> Dict[str, int]:
+        """本书的两个旋钮：本书设置优先于全局默认。"""
+        return dl.normalize({**(self.cfg.get("dials") or {}),
+                             **(self.p.meta.get("dials") or {})})
+
     def name_aliases(self) -> Dict[str, str]:
         """主角别名 -> 本名。不合一的话主角会被判定全书没出过场。"""
         pair = self.alias_pair() or []
@@ -1862,7 +1868,8 @@ class Novelist:
                              "demand": f"{x}。这几章里让主角换一种赢法："
                                        f"力破／借势／交易／收心／忍退／破局，挑一种没怎么用过的"})
         for x in sc.setback_missing(self.stages(), self.p.state.get("setbacks") or [], upto,
-                                    quota=int(self.genre.get("setbackQuota") or 1)):
+                                    quota=max(dl.derived(self.dials())["setback_quota"],
+                                              int(self.genre.get("setbackQuota") or 1))):
             m3 = re.search(r"第(\d+)-(\d+)章", x)
             if m3:
                 chs = window(int(m3.group(1)), min(int(m3.group(2)), upto), want=2)
@@ -2635,12 +2642,15 @@ class Novelist:
         pb = sc.promise_brief(self.promises(), start)
         if pb:
             cons.append(pb)
+        cons.append(dl.brief(self.dials()))
         st_ = self.p.state
         mb = sc.mode_brief(st_.get("resolution_modes") or [], start)
         if mb:
             cons.append(mb)
-        sb = sc.setback_brief(cur_stage, st_.get("setbacks") or [], start,
-                              quota=int(self.genre.get("setbackQuota") or 1))
+        # 配额由狂野度驱动；题材包的 setbackQuota 作为下限（正剧不许太顺）
+        _q = max(dl.derived(self.dials())["setback_quota"],
+                 int(self.genre.get("setbackQuota") or 1))
+        sb = sc.setback_brief(cur_stage, st_.get("setbacks") or [], start, quota=_q)
         if sb:
             cons.append(sb)
         thr = self.threads()
@@ -2834,7 +2844,7 @@ class Novelist:
             extra_directive=self.prompt_override("content_extra"),
             global_rules=self.cfg.get("anti_ai_rules") or [],
             directives=self.cfg.get("chapter_directives") or [],
-            character_rules=self.cfg.get("character_rules") or [],
+            character_rules=(self.cfg.get("character_rules") or []) + [dl.brief(self.dials())],
             roster=rost, protagonist=((self.alias_pair() or [None])[0]
                                       or (rost[0]["name"] if rost else "")),
             relations=f.get("relationships", ""),

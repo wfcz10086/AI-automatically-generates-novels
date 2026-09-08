@@ -494,3 +494,33 @@ def test_incomplete_chapter_is_rejected():
 
     assert lack(good) == []
     assert set(lack(bad)) == {"爽点", "章末钩子"}
+
+
+def test_dials_are_orthogonal_and_drive_mechanisms():
+    """两个旋钮必须正交，且不只写进提示词、还要改机制。
+
+    「请写得狂野一点」塞进提示词只会让模型写得更用力，结构照旧 ——
+    所以狂野度直接定挫败配额、爽度直接定爽点间隔。
+    """
+    from server import dials as dl
+    lo = dl.derived({"gratify": 20, "wild": 10})
+    hi = dl.derived({"gratify": 90, "wild": 90})
+    assert hi["setback_quota"] > lo["setback_quota"]
+    assert hi["pleasure_interval"] < lo["pleasure_interval"]
+    # 一次都不失手的主角读者不会替他担心 —— 最低也得给 1 次
+    assert dl.derived({"wild": 0})["setback_quota"] >= 1
+    # 正交：只动爽度不该改挫败配额，只动狂野度不该改爽点间隔
+    a = dl.derived({"gratify": 20, "wild": 50})
+    b = dl.derived({"gratify": 90, "wild": 50})
+    assert a["setback_quota"] == b["setback_quota"]
+    c = dl.derived({"gratify": 50, "wild": 10})
+    d = dl.derived({"gratify": 50, "wild": 90})
+    assert c["pleasure_interval"] == d["pleasure_interval"]
+
+
+def test_dials_normalize_and_brief():
+    from server import dials as dl
+    assert dl.normalize({"gratify": 999, "wild": -5}) == {"gratify": 100, "wild": 0}
+    assert dl.normalize("坏输入") == dl.defaults()
+    b = dl.brief({"gratify": 95, "wild": 95})
+    assert "剧情上" in b and "文风上" in b and "掀翻" in b

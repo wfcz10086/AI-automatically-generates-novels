@@ -1,6 +1,8 @@
 /* 后端 API 客户端. 所有网络访问集中在这里, 视图层不直接 fetch. */
 const API = {
   async get(u)      { const r = await fetch(u); if(!r.ok) throw new Error(await r.text()); return r.json(); },
+  async put(u, b)   { const r = await fetch(u, {method:'PUT', headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify(b)}); if(!r.ok) throw new Error(await r.text()); return r.json(); },
   async post(u, b)  { const r = await fetch(u, {method:'POST', headers:{'Content-Type':'application/json'},
                        body: JSON.stringify(b||{})}); if(!r.ok) throw new Error(await r.text()); return r.json(); },
 

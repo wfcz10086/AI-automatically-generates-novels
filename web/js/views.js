@@ -249,6 +249,11 @@ const TabRender = {
               <button class="btn btn-sm btn-primary" id="kb-go">检索入库</button></div>
             <div id="kb-facts" class="scroll-y" style="max-height:360px;margin-top:8px">
               加载中…</div></details></div></div>
+      <div class="card"><div class="card-head">
+          <div class="card-title">两个旋钮</div>
+          <div class="card-sub" id="dl-sub">爽度管回报有多猛，狂野度管敢不敢失控 —— 同时影响剧情与文风</div>
+          <div class="card-actions"><button class="btn btn-sm" id="dl-save">保存</button></div>
+        </div><div id="dl-body"><div class="card-sub">读取中…</div></div></div>
       ${editableDoc('naming','书名 · 简介 · 标签', p.naming,
         '<button class="btn btn-sm" id="s-naming">重新生成</button>')}
       ${editableDoc('basis','世界基底卡 · 本书红线', p.basis,
@@ -410,6 +415,45 @@ const TabMount = {
     const db = $('#a-drop');   if (db) db.onclick = () => drop(true);
   },
   setup() {
+    (async () => {
+      const slug = encodeURIComponent(S.cur.slug);
+      if (!$('#dl-body')) return;
+      let D;
+      const draw = () => {
+        $('#dl-body').innerHTML = (D.spec || []).map(s => {
+          const v = D.dials[s.key];
+          const band = arr => (arr.find(([lo, hi]) => (v >= lo && v < hi) || (hi >= 100 && v >= lo)) || arr[arr.length-1])[2];
+          return `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+            <div style="display:flex;align-items:center;gap:10px">
+              <b style="flex:0 0 70px">${esc(s.label)}</b>
+              <input type="range" min="0" max="100" step="5" value="${v}"
+                     data-k="${s.key}" class="dl-range" style="flex:1">
+              <span class="badge badge-neutral dl-val" data-k="${s.key}"
+                    style="flex:0 0 52px;text-align:center">${v}</span>
+            </div>
+            <div class="card-sub" style="margin-top:5px">剧情：${esc(band(s.plot))}</div>
+            <div class="card-sub">文风：${esc(band(s.style))}</div></div>`;
+        }).join('') + `<div class="card-sub" style="margin-top:9px">
+            由旋钮推出的硬指标：每阶段主角必须真失手 <b>${D.derived.setback_quota}</b> 次
+            ／每 <b>${D.derived.pleasure_interval}</b> 章必须有一次实打实的回报
+            ${D.own ? '' : '　<span class="badge badge-neutral">当前用全局默认</span>'}</div>`;
+        $$('.dl-range').forEach(el => el.oninput = () => {
+          D.dials[el.dataset.k] = +el.value;
+          const b = $(`.dl-val[data-k="${el.dataset.k}"]`);
+          if (b) b.textContent = el.value;
+        });
+        $$('.dl-range').forEach(el => el.onchange = draw);
+      };
+      try {
+        D = await API.get(`/api/projects/${slug}/dials`);
+        draw();
+        $('#dl-save').onclick = async () => {
+          const r = await API.put(`/api/projects/${slug}/dials`, D.dials);
+          D.derived = r.derived; D.own = true; draw();
+          toast('旋钮已保存，下一批生成生效', 'ok');
+        };
+      } catch (e) { $('#dl-body').innerHTML = `<div class="empty">读取失败：${esc(e.message)}</div>`; }
+    })();
     bindDocSaves();
     bindMenus();
     $('#s-wb').onclick = () => runStep('world_bible', '.doc-edit[data-doc="world_bible"]', '生成世界观');

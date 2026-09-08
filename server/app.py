@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from server.registry import registry, ROOT                       # noqa: E402
 from server.settings import load as load_settings, save as save_settings  # noqa: E402
+from server import dials as dl
 from server import stagecraft as sc                                # noqa: E402
 from server.orchestrator import (Project, Novelist, create_project,        # noqa: E402
                                  slugify, call, clean, PROJECTS)
@@ -525,6 +526,22 @@ def project_ledgers(slug: str):
                         "text": f.get("text"), "done": bool(f.get("resolved_at"))}
                        for i, f in enumerate(fs)],
     })
+
+
+@app.route("/api/projects/<slug>/dials", methods=["GET", "PUT"])
+def project_dials(slug: str):
+    """本书的两个旋钮。留空则用全局默认。"""
+    p = Project(slug)
+    if request.method == "PUT":
+        v = dl.normalize(request.json or {})
+        p.meta["dials"] = v
+        p._meta_touched.add("dials")
+        p.save()
+        return jsonify({"ok": True, "dials": v, "derived": dl.derived(v)})
+    cur = dl.normalize({**(load_settings().get("dials") or {}),
+                        **(p.meta.get("dials") or {})})
+    return jsonify({"dials": cur, "derived": dl.derived(cur),
+                    "spec": dl.DIALS, "own": bool(p.meta.get("dials"))})
 
 
 @app.route("/api/projects/<slug>/structure")
