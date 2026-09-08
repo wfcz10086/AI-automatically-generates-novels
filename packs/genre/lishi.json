@@ -117,5 +117,6 @@
       "hint": "官职品级/所辖兵力/爵位/圣眷"
     }
   },
-  "historyMode": "real"
+  "historyMode": "real",
+  "setbackQuota": 2
 }

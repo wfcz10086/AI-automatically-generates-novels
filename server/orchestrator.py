@@ -1822,6 +1822,24 @@ class Novelist:
                                  "demand": f"{x}。这几章里换一种方式推进它：换场景、"
                                            f"换视角人物、换事件类型、换它与主线咬合的方式"})
 
+        # ①d 赢法单一 / 阶段没有挫败 —— 对手再强也救不回「读者早知道他会怎么赢」
+        _modes = self.p.state.get("resolution_modes") or []
+        for x in sc.mode_monotony(_modes) + sc.mode_unused(_modes):
+            chs = window(upto - 20, upto, want=2)
+            if chs:
+                jobs.append({"kind": "赢法单一", "chapters": chs,
+                             "demand": f"{x}。这几章里让主角换一种赢法："
+                                       f"力破／借势／交易／收心／忍退／破局，挑一种没怎么用过的"})
+        for x in sc.setback_missing(self.stages(), self.p.state.get("setbacks") or [], upto,
+                                    quota=int(self.genre.get("setbackQuota") or 1)):
+            m3 = re.search(r"第(\d+)-(\d+)章", x)
+            if m3:
+                chs = window(int(m3.group(1)), min(int(m3.group(2)), upto), want=2)
+                if chs:
+                    jobs.append({"kind": "阶段无挫败", "chapters": chs,
+                                 "demand": f"{x}。这几章里补一次主角自己判断错、"
+                                           f"付出收不回来的代价、且不是靠看家本领翻盘的失手"})
+
         # ② 张力被静默消解
         app = self.outline_cast()
         for s in sc.silent_resolution(self.tensions(), app, upto, aliases=al):
@@ -2073,7 +2091,7 @@ class Novelist:
             + "\n\n".join(blocks) +
             "\n\n请判断四件事，只输出 JSON，不要代码围栏：\n"
             '{"plant":[{"ch":163,"text":"某处埋下的悬念，一句话"}],'
-            '"resolve":[2,5],"advanced":[1,4],"touched":[1],"ladder":["power"],"threads":[{"id":1,"how":"一句话说清这条线这次是怎么露的面：""在什么场合、由谁带出、发生了什么事"}]}\n'
+            '"resolve":[2,5],"advanced":[1,4],"touched":[1],"ladder":["power"],"modes":["outwit"],"setbacks":[{"ch":88,"what":"押错了船期，赔掉半年脚费"}],"threads":[{"id":1,"how":"一句话说清这条线这次是怎么露的面：""在什么场合、由谁带出、发生了什么事"}]}\n'
             "- plant：本批**新埋下**的悬念/伏笔（最多 6 条，写清是哪一章埋的）\n"
             "- resolve：本批**明确兑现或解开**的伏笔编号。只是提到、只是继续铺垫、"
             "只是相关，都不算\n"
@@ -2083,10 +2101,16 @@ class Novelist:
             "双方同框、或一方为此付出代价、或明写了它的进展\n"
             "- ladder：本批**实质推进**了的线（power／pleasure／persona）。"
             "只是维持现状不算，要看得出比上一批往前走了\n"
+            "- modes：本批**关键冲突主角是靠哪几种赢法赢的**，从 "
+            + "／".join(sc.MODE_KEYS) + " 里挑，最多 3 个。"
+            "赢法定义见下。没有关键冲突就给空数组\n"
+            "- setbacks：本批里主角**自己判断错、付出收不回来的代价、"
+            "且不是靠看家本领翻盘**的失手。被打一下又立刻用老办法赢回来不算。"
+            "每条给 ch（第几章）与 what（一句话）。没有就给空数组\n"
             "- threads：本批**真的推进**了的支线，每条给出编号与 how。"
             "该支线的人或组织有实际戏份才算，只被提一句不算。"
             "how 要写清「这次是怎么露的面」——下一批要靠它避免重复写法\n"
-            "拿不准就不填，宁缺毋滥。")
+            "拿不准就不填，宁缺毋滥。\n\n【七种赢法】\n" + sc.mode_menu())
         try:
             # 1200 装不下六个字段的完整 JSON —— 实测返回停在半个字符串上，
             # 解析失败后静默记成全零，一半批次的状态就这么丢了。
@@ -2155,6 +2179,28 @@ class Novelist:
                 got["ladder"] += 1
         if got["ladder"]:
             self.p.write("ladders.json", json.dumps(lad, ensure_ascii=False, indent=2))
+        modes = [str(x) for x in (data.get("modes") or []) if str(x) in sc.MODE_KEYS][:3]
+        if modes:
+            st2 = self.p.state
+            st2["resolution_modes"] = ((st2.get("resolution_modes") or []) + modes)[-24:]
+            self.p.save()
+        got["modes"] = len(modes)
+        got["setbacks"] = 0
+        for s in (data.get("setbacks") or [])[:3]:
+            if not isinstance(s, dict) or not str(s.get("what") or "").strip():
+                continue
+            try:
+                ch = int(s.get("ch") or start)
+            except (TypeError, ValueError):
+                ch = start
+            st3 = self.p.state
+            lst = st3.setdefault("setbacks", [])
+            lst.append({"ch": max(start, min(end, ch)),
+                        "what": str(s["what"])[:120]})
+            st3["setbacks"] = lst[-40:]
+            self.p.save()
+            got["setbacks"] += 1
+
         got["threads"] = 0
         by_tid = {x["id"]: x for x in thr}
         for item in (data.get("threads") or [])[:8]:
@@ -2182,7 +2228,8 @@ class Novelist:
         self.p.save()
         self._log(f"细纲巡检 {start}-{end}：埋伏笔 {got['plant']}／回收 {got['resolve']}"
                   f"／推进承诺 {got['advanced']}／触及张力 {got['touched']}"
-                  f"／推进阶梯 {got['ladder']}／推进支线 {got['threads']}")
+                  f"／推进阶梯 {got['ladder']}／推进支线 {got['threads']}"
+                  f"／赢法 {got.get('modes', 0)}／挫败 {got.get('setbacks', 0)}")
         return got
 
     _DECLARE = re.compile(r"^\s*新角色\s*[:：]\s*(.+)$", re.M)
@@ -2525,6 +2572,14 @@ class Novelist:
         pb = sc.promise_brief(self.promises(), start)
         if pb:
             cons.append(pb)
+        st_ = self.p.state
+        mb = sc.mode_brief(st_.get("resolution_modes") or [], start)
+        if mb:
+            cons.append(mb)
+        sb = sc.setback_brief(cur_stage, st_.get("setbacks") or [], start,
+                              quota=int(self.genre.get("setbackQuota") or 1))
+        if sb:
+            cons.append(sb)
         thr = self.threads()
         tbrief = sc.thread_brief(thr, start)
         if tbrief:

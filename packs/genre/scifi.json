@@ -72,5 +72,6 @@
       "hint": "职权层级/科技解锁度/装备/义体或改造"
     }
   },
-  "historyMode": "invented"
+  "historyMode": "invented",
+  "setbackQuota": 1
 }

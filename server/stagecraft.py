@@ -888,3 +888,150 @@ def merge_repairs(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                        if len(ds) > 1 else ds[0])
         out.append(b)
     return sorted(out, key=lambda x: x["chapters"][0])
+
+
+# ---------------------------------------------------------------- 解法谱系
+
+#: 主角解决冲突的**手段类型**。七类对所有题材通用：修仙、都市、宫斗、
+#: 军事、电竞、同人里的冲突，最终都落在这七种解法之一上。
+#:
+#: 为什么要管这个：长篇最隐蔽的疲劳不是「对手太弱」，而是**主角的招式一成
+#: 不变**。实测某书七个对手轮换了一百多章，主角七次全是同一招（拿账顶回去）；
+#: 对手一个比一个强、一个都不降智，读起来照样疲 —— 因为读者早就知道他会怎么赢。
+#:
+#: cadence 机制管的是「谁多久露一次面」，这里管的是「主角多久换一种赢法」。
+RESOLUTION_MODES: List[Dict[str, str]] = [
+    {"key": "outwit", "label": "智取",
+     "hint": "靠信息差、推演、布局赢 —— 他比对手多知道一件事，或多算一层"},
+    {"key": "force", "label": "力破",
+     "hint": "正面硬碰赢 —— 武力、战力、兵力、执行力，不绕弯子"},
+    {"key": "leverage", "label": "借势",
+     "hint": "借第三方的力赢 —— 靠山、规则、舆论、敌人的敌人"},
+    {"key": "trade", "label": "交易",
+     "hint": "付代价换结果 —— 谈判、让利、割肉、拿自己的东西换"},
+    {"key": "persuade", "label": "收心",
+     "hint": "把人变成自己人 —— 说服、感化、结盟、以诚换诚"},
+    {"key": "endure", "label": "忍退",
+     "hint": "这一局不赢 —— 退让、示弱、蛰伏、认下损失换以后"},
+    {"key": "upend", "label": "破局",
+     "hint": "改变规则本身 —— 掀桌、另开一局、让原来的胜负标准失效"},
+]
+
+MODE_KEYS = [m["key"] for m in RESOLUTION_MODES]
+_MODE_LABEL = {m["key"]: m["label"] for m in RESOLUTION_MODES}
+
+
+def mode_menu() -> str:
+    return "\n".join(f"- {m['label']}（{m['key']}）：{m['hint']}"
+                     for m in RESOLUTION_MODES)
+
+
+def mode_brief(recent: Sequence[str], n: int = 0) -> str:
+    """注入排纲的解法约束块。
+
+    `recent` 是最近几批用过的解法（每批一到三个），按批次先后排列。
+    """
+    if not recent:
+        return ""
+    tail = list(recent)[-9:]
+    cnt: Dict[str, int] = {}
+    for k in tail:
+        cnt[k] = cnt.get(k, 0) + 1
+    used = "、".join(f"{_MODE_LABEL.get(k, k)}×{v}"
+                    for k, v in sorted(cnt.items(), key=lambda x: -x[1]))
+    cold = [m["label"] for m in RESOLUTION_MODES if m["key"] not in cnt]
+    lines = ["【主角最近几批的赢法（不许再用同一种赢下去）】",
+             f"已用：{used}"]
+    if cold:
+        lines.append(f"久未用：{'、'.join(cold)}")
+    lines.append("本批至少有一场关键冲突，**换一种没在上面高频出现的赢法**。"
+                 "对手可以一个比一个强，但主角每次都用同一招，读者早就知道他会怎么赢。")
+    lines.append("七种赢法：\n" + mode_menu())
+    return "\n".join(lines)
+
+
+def mode_monotony(recent: Sequence[str], window: int = 6,
+                  ratio: float = 0.7) -> List[str]:
+    """最近 window 批里某一种解法占比过高 —— 招式单一。"""
+    tail = list(recent)[-window:]
+    if len(tail) < window:
+        return []
+    cnt: Dict[str, int] = {}
+    for k in tail:
+        cnt[k] = cnt.get(k, 0) + 1
+    out = []
+    for k, v in cnt.items():
+        if v / len(tail) >= ratio:
+            out.append(f"最近 {len(tail)} 次关键冲突里有 {v} 次靠「"
+                       f"{_MODE_LABEL.get(k, k)}」取胜，赢法太单一")
+    return out
+
+
+def mode_unused(recent: Sequence[str], min_history: int = 9,
+                min_cold: int = 3) -> List[str]:
+    """长期只在几种赢法里打转 —— 单一检测漏掉的那一半。
+
+    mode_monotony 查的是「某一种占比过高」，可实测更常见的形状是
+    **三种在循环、另外四种从没用过**：智取／交易／借势轮着来，占比都不高，
+    单一检测一条都不报，读起来照样是同一个人在用同一套本事。
+    """
+    hist = [k for k in (recent or []) if k in MODE_KEYS]
+    if len(hist) < min_history:
+        return []
+    cold = [m["label"] for m in RESOLUTION_MODES if m["key"] not in set(hist)]
+    if len(cold) < min_cold:
+        return []
+    hot = "、".join(_MODE_LABEL[k] for k in dict.fromkeys(hist))
+    return [f"最近 {len(hist)} 次关键冲突只在「{hot}」里打转，"
+            f"「{'、'.join(cold)}」一次没用过"]
+
+
+# ---------------------------------------------------------------- 挫败配额
+
+def setback_brief(stage: Optional[Dict[str, Any]], setbacks: Sequence[Dict[str, Any]],
+                  n: int, quota: int = 1) -> str:
+    """本阶段的挫败配额还差几次。
+
+    爽文也需要主角栽跟头 —— 不是为了虐，是因为**从不失手的人不值得担心**。
+    实测某书中段 27 章全是「查—证—记档」，主角一次没输过，对手一个比一个强
+    也救不回来：读者不担心，就不往下翻。
+
+    判据比「有没有挫折」严一层：必须是**主角自己判断错**、**付出不可逆的
+    代价**、而且**不是靠他的看家本领翻盘**。被对手打了一下又立刻用老办法赢
+    回来，那不叫挫败，那是爽点的前摇。
+    """
+    if not stage:
+        return ""
+    a, b = stage["start"], stage["end"]
+    got = [s for s in (setbacks or []) if a <= int(s.get("ch") or 0) <= b]
+    if len(got) >= quota:
+        return ""
+    span = max(1, b - a + 1)
+    left = b - n
+    urgent = left <= span * 0.35
+    lines = [f"【本阶段的挫败配额：需 {quota} 次，已有 {len(got)} 次】"]
+    if got:
+        lines.append("已有：" + "；".join(f"第{s.get('ch')}章 {str(s.get('what'))[:40]}"
+                                        for s in got[:3]))
+    lines.append("这一阶段必须有一次**主角自己判断错**、**付出收不回来的代价**、"
+                 "而且**不是靠他的看家本领翻盘**的失手。"
+                 "被打一下又立刻用老办法赢回来不算 —— 那是爽点的前摇，不是挫败。")
+    if urgent:
+        lines.append(f"⚠ 本阶段只剩 {max(0, left)} 章，这一次必须落在本批。")
+    return "\n".join(lines)
+
+
+def setback_missing(stages: Sequence[Dict[str, Any]],
+                    setbacks: Sequence[Dict[str, Any]],
+                    upto: int, quota: int = 1) -> List[str]:
+    """已经走完、却没凑够挫败配额的阶段。"""
+    out = []
+    for s in stages or []:
+        if s["end"] > upto:
+            continue
+        got = [x for x in (setbacks or [])
+               if s["start"] <= int(x.get("ch") or 0) <= s["end"]]
+        if len(got) < quota:
+            out.append(f"{s['name']}（第{s['start']}-{s['end']}章）"
+                       f"全程没有主角真正的失手，{len(got)}/{quota}")
+    return out

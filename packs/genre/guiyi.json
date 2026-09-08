@@ -70,5 +70,6 @@
       "hint": "能力等级/污染度或理智值/持有法器/伤势"
     }
   },
-  "historyMode": "invented"
+  "historyMode": "invented",
+  "setbackQuota": 2
 }

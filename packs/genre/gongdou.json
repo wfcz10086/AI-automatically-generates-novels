@@ -76,5 +76,6 @@
       "hint": "位分品级/协理权/子嗣/圣宠冷热"
     }
   },
-  "historyMode": "real"
+  "historyMode": "real",
+  "setbackQuota": 2
 }

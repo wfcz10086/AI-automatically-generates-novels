@@ -172,5 +172,6 @@
       "hint": "等级或阶位/血脉觉醒度/所修功法/装备"
     }
   },
-  "historyMode": "invented"
+  "historyMode": "invented",
+  "setbackQuota": 1
 }

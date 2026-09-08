@@ -66,5 +66,6 @@
       "hint": "感情阶段/工作/居所/健康"
     }
   },
-  "historyMode": "modern"
+  "historyMode": "modern",
+  "setbackQuota": 1
 }

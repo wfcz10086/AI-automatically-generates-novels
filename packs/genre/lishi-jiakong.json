@@ -140,5 +140,6 @@
       "hint": "官职品级/所辖兵力/爵位/势力归属"
     }
   },
-  "historyMode": "alt"
+  "historyMode": "alt",
+  "setbackQuota": 1
 }

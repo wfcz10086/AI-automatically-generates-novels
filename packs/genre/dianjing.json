@@ -73,5 +73,6 @@
       "hint": "段位或排名/所属战队/位置/状态起伏"
     }
   },
-  "historyMode": "modern"
+  "historyMode": "modern",
+  "setbackQuota": 1
 }

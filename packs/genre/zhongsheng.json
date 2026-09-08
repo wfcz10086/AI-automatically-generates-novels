@@ -173,5 +173,6 @@
       "hint": "职位或学业阶段/公司/人脉/健康"
     }
   },
-  "historyMode": "modern"
+  "historyMode": "modern",
+  "setbackQuota": 1
 }

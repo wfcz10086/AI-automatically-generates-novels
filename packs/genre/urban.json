@@ -114,5 +114,6 @@
       "hint": "职位/公司/人脉圈层/健康状况"
     }
   },
-  "historyMode": "modern"
+  "historyMode": "modern",
+  "setbackQuota": 1
 }

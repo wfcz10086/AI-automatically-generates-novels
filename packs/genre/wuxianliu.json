@@ -125,5 +125,6 @@
     }
   },
   "historyMode": "multiworld",
-  "historyModeAmbiguous": true
+  "historyModeAmbiguous": true,
+  "setbackQuota": 1
 }

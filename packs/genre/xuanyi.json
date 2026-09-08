@@ -75,5 +75,6 @@
       "hint": "身份/所掌线索进度/受威胁程度/伤势"
     }
   },
-  "historyMode": "modern"
+  "historyMode": "modern",
+  "setbackQuota": 2
 }

@@ -113,5 +113,6 @@
       "hint": "进化程度或异能等级/队伍规模/据点/伤病"
     }
   },
-  "historyMode": "invented"
+  "historyMode": "invented",
+  "setbackQuota": 1
 }

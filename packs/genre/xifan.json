@@ -77,5 +77,6 @@
       "hint": "身份/家中地位/所掌产业/健康"
     }
   },
-  "historyMode": "modern"
+  "historyMode": "modern",
+  "setbackQuota": 1
 }

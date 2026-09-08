@@ -147,5 +147,6 @@
       "hint": "职位/势力/人脉/健康"
     }
   },
-  "historyMode": "modern"
+  "historyMode": "modern",
+  "setbackQuota": 1
 }

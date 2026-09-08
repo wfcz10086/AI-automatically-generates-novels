@@ -55,5 +55,6 @@
       "name": "加因果代价",
       "prompt": "改写下面这段，让强者出手带上明确的因果代价，直接输出：\n${selected_text}"
     }
-  ]
+  ],
+  "setbackQuota": 1
 }

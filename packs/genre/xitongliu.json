@@ -108,5 +108,6 @@
     }
   },
   "historyMode": "invented",
-  "historyModeAmbiguous": true
+  "historyModeAmbiguous": true,
+  "setbackQuota": 1
 }

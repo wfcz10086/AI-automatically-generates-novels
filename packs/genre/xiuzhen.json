@@ -164,5 +164,6 @@
       "hint": "境界（练气→筑基→金丹→元婴…）/功法/本命法宝/伤势与道基"
     }
   },
-  "historyMode": "invented"
+  "historyMode": "invented",
+  "setbackQuota": 1
 }

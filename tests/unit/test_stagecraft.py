@@ -243,3 +243,66 @@ class TestLadder:
         r[1]["reached"] = 166
         assert sc.ladder_stalled({"power": r}, 346)
         assert not sc.ladder_stalled({"power": r}, 200)
+
+
+class TestResolutionModes:
+    """赢法单一 —— 对手再强也救不回「读者早就知道他会怎么赢」。"""
+
+    def test_monotony_flagged(self):
+        assert sc.mode_monotony(["outwit"] * 6)
+
+    def test_mixed_is_clean(self):
+        assert sc.mode_monotony(["outwit", "force", "trade",
+                                 "leverage", "outwit", "persuade"]) == []
+
+    def test_short_history_never_flags(self):
+        """样本不够就不报 —— 开书前几批本来就只有一两种赢法。"""
+        assert sc.mode_monotony(["outwit"] * 3) == []
+
+    def test_brief_lists_cold_modes(self):
+        b = sc.mode_brief(["outwit"] * 6)
+        assert "久未用" in b and "力破" in b
+        assert "智取×6" in b
+
+    def test_unknown_keys_do_not_crash(self):
+        assert isinstance(sc.mode_monotony(["nope"] * 6), list)
+
+
+class TestSetbacks:
+    """挫败配额 —— 从不失手的人不值得担心，读者不担心就不往下翻。"""
+
+    def stage(self, s=1, e=50):
+        return {"name": "A", "start": s, "end": e}
+
+    def test_brief_when_quota_unmet(self):
+        b = sc.setback_brief(self.stage(), [], n=10, quota=1)
+        assert "0 次" in b and "判断错" in b
+
+    def test_silent_when_quota_met(self):
+        got = [{"ch": 20, "what": "押错船期赔掉半年脚费"}]
+        assert sc.setback_brief(self.stage(), got, n=30, quota=1) == ""
+
+    def test_urgent_near_stage_end(self):
+        b = sc.setback_brief(self.stage(), [], n=45, quota=1)
+        assert "只剩" in b
+
+    def test_setback_in_other_stage_does_not_count(self):
+        got = [{"ch": 200, "what": "别的阶段的失手"}]
+        assert "0 次" in sc.setback_brief(self.stage(), got, n=10, quota=1)
+
+    def test_missing_only_reports_finished_stages(self):
+        stages = [self.stage(1, 50), self.stage(51, 100)]
+        out = sc.setback_missing(stages, [], upto=60)
+        assert len(out) == 1 and "1-50" in out[0]
+
+    def test_unused_modes_flagged(self):
+        """三种在循环、四种从没用过 —— 单一检测一条都不报，这条要报。"""
+        hist = ["outwit", "trade", "leverage"] * 3
+        assert sc.mode_monotony(hist) == []
+        got = sc.mode_unused(hist)
+        assert got and "力破" in got[0]
+
+    def test_unused_silent_when_broad(self):
+        hist = ["outwit", "force", "trade", "leverage",
+                "persuade", "endure", "upend", "outwit", "force"]
+        assert sc.mode_unused(hist) == []

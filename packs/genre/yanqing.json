@@ -93,5 +93,6 @@
       "hint": "感情阶段/工作或学业/家庭处境/健康"
     }
   },
-  "historyMode": "modern"
+  "historyMode": "modern",
+  "setbackQuota": 1
 }

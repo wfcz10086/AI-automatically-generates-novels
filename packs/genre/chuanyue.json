@@ -99,5 +99,6 @@
     }
   },
   "historyMode": "real",
-  "historyModeAmbiguous": true
+  "historyModeAmbiguous": true,
+  "setbackQuota": 1
 }

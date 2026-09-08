@@ -79,5 +79,6 @@
     }
   },
   "historyMode": "modern",
-  "historyModeAmbiguous": true
+  "historyModeAmbiguous": true,
+  "setbackQuota": 2
 }
