@@ -159,3 +159,87 @@ class TestParseJson:
 
     def test_returns_empty_on_garbage(self):
         assert sc.parse_json("完全没有 JSON", "stages") == {}
+
+
+class TestThreads:
+    """支线断线检测 —— 两个假阴性都是实测踩出来的，锁死。"""
+
+    def threads(self):
+        return [
+            {"id": 1, "name": "武松线", "kind": "人物线",
+             "owner": ["武松", "西门庆"], "org": "", "span": [1, 346],
+             "cadence": 10, "beats": [], "ending": "", "last_touched": 0},
+            {"id": 2, "name": "梁山线", "kind": "势力线",
+             "owner": ["武松", "鲁智深", "林冲", "西门庆"], "org": "梁山",
+             "span": [111, 235], "cadence": 25, "beats": [], "ending": "",
+             "last_touched": 0},
+        ]
+
+    def book(self):
+        d = {}
+        for n in range(1, 250):
+            cast = "西门庆、武松、玳安"
+            if n in (150, 158, 161):
+                cast += "、鲁智深、林冲"
+            d.update(outline(n, cast))
+        return d
+
+    def test_protagonist_is_not_evidence(self):
+        """每条线都挂着主角, 主角章章出场 —— 留着他, 所有线永远不断。"""
+        t = self.threads()[0]
+        assert sc.thread_owners(t, protagonist="西门庆") == ["武松"]
+
+    def test_other_threads_pillar_is_not_evidence(self):
+        """梁山线挂着武松, 而武松是自己那条线的台柱、全书都在。
+
+        他在场只说明他自己那条线在走, 不说明梁山在走 ——
+        第一版就是这样把断了 74 章的梁山线判成了 ok。
+        """
+        ths = self.threads()
+        who = sc.thread_owners(ths[1], protagonist="西门庆", all_threads=ths)
+        assert "武松" not in who
+        assert set(who) == {"鲁智深", "林冲"}
+
+    def test_never_leaves_thread_without_evidence(self):
+        """判据被剔光时要退回原名单 —— 宁可判松, 不能没有判据。"""
+        t = {"id": 9, "name": "x", "owner": ["武松"], "org": "", "span": [1, 10],
+             "cadence": 5, "beats": [], "last_touched": 0}
+        others = [{"id": 1, "name": "y", "owner": ["武松"], "span": [1, 10],
+                   "cadence": 5}]
+        assert sc.thread_owners(t, protagonist="西门庆", all_threads=others) == ["武松"]
+
+    def test_replay_detects_broken_thread(self):
+        ths = self.threads()
+        sc.thread_last_seen(ths, self.book(), protagonist="西门庆")
+        assert ths[0]["last_touched"] == 249      # 武松线一直在走
+        assert ths[1]["last_touched"] == 161      # 梁山线停在最后一次露面
+        overdue = " ".join(sc.thread_overdue(ths, 235))
+        assert "梁山线" in overdue and "武松线" not in overdue
+
+    def test_active_window(self):
+        ths = self.threads()
+        assert [t["id"] for t in sc.active_threads(ths, 50)] == [1]
+        assert [t["id"] for t in sc.active_threads(ths, 150)] == [1, 2]
+
+
+class TestLadder:
+    def rungs(self):
+        return [{"stage": "挨打不倒", "by": 1, "check": "", "reached": 0},
+                {"stage": "接二流二十招", "by": 60, "check": "", "reached": 0},
+                {"stage": "接一流三十招", "by": 200, "check": "", "reached": 0}]
+
+    def test_rung_by_chapter(self):
+        r = self.rungs()
+        assert sc.ladder_rung(r, 30)["stage"] == "挨打不倒"
+        assert sc.ladder_rung(r, 100)["stage"] == "接二流二十招"
+
+    def test_next_rung_is_the_target(self):
+        assert sc.ladder_next(self.rungs(), 100)["by"] == 200
+        assert sc.ladder_next(self.rungs(), 300) is None
+
+    def test_stall_detected(self):
+        """实测力量线末次推进第 166 章, 之后 180 章没动过。"""
+        r = self.rungs()
+        r[1]["reached"] = 166
+        assert sc.ladder_stalled({"power": r}, 346)
+        assert not sc.ladder_stalled({"power": r}, 200)

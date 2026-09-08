@@ -1055,6 +1055,55 @@ class Novelist:
             self.p.save()
         return got
 
+    def ladders(self, rebuild: bool = False) -> Dict[str, List[Dict[str, Any]]]:
+        """三条随进度演进的线：力量 / 爽点 / 人设。
+
+        题材包的 power 槽原来只有记账口径（境界怎么写），没有「第几章该到第几级」，
+        也没人检查 —— 实测主角的功夫写在总纲里，第 125 章之后 200 多章没再出现。
+        """
+        cached = self.p._load("ladders.json", {})
+        if cached and not rebuild:
+            return cached
+        outline = self.asset("outline.md")
+        if not outline.strip():
+            return {}
+        total = int(self.p.meta.get("target_chapters") or 0) or 100
+        got = sc.build_ladders(outline=outline, total_chapters=total,
+                               title=self.p.meta.get("title", ""), genre=self.genre,
+                               ask=self._ask_planner)
+        if got:
+            self.p.write("ladders.json", json.dumps(got, ensure_ascii=False, indent=2))
+            self._log("阶梯：" + "／".join(f"{k} {len(v)} 级" for k, v in got.items()))
+        return got
+
+    def threads(self, rebuild: bool = False) -> List[Dict[str, Any]]:
+        """支线。主线管方向，支线管密度 —— 全书只有一条线在走就会干巴。"""
+        cached = self.p._load("threads.json", [])
+        if cached and not rebuild:
+            return cached
+        outline = self.asset("outline.md")
+        if not outline.strip():
+            return []
+        total = int(self.p.meta.get("target_chapters") or 0) or 100
+        got = sc.build_threads(outline=outline, stages=self.stages(),
+                               total_chapters=total, title=self.p.meta.get("title", ""),
+                               roster=[c["name"] for c in self.roster()],
+                               ask=self._ask_planner)
+        if got:
+            self.p.write("threads.json", json.dumps(got, ensure_ascii=False, indent=2))
+            # 支线的 org 字段就是组织台账的生命线 —— 原来 orgs 一直是空的,
+            # 于是共主角级的势力(梁山)可以在卷末静默蒸发, 没人报警。
+            st = self.p.state
+            orgs = st.setdefault("orgs", {})
+            for x in got:
+                if x.get("org"):
+                    orgs.setdefault(x["org"], {
+                        "name": x["org"], "thread": x["name"],
+                        "span": x["span"], "state": "在册"})
+            self.p.save()
+            self._log(f"支线 {len(got)} 条：" + "、".join(x["name"] for x in got))
+        return got
+
     def outline_cast(self, before: Optional[int] = None) -> Dict[str, List[int]]:
         return sc.cast_appearances(self.p._load("chapter_outlines.json", {}),
                                    before=before, aliases=self.name_aliases())
@@ -1723,13 +1772,25 @@ class Novelist:
             blocks.append("【关系张力】\n" + "\n".join(
                 f"T{i+1}. {' ↔ '.join(x['between'])}：{x['about'][:50]}"
                 for i, x in enumerate(tens)))
+        thr = self.threads()
+        live = sc.active_threads(thr, end)
+        if live:
+            blocks.append("【本批区间活着的支线】\n" + "\n".join(
+                f"S{x['id']}. {x['name']}（{x['kind']}｜{'、'.join(x['owner']) or x.get('org','')}）"
+                for x in live))
+        lad = self.ladders()
+        if lad:
+            lab = {k["key"]: k["label"] for k in sc.LADDER_KINDS}
+            blocks.append("【三条线当前应处的位置】\n" + "\n".join(
+                f"{k}（{lab.get(k, k)}）：{(sc.ladder_rung(v, end) or {}).get('stage', '')}"
+                for k, v in lad.items()))
         prompt = (
             "你在给一部长篇作品做**排纲阶段的连续性记账**。下面是刚排好的一批细纲，"
             "以及全书当前的伏笔／承诺／张力清单。\n\n"
             + "\n\n".join(blocks) +
             "\n\n请判断四件事，只输出 JSON，不要代码围栏：\n"
             '{"plant":[{"ch":163,"text":"某处埋下的悬念，一句话"}],'
-            '"resolve":[2,5],"advanced":[1,4],"touched":[1]}\n'
+            '"resolve":[2,5],"advanced":[1,4],"touched":[1],"ladder":["power"],"threads":[1,3]}\n'
             "- plant：本批**新埋下**的悬念/伏笔（最多 6 条，写清是哪一章埋的）\n"
             "- resolve：本批**明确兑现或解开**的伏笔编号。只是提到、只是继续铺垫、"
             "只是相关，都不算\n"
@@ -1737,6 +1798,10 @@ class Novelist:
             "只是提了一嘴不算，要真往前走了一步\n"
             "- touched：本批**正面碰到**的张力编号（T 后面的数字）。"
             "双方同框、或一方为此付出代价、或明写了它的进展\n"
+            "- ladder：本批**实质推进**了的线（power／pleasure／persona）。"
+            "只是维持现状不算，要看得出比上一批往前走了\n"
+            "- threads：本批**真的推进**了的支线编号（S 后面的数字）。"
+            "该支线的人或组织有实际戏份才算，只被提一句不算\n"
             "拿不准就不填，宁缺毋滥。")
         try:
             data = sc.parse_json(clean(call("polishing", prompt, max_tokens=1200).text))
@@ -1777,11 +1842,35 @@ class Novelist:
                 got["touched"] += 1
             except (ValueError, TypeError, IndexError):
                 continue
+        got["ladder"] = 0
+        for k in (data.get("ladder") or [])[:3]:
+            rungs = lad.get(str(k))
+            if not rungs:
+                continue
+            cur = sc.ladder_rung(rungs, end)
+            if cur:
+                cur["reached"] = end
+                got["ladder"] += 1
+        if got["ladder"]:
+            self.p.write("ladders.json", json.dumps(lad, ensure_ascii=False, indent=2))
+        got["threads"] = 0
+        by_tid = {x["id"]: x for x in thr}
+        for i in (data.get("threads") or [])[:8]:
+            try:
+                x = by_tid.get(int(i))
+            except (ValueError, TypeError):
+                continue
+            if x:
+                x["last_touched"] = end
+                got["threads"] += 1
+        if got["threads"]:
+            self.p.write("threads.json", json.dumps(thr, ensure_ascii=False, indent=2))
         st = self.p.state
         st["promises"], st["tensions"] = proms, tens
         self.p.save()
         self._log(f"细纲巡检 {start}-{end}：埋伏笔 {got['plant']}／回收 {got['resolve']}"
-                  f"／推进承诺 {got['advanced']}／触及张力 {got['touched']}")
+                  f"／推进承诺 {got['advanced']}／触及张力 {got['touched']}"
+                  f"／推进阶梯 {got['ladder']}／推进支线 {got['threads']}")
         return got
 
     _DECLARE = re.compile(r"^\s*新角色\s*[:：]\s*(.+)$", re.M)
@@ -2064,6 +2153,22 @@ class Novelist:
         pb = sc.promise_brief(self.promises(), start)
         if pb:
             cons.append(pb)
+        thr = self.threads()
+        tbrief = sc.thread_brief(thr, start)
+        if tbrief:
+            cons.append(tbrief)
+        due = sc.thread_overdue(thr, start)
+        if due:
+            cons.append("【下面这些支线已经超过自己的节奏没露面，本批必须让它们各推进一步】\n"
+                        + "\n".join(f"- {x}" for x in due))
+        lad = self.ladders()
+        lb = sc.ladder_brief(lad, start)
+        if lb:
+            cons.append(lb)
+        stalled = sc.ladder_stalled(lad, start)
+        if stalled:
+            cons.append("【下面这几条线已经停太久，本批必须让它往前走一步】\n"
+                        + "\n".join(f"- {x}" for x in stalled))
         gone = self.stale_cast_planned(start)
         if gone:
             cons.append("【以下角色已经断线，本批择机让他们重新入场或明写其去向，"

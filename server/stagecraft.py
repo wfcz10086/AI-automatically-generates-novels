@@ -498,3 +498,287 @@ def promise_brief(promises: Sequence[Dict[str, Any]], upto: int,
         return ""
     return ("【总纲承诺已久未兑现，本批必须推进其中至少一条】\n"
             + "\n".join(f"- {h}" for h in hungry[:5]))
+
+
+# ---------------------------------------------------------------- 三条阶梯
+
+#: 三条随全书进度演进的线。槽位通用，内容由题材包给默认、开书时按本书实例化。
+#:
+#: 为什么要有它：题材包里的 power 槽原来只有「记账口径」（境界怎么写），
+#: 没有「第几章该到第几级」，也没人检查 —— 实测某书主角的横练功夫写在总纲里，
+#: 第 125 章之后 200 多章再没出现过。爽点同理：pleasureBeats 固定四拍，
+#: 346 章一个配方，读到后面必然疲。
+LADDER_KINDS: List[Dict[str, str]] = [
+    {"key": "power", "label": "力量线",
+     "hint": "主角的实力/地位/技艺怎么一级一级长起来。每一级要能被验证"
+             "（打得过谁、管得了多少人、进得了哪扇门）"},
+    {"key": "pleasure", "label": "爽点配方",
+     "hint": "这一段靠什么让读者爽。前期与后期不该是同一种爽 —— "
+             "以小博大 / 以势压人 / 定规矩，是三种不同的配方"},
+    {"key": "persona", "label": "主角特质",
+     "hint": "主角这一段最突出的是什么本事与什么毛病。人是会变的，"
+             "开局的谨慎到后期该变成别的东西"},
+]
+
+
+def build_ladders(*, outline: str, total_chapters: int, title: str = "",
+                  genre: Optional[Dict[str, Any]] = None,
+                  ask: Callable[[str], str]) -> Dict[str, List[Dict[str, Any]]]:
+    """按本书总纲实例化三条阶梯。
+
+    题材包只给默认口径（修仙填境界、电竞填段位、宫斗填位分、军事填军衔），
+    具体每一级是什么、什么时候到，由模型读总纲决定。
+    """
+    if not (outline or "").strip():
+        return {}
+    spec = (genre or {}).get("ledgers") or {}
+    power_hint = ((spec.get("power") or {}).get("hint") or "").strip()
+    kinds = "\n".join(f"- {k['label']}（{k['key']}）：{k['hint']}"
+                      + (f"\n  本题材的口径：{power_hint}"
+                         if k["key"] == "power" and power_hint else "")
+                      for k in LADDER_KINDS)
+    prompt = (
+        f"下面是长篇作品《{title}》的总纲，全书 {total_chapters} 章。\n\n"
+        f"为它排三条**随进度演进的阶梯**：\n{kinds}\n\n"
+        f"每条 4-7 级。每级给出：这一级是什么、到第几章应该达到、"
+        f"怎么验证已经到了。\n"
+        f"级与级之间必须**看得出差别** —— 「变强了」不算，"
+        f"「从接二流二十招到接一流三十招」才算。\n\n"
+        f"只输出 JSON，不要代码围栏：\n"
+        '{"power":[{"stage":"这一级是什么","by":50,"check":"怎么验证"}],'
+        '"pleasure":[...],"persona":[...]}\n'
+        f"by 是章号（1-{total_chapters}），必须递增。\n\n"
+        f"#总纲\n{outline[:12000]}")
+    data = parse_json(ask(prompt))
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for k in (x["key"] for x in LADDER_KINDS):
+        rungs = []
+        for r in (data.get(k) or [])[:8]:
+            if not isinstance(r, dict) or not str(r.get("stage") or "").strip():
+                continue
+            try:
+                by = int(r.get("by") or 0)
+            except (TypeError, ValueError):
+                continue
+            rungs.append({"stage": str(r["stage"])[:80], "by": max(1, by),
+                          "check": str(r.get("check") or "")[:80], "reached": 0})
+        rungs.sort(key=lambda x: x["by"])
+        if rungs:
+            out[k] = rungs
+    return out
+
+
+def ladder_rung(rungs: Sequence[Dict[str, Any]], n: int) -> Optional[Dict[str, Any]]:
+    """第 n 章按计划应该处在哪一级。"""
+    cur = None
+    for r in rungs or []:
+        if n >= r["by"]:
+            cur = r
+        else:
+            break
+    return cur or (rungs[0] if rungs else None)
+
+
+def ladder_next(rungs: Sequence[Dict[str, Any]], n: int) -> Optional[Dict[str, Any]]:
+    for r in rungs or []:
+        if r["by"] > n:
+            return r
+    return None
+
+
+def ladder_brief(ladders: Dict[str, List[Dict[str, Any]]], n: int) -> str:
+    """注入排纲/写作的阶梯约束块。"""
+    if not ladders:
+        return ""
+    lab = {k["key"]: k["label"] for k in LADDER_KINDS}
+    lines = ["【三条线当前该走到哪一步（按全书进度，不许原地踏步）】"]
+    for key, rungs in ladders.items():
+        cur, nxt = ladder_rung(rungs, n), ladder_next(rungs, n)
+        if not cur:
+            continue
+        seg = f"- {lab.get(key, key)}：现在应处于「{cur['stage']}」"
+        if cur.get("check"):
+            seg += f"（验证：{cur['check']}）"
+        if nxt:
+            seg += f"；第 {nxt['by']} 章前要迈到「{nxt['stage']}」"
+        lines.append(seg)
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def ladder_stalled(ladders: Dict[str, List[Dict[str, Any]]], n: int,
+                   gap: int = 60) -> List[str]:
+    """某条线已经很久没有推进过 —— 实测力量线断在第 125 章，之后 200 多章没动。"""
+    lab = {k["key"]: k["label"] for k in LADDER_KINDS}
+    out = []
+    for key, rungs in (ladders or {}).items():
+        last = max([r.get("reached") or 0 for r in rungs] or [0])
+        if n - last >= gap:
+            cur = ladder_rung(rungs, n)
+            out.append(f"{lab.get(key, key)}：末次推进第 {last} 章，已停 {n - last} 章"
+                       f"（当前应在「{(cur or {}).get('stage', '?')}」）")
+    return out
+
+
+# ---------------------------------------------------------------- 支线
+
+#: 支线做成一等公民。
+#:
+#: 为什么：原来只有主线（阶段骨架的 goal→steps 链）有结构，支线只在承诺清单里
+#: 以一句话存在 —— 没有起止、没有归属人、没有交织节奏。实测一部水浒同人里，
+#: 「梁山线」从来就不是一条线，只是一句承诺，于是 108 将除两人外全部零出场，
+#: 「梁山」二字在 328 章里只出现 15 次，第 158 章后彻底消失。
+#:
+#: 主线管方向，支线管密度。全书只有一条线在走，就是「干巴」的根子。
+def build_threads(*, outline: str, stages: Sequence[Dict[str, Any]],
+                  total_chapters: int, title: str = "",
+                  roster: Optional[Sequence[str]] = None,
+                  ask: Callable[[str], str]) -> List[Dict[str, Any]]:
+    """从总纲与阶段骨架里读出支线。"""
+    if not (outline or "").strip():
+        return []
+    stage_line = "；".join(f"{s['name']}(第{s['start']}-{s['end']}章)"
+                          for s in (stages or []))
+    prompt = (
+        f"下面是长篇作品《{title}》的总纲。全书 {total_chapters} 章"
+        + (f"，阶段划分：{stage_line}" if stage_line else "") + "。\n\n"
+        f"主线是主角一级级往上走的那条。请把**支线**单独列出来 —— "
+        f"与主线交织、但有自己的起止与归宿的线：\n"
+        f"- 人物线：某个重要配角自己的命运（他的目标、他的代价、他的结局）\n"
+        f"- 势力线：某个组织/门派/阵营的兴衰\n"
+        f"- 情感线：未了的恩怨与情债\n"
+        f"- 谜团线：一个悬念从埋下到揭开\n\n"
+        f"列 4-8 条。每条要有：名字、类型、归属的人（或组织）、"
+        f"从第几章到第几章、这条线的 3-6 个关键节点、"
+        f"以及**多少章至少要露一次面**（cadence：线越重要数越小；"
+        f"贯穿全书的主要支线 10-15，阶段性的 20-30）。\n\n"
+        f"只输出 JSON，不要代码围栏：\n"
+        '{"threads":[{"name":"某某线","kind":"势力","owner":["甲","乙"],'
+        '"org":"某组织或空字符串","span":[30,235],"cadence":12,'
+        '"beats":["节点1","节点2"],"ending":"这条线最后怎么收"}]}\n\n'
+        f"可用角色：{'、'.join(roster or []) or '（见总纲）'}\n\n"
+        f"#总纲\n{outline[:12000]}")
+    data = parse_json(ask(prompt), "threads")
+    out = []
+    for i, x in enumerate((data.get("threads") or [])[:10]):
+        if not isinstance(x, dict) or not str(x.get("name") or "").strip():
+            continue
+        span = x.get("span") or []
+        try:
+            a, b = int(span[0]), int(span[1])
+        except (TypeError, ValueError, IndexError):
+            a, b = 1, total_chapters
+        try:
+            cad = int(x.get("cadence") or 20)
+        except (TypeError, ValueError):
+            cad = 20
+        out.append({
+            "id": i + 1,
+            "name": str(x["name"])[:24],
+            "kind": str(x.get("kind") or "")[:8],
+            "owner": [canon_name(o) for o in (x.get("owner") or []) if str(o).strip()][:5],
+            "org": str(x.get("org") or "")[:24],
+            "span": [max(1, a), max(a, b)],
+            "cadence": max(4, min(cad, 60)),
+            "beats": [str(z)[:50] for z in (x.get("beats") or [])][:8],
+            "ending": str(x.get("ending") or "")[:120],
+            "last_touched": 0,
+        })
+    return out
+
+
+def thread_owners(t: Dict[str, Any], protagonist: str = "",
+                  aliases: Optional[Dict[str, str]] = None,
+                  all_threads: Optional[Sequence[Dict[str, Any]]] = None) -> List[str]:
+    """支线的**承载者** —— 用来判断这条线有没有动的那几个人。
+
+    去掉两类人，去掉之后剩下的才有判别力：
+
+    ① **主角**。每条支线都与主角有关，模型列 owner 时自然把他写进去，
+       而他章章出场 —— 留着他，每条线都判定「露过面了」。
+    ② **已经是别条线台柱的人**。实测「梁山账·生路名单」挂着武松，而武松是
+       「武松·恩仇转军法」的头号归属人、全书 238 章有戏；于是梁山线断在
+       第 158 章却报 ok。他在场只说明他自己那条线在走，不说明梁山在走。
+
+    剩下鲁智深、林冲与「梁山」这个组织名，才是这条线真正的判据。
+    """
+    hero = canon_name(protagonist, aliases) if protagonist else ""
+    # 别条线的头号归属人（owner 里第一个非主角的人）
+    pillars = set()
+    for x in all_threads or []:
+        if x is t or x.get("id") == t.get("id"):
+            continue
+        for o in x.get("owner") or []:
+            c = canon_name(o, aliases)
+            if c and c != hero:
+                pillars.add(c)
+                break
+    out = []
+    for o in t.get("owner") or []:
+        c = canon_name(o, aliases)
+        if not c or (hero and c == hero) or c in pillars:
+            continue
+        out.append(c)
+    # 全被剔光时退回原名单（去掉主角）—— 宁可判得松，也不能没有判据
+    return out or [canon_name(o, aliases) for o in (t.get("owner") or [])
+                   if not hero or canon_name(o, aliases) != hero]
+
+
+def active_threads(threads: Sequence[Dict[str, Any]], n: int) -> List[Dict[str, Any]]:
+    return [t for t in threads or [] if t["span"][0] <= n <= t["span"][1]]
+
+
+def thread_brief(threads: Sequence[Dict[str, Any]], n: int) -> str:
+    live = active_threads(threads, n)
+    if not live:
+        return ""
+    lines = ["【本批活着的支线（主线管方向，支线管密度 —— 全书只有一条线在走就会干）】"]
+    for t in live[:8]:
+        who = "、".join(t["owner"]) or t.get("org") or ""
+        gap = n - (t.get("last_touched") or t["span"][0])
+        due = "  ← 已超期，本批必须推进" if gap >= t["cadence"] else ""
+        lines.append(f"- {t['name']}（{t['kind']}｜{who}｜第{t['span'][0]}-{t['span'][1]}章｜"
+                     f"每 {t['cadence']} 章至少露一次，已隔 {gap} 章）{due}")
+        if t.get("beats"):
+            lines.append(f"    节点：{' → '.join(t['beats'])}")
+    return "\n".join(lines)
+
+
+def thread_overdue(threads: Sequence[Dict[str, Any]], n: int) -> List[str]:
+    """超过自己节奏没露面的支线。"""
+    out = []
+    for t in active_threads(threads, n):
+        gap = n - (t.get("last_touched") or t["span"][0])
+        if gap >= t["cadence"]:
+            out.append(f"{t['name']}（每 {t['cadence']} 章该露一次，已隔 {gap} 章）")
+    return out
+
+
+def thread_last_seen(threads: Sequence[Dict[str, Any]], outlines: Dict[str, str],
+                     aliases: Optional[Dict[str, str]] = None,
+                     protagonist: str = "") -> None:
+    """拿已排好的细纲回填每条支线的末次露面 —— 就地改 threads。
+
+    给「骨架是后加的、细纲已经排完」的书用：巡检只对之后的批次生效，
+    之前排的那些得回放一遍才知道断在哪。
+    判据是归属人真的出场，或组织名出现在细纲里 —— 只被提一句不算露面。
+
+    **主角必须排除在归属人之外**：每条支线都与主角有关，模型列 owner 时
+    自然会把主角写进去，而主角章章出场 —— 于是每条线都判定「露过面了」，
+    检测器全绿。实测第一版就是这样：梁山线断在第 158 章，却报 ok。
+    一个永远不报警的检测器比没有更糟。
+    """
+    app = cast_appearances(outlines, aliases=aliases)
+    hero = canon_name(protagonist, aliases) if protagonist else ""
+    nums = sorted(int(k) for k in outlines if str(k).isdigit())
+    for t in threads or []:
+        last = 0
+        for o in thread_owners(t, protagonist, aliases, threads):
+            cs = [c for c in (app.get(canon_name(o, aliases)) or [])
+                  if t["span"][0] <= c <= t["span"][1]]
+            if cs:
+                last = max(last, cs[-1])
+        if t.get("org"):
+            for n in nums:
+                if t["span"][0] <= n <= t["span"][1] and t["org"] in outlines[str(n)]:
+                    last = max(last, n)
+        t["last_touched"] = last
