@@ -1727,8 +1727,10 @@ class Novelist:
         喂给模型的分隔符会被它当成格式学走：实测「—— 第N章 ——」原样出现在
         15 章的细纲正文开头。标记是给流水线看的，不该进产物。
         """
-        t = re.sub(r"^\s*(?:\[\[CH\d+\]\]|——\s*第\d+章\s*——|###fenge)\s*$",
+        t = re.sub(r"^\s*(?:\[\[CH\d+\]\]|——\s*第\d+章\s*——|###fenge|#{3,})\s*$",
                    "", t, flags=re.M)
+        # 章标题前的 markdown 井号（「### 第298章雪里的弓」）
+        t = re.sub(r"^[ \t]*#{1,6}[ \t]*(?=第\s*\d{1,4}\s*章)", "", t, flags=re.M)
         # 模型爱给整批加一个 markdown 大标题, 而分段切开后它就落在首章头上 ——
         # 实测「# 《大宋奸商西门庆》第161-178章细纲」被当成第 161 章的正文存了进去。
         t = re.sub(r"^\s*#{1,6}\s*《?[^\n]{0,40}?》?\s*第\s*\d+\s*[-—~至]\s*\d+\s*"
@@ -1793,6 +1795,8 @@ class Novelist:
                               + (f"，它的关键节点是：{' → '.join(x['beats'])}"
                                  if x.get("beats") else "")})
 
+        app = self.outline_cast()
+
         # ①b 戏份很重、却不在任何阶段功能位上的人 —— 骨架不知道他为什么存在，
         #     于是他只会一直做同一件事（实测某配角 8 章全是采买记账）。
         assigned = {sc.canon_name(nm, al)
@@ -1841,7 +1845,6 @@ class Novelist:
                                            f"付出收不回来的代价、且不是靠看家本领翻盘的失手"})
 
         # ② 张力被静默消解
-        app = self.outline_cast()
         for s in sc.silent_resolution(self.tensions(), app, upto, aliases=al):
             m = re.search(r"末次出场第 (\d+) 章", s)
             last = int(m.group(1)) if m else 0
@@ -2341,19 +2344,28 @@ class Novelist:
         兜底判据是**切出来的块数明显少于要的章数**，这时改按「第N章」
         标题行重切。标题行是四种内容类型共用的格式，比分隔符可靠得多。
         """
-        parts = [clean(x) for x in re.split(r"###fenge", text or "") if x.strip()]
-        if want and len(parts) >= max(2, int(want * 0.6)):
-            return parts
-        heads = list(re.finditer(r"^\s*第\s*\d{1,4}\s*章", text or "", re.M))
-        if len(heads) <= len(parts):
-            return parts
-        out = []
-        for i, m in enumerate(heads):
-            end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
-            seg = clean(text[m.start():end])
-            if seg.strip():
-                out.append(seg)
-        return out or parts
+        def by_heading(s: str) -> List[str]:
+            heads = list(re.finditer(r"^[ \t]*(?:#{1,6}[ \t]*|[-*·]\s*)?第\s*\d{1,4}\s*章",
+                                     s, re.M))
+            if len(heads) < 2:
+                return [s]
+            segs = []
+            for i, m in enumerate(heads):
+                end = heads[i + 1].start() if i + 1 < len(heads) else len(s)
+                seg = clean(s[m.start():end])
+                if seg.strip():
+                    segs.append(seg)
+            return segs or [s]
+
+        parts = [clean(x) for x in re.split(r"###fenge|^\s*#{3,}\s*$", text or "",
+                                            flags=re.M) if x.strip()]
+        # 块数够阈值也不能直接信 —— 模型常常只输出**部分**分隔符，块数看着够，
+        # 其中一块里还裹着十几章（实测一条 16740 字的「第298章」里有 14 章，
+        # 一条 6588 字的「第87章」里有 8 章）。逐块再按标题行拆一次。
+        out: List[str] = []
+        for seg in parts:
+            out.extend(by_heading(seg))
+        return out or by_heading(text or "")
 
     def outline_batch(self, want: int = 0) -> int:
         """一批排多少章细纲 —— 按输出上限算，不是拍一个 10。
