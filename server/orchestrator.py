@@ -1944,35 +1944,49 @@ class Novelist:
 
         正文阶段早有这道硬闸（fix_english），排纲阶段一直没有 —— 于是细纲里
         留着「藏在 ship 的旧档里」「从档房 deepest 的柜里」「谈了三round」
-        「不 TERGIVERSAR 人」这类词，写正文时模型照着细纲写，还会把它当成
-        本书的用词习惯学去。
+        这类词，写正文时模型照着细纲写，还会把它当成本书的用词习惯学去。
 
-        检出是确定性的（中文细纲里出现拉丁字母就是错），换成什么是判断题，
-        交给模型；只改词、不重写，并用字数守卫兜住。
+        **只问替换词，不让它重写整章**。让模型输出「修改后的完整细纲」看着
+        省事，实测它只回了修好的那一句（976 字变 88 字），字数守卫一挡就整章
+        跳过，等于没修。判断题（换成什么）交给模型，替换这个确定性动作交给
+        代码 —— 这样既不可能丢内容，也不可能顺手重写。
         """
         co = self.p._load("chapter_outlines.json", {})
         done = 0
         for n in chapters:
             raw = str(co.get(str(n)) or "")
-            en = self.outline_english(raw)
+            en = list(dict.fromkeys(self.outline_english(raw)))
             if not en:
                 continue
-            prompt = (f"下面这段章节细纲里混进了英文单词：{'、'.join(dict.fromkeys(en))}。\n"
-                      f"把它们换成符合上下文的中文，**其余一字不改**：不要重写、"
-                      f"不要调整结构、不要增删剧情条目、不要改标点。\n"
-                      f"直接输出修改后的完整细纲，无前言。\n\n{raw}")
+            ctx = "\n".join(
+                f"- {w}：…{(re.search(r'.{0,40}' + re.escape(w) + r'.{0,40}', raw) or [''])[0]}…"
+                if re.search(r'.{0,40}' + re.escape(w) + r'.{0,40}', raw) else f"- {w}"
+                for w in en)
+            prompt = (
+                f"下面是一部中文小说的章节细纲，里面混进了英文单词。"
+                f"请给出每个词在**该上下文里**应该换成的中文。\n\n{ctx}\n\n"
+                f"每行一条，严格格式：英文=中文\n"
+                f"中文要贴合上下文语气与句式，能直接替换进去读得通；"
+                f"不要解释，不要输出别的。")
             try:
-                fixed = self.clean_outline(clean(
-                    call("polishing", prompt, max_tokens=2000).text))
+                out = clean(call("polishing", prompt, max_tokens=400).text)
             except Exception as e:
                 self._log(f"第{n}章英文修复失败: {e}")
                 continue
-            if not fixed or self.outline_english(fixed):
-                continue
-            c1 = len(re.findall(r"[一-鿿]", raw))
-            c2 = len(re.findall(r"[一-鿿]", fixed))
-            if abs(c2 - c1) > c1 * 0.15:      # 只该换几个词, 字数不该有大变化
-                self._log(f"第{n}章英文修复后字数异常（{c1}→{c2}），跳过")
+            fixed, hit = raw, 0
+            for line in out.splitlines():
+                if "=" not in line:
+                    continue
+                w, zh = line.split("=", 1)
+                w, zh = w.strip().strip("-· "), zh.strip()
+                # 换过来的必须是中文, 且不能又带英文 —— 否则等于没换
+                if w in en and zh and not re.search(r"[A-Za-z]", zh) and len(zh) <= 12:
+                    fixed = fixed.replace(w, zh)
+                    hit += 1
+            # 换完把英文原来占位留下的空格收掉：「给钱就 卖」→「给钱就卖」
+            fixed = re.sub(r"(?<=[一-鿿])[ \t]+(?=[一-鿿，。、；：！？」）])", "", fixed)
+            if not hit or self.outline_english(fixed):
+                self._log(f"第{n}章英文残留未能全换：{self.outline_english(fixed)[:4]}")
                 continue
             co[str(n)] = fixed
             done += 1
@@ -1993,6 +2007,16 @@ class Novelist:
         这里把生产端补上。一批一次调用，四个产出：埋了哪些伏笔、兑现了哪些、
         推进了哪些总纲承诺、碰了哪些关系张力。全部写回状态，下一批直接吃。
         """
+        # 先补上之前失败的批次 —— 欠着的账越积越久，越难判断
+        pend = list(self.p.state.get("pending_sweeps") or [])
+        if pend and [start, end] not in pend:
+            st = self.p.state
+            st["pending_sweeps"] = []
+            self.p.save()
+            for a, b in pend[:3]:
+                self._log(f"补跑巡检 {a}-{b}")
+                self.outline_sweep(int(a), int(b))
+
         co = self.p._load("chapter_outlines.json", {})
         body = "\n\n".join(f"[第{n}章]\n{co[str(n)]}"
                             for n in range(start, end + 1) if str(n) in co)
@@ -2035,7 +2059,7 @@ class Novelist:
             + "\n\n".join(blocks) +
             "\n\n请判断四件事，只输出 JSON，不要代码围栏：\n"
             '{"plant":[{"ch":163,"text":"某处埋下的悬念，一句话"}],'
-            '"resolve":[2,5],"advanced":[1,4],"touched":[1],"ladder":["power"],"threads":[1,3]}\n'
+            '"resolve":[2,5],"advanced":[1,4],"touched":[1],"ladder":["power"],"threads":[{"id":1,"how":"一句话说清这条线这次是怎么露的面：""在什么场合、由谁带出、发生了什么事"}]}\n'
             "- plant：本批**新埋下**的悬念/伏笔（最多 6 条，写清是哪一章埋的）\n"
             "- resolve：本批**明确兑现或解开**的伏笔编号。只是提到、只是继续铺垫、"
             "只是相关，都不算\n"
@@ -2055,7 +2079,16 @@ class Novelist:
             txt = clean(call("polishing", prompt, max_tokens=3000).text)
             data = sc.parse_json(txt, ("plant", "resolve", "advanced", "threads"))
         except Exception as e:
-            self._log(f"细纲巡检跳过: {e}")
+            # 巡检失败不能就这么算了 —— 那一批的伏笔、承诺、张力、支线全部
+            # 无人记账，而且再也不会有人回头补（实测 153-169 批因为一次写超时
+            # 整批状态丢失）。记下来，下一批开头先补跑。
+            st = self.p.state
+            pend = st.setdefault("pending_sweeps", [])
+            if [start, end] not in pend:
+                pend.append([start, end])
+                st["pending_sweeps"] = pend[-8:]
+                self.p.save()
+            self._log(f"细纲巡检跳过（已记入待补）: {e}")
             return {}
         if not data:
             # 解析不出来要吭声。静默返回零和「本批确实没埋伏笔」长得一模一样，
