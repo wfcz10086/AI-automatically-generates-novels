@@ -85,6 +85,7 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
                            extra_directive: str = "",
                            global_rules: Optional[List[str]] = None,
                            directives: Optional[List[str]] = None,
+                           character_rules: Optional[List[str]] = None,
                            background: str, world_digest: str,
                            roster: List[Dict[str, str]], protagonist: str,
                            relations: str, mainline: str,
@@ -122,6 +123,9 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
     if alias_rule:
         seg.append("\n⚠️ " + alias_rule)
     # 全局去 AI 味纪律（所有书共享）在前, 文风包题材纪律在后
+    if character_rules:
+        seg.append("\n⚠️ 【人物纪律·全局】所有人都是有自己算盘的人，不是推动剧情的道具\n"
+                   + "\n".join(f"- {r}" for r in character_rules))
     if global_rules:
         seg.append("\n⚠️ 【写作纪律·全局】\n" + "\n".join(f"- {r}" for r in global_rules))
     sp = style_pack or {}
@@ -193,24 +197,34 @@ def compile_outline_prompt(*, title: str, start: int, count: int,
                            standby_names: Optional[List[str]] = None,
                            prev_summary: str, constraints: str,
                            plots_per_chapter: int = 6,
+                           character_rules: Optional[List[str]] = None,
                            used_titles: Optional[List[str]] = None) -> str:
     """编译分章细纲提示词 —— 输出编号剧情清单，而不是散文。"""
     # 先算好可选段落再拼；直接在 f-string 序列里插 `+ (...)` 会打断隐式拼接
     used_block = (f"#已用过的章节名（本批一律不得重复，也不得只改一两个字）\n"
                   f"{'、'.join(used_titles[-60:])}\n\n") if used_titles else ""
+    # 白名单三级：主力有档案，备选是总纲/骨架点过名的人（用了自动补档），
+    # 再不够才走申报手续。原来只有「只能从中挑，不得凭空造人」这一句禁令，
+    # 于是总纲承诺过的人只要开书那次没进花名册，全书就再也不会出场。
+    standby_block = (f"**备选**（总纲或阶段骨架点过名，还没建档；本批要用就直接用，"
+                     f"用了会自动补档）：{'、'.join(standby_names)}\n"
+                     ) if standby_names else ""
+    rules_block = (f"#人物纪律（对每一章都成立）\n"
+                   + "\n".join(f"- {r}" for r in character_rules) + "\n\n"
+                   ) if character_rules else ""
     return (
         f"你是{genre_line}的网文策划。为《{title}》写第 {start}-{start+count-1} 章的细纲。\n\n"
         f"#总纲\n{outline}\n\n"
         f"#世界观速览\n{world_digest}\n\n"
         f"#可用角色\n"
         f"**主力**（有完整档案，随时可用）：{'、'.join(roster_names)}\n"
-        + (f"**备选**（总纲或阶段骨架点过名，还没建档；本批要用就直接用，"
-           f"用了会自动补档）：{'、'.join(standby_names)}\n" if standby_names else "")
-        + f"以上都不够用时，可以**申报**新人，但必须走手续（见下方输出格式），"
-          f"不许在剧情里凭空冒出一个没申报过的名字。\n\n"
+        f"{standby_block}"
+        f"以上都不够用时，可以**申报**新人，但必须走手续（见下方输出格式），"
+        f"不许在剧情里凭空冒出一个没申报过的名字。\n\n"
         f"#前情\n{prev_summary}\n\n"
         f"{used_block}"
         f"#必守约束\n{constraints}\n\n"
+        f"{rules_block}"
         f"每章严格按下面格式输出，章与章之间用一行 ###fenge 分隔：\n\n"
         f"第N章 章节名\n"
         f"出场角色：（从可用角色里挑，至少 3 人，主角之外要有 2 个配角有戏）\n"

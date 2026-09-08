@@ -2201,6 +2201,7 @@ class Novelist:
             outline=outline_ctx,
             prev_summary=self.prev_summary(start),
             constraints="\n".join(cons),
+            character_rules=self.cfg.get("character_rules") or [],
             used_titles=[m.group(1).strip()[:20] for m in
                          (re.search(r"第\s*\d+\s*章\s*(.+)", v)
                           for v in self.p._load("chapter_outlines.json", {}).values())
@@ -2324,6 +2325,7 @@ class Novelist:
             extra_directive=self.prompt_override("content_extra"),
             global_rules=self.cfg.get("anti_ai_rules") or [],
             directives=self.cfg.get("chapter_directives") or [],
+            character_rules=self.cfg.get("character_rules") or [],
             roster=rost, protagonist=((self.alias_pair() or [None])[0]
                                       or (rost[0]["name"] if rost else "")),
             relations=f.get("relationships", ""),
