@@ -191,6 +191,41 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
     return "\n".join(seg)
 
 
+#: 分章细纲的字段契约 —— **唯一的一份**。
+#:
+#: 提示词里写一份格式、落盘守卫里再写一份检查，两边一定会漂移：实测
+#: replan_outline 的格式漏了「承接」，补完的五章全部没有承接字段；
+#: 另有一批模型把钩子塞进「剧情6：钩子：」、爽点整批丢掉，而守卫只松松地
+#: 查了「钩子」二字，照样放行。格式与检查必须同源。
+#: (字段名, 是否必需, 提示词里的说明)
+OUTLINE_FIELDS = [
+    ("承接", True,
+     "（用一句话写清这一章从上一章的什么地方接上来 —— 上一章的钩子怎么落地、"
+     "谁在等什么、时间过了多久）"),
+    ("出场角色", True, "（从可用角色里挑，至少 3 人，主角之外要有 2 个配角有戏）"),
+    ("剧情1", True, "（一个具体动作或事件，一句话）"),
+    ("爽点", True, "（这一章读者爽在哪，一句话）"),
+    ("章末钩子", True, "（具体的钩子：新威胁／反常细节／未接的消息，不许写万金油）"),
+]
+
+OUTLINE_REQUIRED = [f for f, req, _ in OUTLINE_FIELDS if req]
+
+
+def outline_format_block(plots_per_chapter: int = 6) -> str:
+    """按字段契约生成「每章按此格式输出」那一段。"""
+    lines = ["第N章 章节名"]
+    for name, _req, hint in OUTLINE_FIELDS:
+        if name == "剧情1":
+            lines.append(f"剧情1：{hint}")
+            lines.append("剧情2：…")
+            lines.append("剧情3：…")
+            lines.append(f"（每章 {plots_per_chapter} 条剧情，要能直接照着写，"
+                         f"不要写成概括）")
+        else:
+            lines.append(f"{name}：{hint}")
+    return "\n".join(lines)
+
+
 def compile_outline_prompt(*, title: str, start: int, count: int,
                            genre_line: str, world_digest: str,
                            roster_names: List[str], outline: str,
@@ -226,17 +261,10 @@ def compile_outline_prompt(*, title: str, start: int, count: int,
         f"#必守约束\n{constraints}\n\n"
         f"{rules_block}"
         f"每章严格按下面格式输出，章与章之间用一行 ###fenge 分隔：\n\n"
-        f"第N章 章节名\n"
-        f"承接：（用一句话写清这一章从上一章的什么地方接上来 —— "
-        f"上一章的钩子怎么落地、谁在等什么、时间过了多久。"
-        f"本批第一章要接住【前情】里给出的上一章结尾）\n"
-        f"出场角色：（从可用角色里挑，至少 3 人，主角之外要有 2 个配角有戏）\n"
-        f"剧情1：（一个具体动作或事件，一句话）\n"
-        f"剧情2：…\n"
-        f"剧情3：…\n"
-        f"（每章 {plots_per_chapter} 条剧情，要能直接照着写，不要写成概括）\n"
-        f"爽点：…\n"
-        f"章末钩子：…\n\n"
+        f"{outline_format_block(plots_per_chapter)}\n"
+        f"（本批第一章的「承接」要接住【前情】里给出的上一章结尾）\n"
+        f"⚠ 五个字段一个都不能少，尤其是**爽点**与**章末钩子**："
+        f"不许把钩子塞进剧情条目里，缺字段的章会被整章丢弃重排。\n\n"
         f"衔接要求（最容易塌的地方，逐条对照）：\n"
         f"- 每一章的「承接」必须真的对上上一章的「章末钩子」，"
         f"不许把钩子晾着不管、下一章另起一摊事\n"

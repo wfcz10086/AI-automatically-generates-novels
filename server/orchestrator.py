@@ -21,7 +21,8 @@ from .prompt_engine import render, budget, est_tokens
 from .evaluator import audit, book_audit, window_audit
 from . import stagecraft as sc
 from .retrieval import Retriever
-from .prompt_compiler import (compile_chapter_prompt, compile_outline_prompt,
+from .prompt_compiler import (OUTLINE_REQUIRED, outline_format_block,
+                             compile_chapter_prompt, compile_outline_prompt,
                                to_plot_list)
 from . import critic as critic_mod
 from .settings import load as load_settings
@@ -1934,7 +1935,8 @@ class Novelist:
             f"- 开头接得住前一章，结尾交得回后一章\n"
             f"- 章节名不要与全书已用过的重复\n\n"
             f"每章按下面格式输出，章与章之间用一行 ###fenge 分隔：\n"
-            f"第N章 章节名\n出场角色：…\n剧情1：…\n剧情2：…\n爽点：…\n章末钩子：…")
+            + outline_format_block(6) +
+            f"\n⚠ 五个字段一个都不能少 —— 缺字段的章不予采用。")
         r = call("planning", prompt, on_delta, max_tokens=6000)
         parts = [clean(x) for x in re.split(r"###fenge", r.text) if x.strip()]
         done = 0
@@ -1945,7 +1947,13 @@ class Novelist:
             idx = int(m.group(1))
             if idx not in chapters:      # 越界的丢掉, 不许它顺手改别的章
                 continue
-            co[str(idx)] = self.clean_outline(part)
+            body = self.clean_outline(part)
+            lack = [f for f in OUTLINE_REQUIRED
+                    if not re.search(rf"^\s*{f}\s*[:：]\s*\S", body, re.M)]
+            if lack:                     # 残缺的不许换上去, 原稿还在
+                self._log(f"第{idx}章重排结果缺 {'、'.join(lack)}，不予采用")
+                continue
+            co[str(idx)] = body
             done += 1
         if done:
             self.register_new_cast(parts)
@@ -2698,11 +2706,15 @@ class Novelist:
                 out_of_range.append(idx)
                 continue                      # 越界的丢掉, 下一轮重排
             body = self.clean_outline(part)
-            # 截断守卫：一批的最后一章常被输出上限切掉半句。原来只按长度筛
-            # (<200 字当没排)，可截断的章往往有四五百字，照样落盘 ——
-            # 于是细纲里留下「第三天乖乖回来」「应二」这种断句，后面的批次
-            # 还会把它当成排好的内容去接。改为按**尾字段**判定完整。
-            if not re.search(r"(章末钩子|钩子)\s*[:：]\s*\S", body):
+            # 完整性守卫：一批的最后一章常被输出上限切掉半句，而截断的章往往
+            # 有四五百字，光按长度筛（<200 字）根本拦不住 —— 细纲里就留下
+            # 「第三天乖乖回来」「应二」这种断句，后面的批次还当它排好了去接。
+            # 判据取自**字段契约**（prompt_compiler.OUTLINE_REQUIRED），
+            # 与提示词同源：守卫自带一份副本一定会漂移，实测松松地查个「钩子」
+            # 就被「剧情6：钩子：…」蒙混过关，整批十章的爽点全丢了。
+            lack = [f for f in OUTLINE_REQUIRED
+                    if not re.search(rf"^\s*{f}\s*[:：]\s*\S", body, re.M)]
+            if lack:
                 truncated.append(idx)
                 continue
             outlines[str(idx)] = body
@@ -2711,7 +2723,7 @@ class Novelist:
         self.p.write("chapter_outlines.json", json.dumps(outlines, ensure_ascii=False, indent=2))
         note = ""
         if truncated:
-            note += f"，丢弃截断 {len(truncated)} 章（{truncated[:4]}）"
+            note += f"，丢弃残缺 {len(truncated)} 章（{truncated[:4]}）"
         if out_of_range:
             note += f"，丢弃越界 {len(out_of_range)} 章（{out_of_range[:4]}）"
         if drift and not note:

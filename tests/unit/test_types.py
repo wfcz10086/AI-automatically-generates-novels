@@ -454,3 +454,43 @@ def test_separators_do_not_leak_into_outlines():
     assert "###fenge" not in Novelist.clean_outline(dirty)
     gen = inspect.getsource(Novelist.step_chapter_outlines)
     assert "clean_outline(part)" in gen, "落盘前没清洗"
+
+
+def test_outline_field_contract_is_single_source():
+    """格式规范与落盘守卫必须同源。
+
+    提示词里写一份格式、守卫里再写一份检查，两边一定会漂移：实测
+    replan 的格式漏了「承接」，补完的五章全没有承接；另有一批模型把钩子
+    塞进「剧情6：钩子：」、爽点整批丢掉，而守卫只松松查了「钩子」二字放行。
+    """
+    import re
+    from server.prompt_compiler import (OUTLINE_FIELDS, OUTLINE_REQUIRED,
+                                        outline_format_block,
+                                        compile_outline_prompt)
+    assert OUTLINE_REQUIRED == ["承接", "出场角色", "剧情1", "爽点", "章末钩子"]
+
+    block = outline_format_block(6)
+    for f in OUTLINE_REQUIRED:
+        assert re.search(rf"^{f}[：:]", block, re.M), f"格式块缺 {f}"
+
+    p = compile_outline_prompt(title="X", start=1, count=3, genre_line="g",
+                               world_digest="w", roster_names=["甲"], outline="o",
+                               prev_summary="p", constraints="c")
+    for f in OUTLINE_REQUIRED:
+        assert f in p, f"提示词缺 {f}"
+
+
+def test_incomplete_chapter_is_rejected():
+    """缺必需字段的章不许落盘 —— 断句留在细纲里，后面的批次会当它排好了去接。"""
+    import re
+    from server.prompt_compiler import OUTLINE_REQUIRED
+    good = ("第1章 甲\n承接：接住上一章\n出场角色：A、B、C\n剧情1：出事了\n"
+            "爽点：翻盘\n章末钩子：有人来报")
+    bad = "第1章 甲\n承接：接住上一章\n出场角色：A、B\n剧情1：出事了\n剧情6：钩子：有人来报"
+
+    def lack(body):
+        return [f for f in OUTLINE_REQUIRED
+                if not re.search(rf"^\s*{f}\s*[:：]\s*\S", body, re.M)]
+
+    assert lack(good) == []
+    assert set(lack(bad)) == {"爽点", "章末钩子"}
