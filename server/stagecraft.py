@@ -428,9 +428,16 @@ def silent_resolution(tensions: Sequence[Dict[str, Any]],
     for t in tensions or []:
         if t.get("state") == "已了结":
             continue
+        who = [canon_name(x, aliases) for x in (t.get("between") or [])]
+        # 内在张力（主角与自己的矛盾）只有一个真实当事人 —— 拿「某某——内在
+        # 已 346 章没出场」去报静默消解是纯误报：那本来就不是一个会出场的人。
+        if len(set(w.split("——")[0] for w in who if w)) < 2:
+            continue
         missing = []
         for raw in t.get("between") or []:
             nm = canon_name(raw, aliases)
+            if nm not in appearances and "——" in nm:
+                continue
             cs = appearances.get(nm) or []
             last = cs[-1] if cs else 0
             if upto - last >= gap:
@@ -612,6 +619,12 @@ def ladder_stalled(ladders: Dict[str, List[Dict[str, Any]]], n: int,
     out = []
     for key, rungs in (ladders or {}).items():
         last = max([r.get("reached") or 0 for r in rungs] or [0])
+        if not last:
+            # 一次都没记录过 ≠ 停滞。巡检是后加的，新书前几批也还没记账，
+            # 这时报「已停 N 章」是拿「没有证据」当「有反证」——
+            # 每本书跑到第 gap 章就三条线一起误报。
+            # 「是不是落后于计划」由 ladder_brief 每批讲，不由停滞检测来讲。
+            continue
         if n - last >= gap:
             cur = ladder_rung(rungs, n)
             out.append(f"{lab.get(key, key)}：末次推进第 {last} 章，已停 {n - last} 章"
@@ -782,3 +795,48 @@ def thread_last_seen(threads: Sequence[Dict[str, Any]], outlines: Dict[str, str]
                 if t["span"][0] <= n <= t["span"][1] and t["org"] in outlines[str(n)]:
                     last = max(last, n)
         t["last_touched"] = last
+
+
+def promise_last_seen(promises: Sequence[Dict[str, Any]],
+                      outlines: Dict[str, str]) -> None:
+    """拿已排好的细纲回填每条承诺的末次推进 —— 就地改 promises。
+
+    没有这一步，「没记录」会被当成「饿着」：巡检是后加的，之前排的章节
+    一条记录都没有，于是每条承诺都报「已饿 346 章」，12 条误报全指向同样
+    两章。检测器对所有东西都报警，和从不报警一样没用。
+
+    关键词只做零成本预筛（关键词本身是模型生成的），判「提了一嘴还是真推进」
+    留给巡检 —— 这里只求不把有记录的当成没有。
+    """
+    nums = sorted(int(k) for k in outlines if str(k).isdigit())
+    for p in promises or []:
+        kws = [w for w in ([p.get("text", "")[:6]] + list(p.get("keywords") or [])) if w]
+        hits = [n for n in nums if any(w in outlines[str(n)] for w in kws)]
+        if hits:
+            p["last_advanced"] = max(int(p.get("last_advanced") or 0), hits[-1])
+
+
+def merge_repairs(jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """把落在同一批章节上的重排单合并成一条。
+
+    不合并的话，同几章会被多条单子各重排一次，**后一次覆盖前一次** ——
+    前面几次的修复全部作废，还白烧了几次生成。
+    """
+    bucket: Dict[tuple, Dict[str, Any]] = {}
+    for j in jobs:
+        key = tuple(j["chapters"])
+        if key in bucket:
+            bucket[key]["kind"] += f"＋{j['kind']}"
+            bucket[key]["demands"].append(j["demand"])
+        else:
+            bucket[key] = {"kind": j["kind"], "chapters": list(key),
+                           "demands": [j["demand"]]}
+    out = []
+    for b in bucket.values():
+        ds = b.pop("demands")
+        b["kind"] = "＋".join(dict.fromkeys(b["kind"].split("＋")))
+        b["demand"] = ("这几章要同时解决下面几件事：\n"
+                       + "\n".join(f"{i+1}) {d}" for i, d in enumerate(ds))
+                       if len(ds) > 1 else ds[0])
+        out.append(b)
+    return sorted(out, key=lambda x: x["chapters"][0])

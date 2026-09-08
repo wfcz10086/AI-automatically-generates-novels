@@ -1737,6 +1737,166 @@ class Novelist:
         t = re.sub(r"^\s*新角色\s*[:：].*$", "", t, flags=re.M)
         return t.strip()
 
+    def outline_repairs(self, upto: int = 0) -> List[Dict[str, Any]]:
+        """把各检测器的结论落成「哪几章要重排、为什么」。
+
+        检测器只报警不修，等于「有生产者没消费者」—— 报出来的断线躺在日志里，
+        没有任何东西能把它变回一段有戏的细纲。这里把结论翻译成可执行的重排单：
+        每条给出要重排的章号区间与**具体要求**（不是「写好点」，是
+        「这一段必须让梁山线露面并推进到某个节点」）。
+        """
+        co = self.p._load("chapter_outlines.json", {})
+        if not co:
+            return []
+        nums = sorted(int(k) for k in co)
+        upto = upto or nums[-1]
+        al = self.name_aliases()
+        hero = (self.alias_pair() or [""])[0]
+        jobs: List[Dict[str, Any]] = []
+
+        def window(last: int, hi: int, want: int = 3) -> List[int]:
+            """在断裂区间里挑几章来重排 —— 挑断点之后、均匀分布的那几章。"""
+            lo = max(min(nums), last + 1)
+            hi = min(hi, upto)
+            pool = [n for n in nums if lo <= n <= hi]
+            if not pool:
+                return []
+            step = max(1, len(pool) // want)
+            return pool[::step][:want]
+
+        # ① 支线断线
+        thr = self.threads()
+        if thr:
+            sc.thread_last_seen(thr, co, al, protagonist=hero)
+            for x in thr:
+                end = min(upto, x["span"][1])
+                last = x.get("last_touched") or x["span"][0]
+                if end - last < x["cadence"]:
+                    continue
+                chs = window(last, end)
+                if not chs:
+                    continue
+                who = "、".join(sc.thread_owners(x, hero, al, thr)) or x.get("org", "")
+                jobs.append({
+                    "kind": "支线断线", "chapters": chs,
+                    "demand": f"「{x['name']}」这条{x['kind']}从第 {last} 章之后就没再露面，"
+                              f"到第 {end} 章断了 {end - last} 章（它每 {x['cadence']} 章"
+                              f"至少该露一次）。承载它的是：{who}。"
+                              f"这几章里必须让这条线真的往前走一步"
+                              + (f"，它的关键节点是：{' → '.join(x['beats'])}"
+                                 if x.get("beats") else "")})
+
+        # ② 张力被静默消解
+        app = self.outline_cast()
+        for s in sc.silent_resolution(self.tensions(), app, upto, aliases=al):
+            m = re.search(r"末次出场第 (\d+) 章", s)
+            last = int(m.group(1)) if m else 0
+            chs = window(last, upto)
+            if chs:
+                jobs.append({"kind": "张力静默消解", "chapters": chs,
+                             "demand": f"{s}。张力只能被明写的事件推动，"
+                                       f"不许靠一方消失来消解 —— 这几章里必须让消失的那一方"
+                                       f"重新出现，并且明写这笔账现在压到什么程度"})
+
+        # ③ 阶梯停滞
+        lad = self.ladders()
+        for s in sc.ladder_stalled(lad, upto):
+            m = re.search(r"末次推进第 (\d+) 章", s)
+            last = int(m.group(1)) if m else 0
+            chs = window(last, upto, want=2)
+            if chs:
+                jobs.append({"kind": "阶梯停滞", "chapters": chs,
+                             "demand": f"{s}。这几章里必须让它实质往前走一级，"
+                                       f"并且写出可验证的表现，不能只说「变强了」"})
+
+        # ④ 承诺挨饿。先拿已排好的细纲回填「末次推进」—— 巡检是后加的，
+        #    之前排的章节一条记录都没有，不回填就会把「没记录」当成「饿着」，
+        #    12 条承诺全部误报且全指向同样两章。
+        proms = self.promises()
+        sc.promise_last_seen(proms, co)
+        st = self.p.state
+        st["promises"] = proms
+        self.p.save()
+        for s in sc.starving(proms, upto):
+            m = re.search(r"末次推进第 (\d+) 章", s)
+            last = int(m.group(1)) if m else 0
+            chs = window(last, upto, want=2)
+            if chs:
+                jobs.append({"kind": "承诺挨饿", "chapters": chs,
+                             "demand": f"总纲承诺久未兑现：{s}。这几章里必须推进它"})
+        # 落在同一批章节上的合并成一条 —— 否则同几章被重排多次，后一次覆盖前一次
+        return sc.merge_repairs(jobs)
+
+    def replan_outline(self, chapters: List[int], demand: str,
+                       on_delta=None) -> int:
+        """定点重排指定的几章 —— 前后不动，只换这几章的内容。
+
+        重排一章会牵动它前后的衔接，所以必须把两头钉死：前一章的结尾状态与
+        后一章的开头都原样给模型看，让它重排的内容**接得住两头**。
+        章数与章号一律不变，只换内容。
+        """
+        co = self.p._load("chapter_outlines.json", {})
+        chapters = [n for n in sorted(set(chapters)) if str(n) in co]
+        if not chapters:
+            return 0
+        nums = sorted(int(k) for k in co)
+
+        def neighbour(n: int, step: int) -> str:
+            i = n + step
+            while i in nums:
+                if str(i) in co and i not in chapters:
+                    return f"第{i}章：\n{self.condense(co[str(i)], 700)}"
+                i += step
+            return "（无）"
+
+        cur = "\n\n".join(f"[[原第{n}章]]\n{co[str(n)]}" for n in chapters)
+        stage = sc.stage_of(self.stages(), chapters[0])
+        blocks = [
+            f"【要重排的章节】第 {'、'.join(map(str, chapters))} 章",
+            f"【必须解决的问题】\n{demand}",
+            f"【前一章（不动，你重排的内容要接得住它）】\n{neighbour(chapters[0], -1)}",
+            f"【后一章（不动，你重排的内容要交得回它）】\n{neighbour(chapters[-1], 1)}",
+        ]
+        if stage:
+            blocks.append(sc.stage_brief(stage, chapters[0]))
+        tb = sc.thread_brief(self.threads(), chapters[0])
+        if tb:
+            blocks.append(tb)
+        blocks.append(f"【这几章现在的内容（要被替换掉）】\n{cur}")
+        cr = self.cfg.get("character_rules") or []
+        if cr:
+            blocks.append("【人物纪律】\n" + "\n".join(f"- {r}" for r in cr))
+        prompt = (
+            f"你在给长篇作品《{self.p.meta.get('title','')}》做**定点重排**：\n"
+            f"只重写下面这几章的细纲，前后章节一律不动。\n\n"
+            + "\n\n".join(blocks) +
+            f"\n\n要求：\n"
+            f"- 章号与章数一律不变，还是这 {len(chapters)} 章\n"
+            f"- 保留原来这几章**对主线的推进**，不要把主线剧情删掉 —— "
+            f"是在原有骨架上把缺的那条线补进去，不是另起炉灶\n"
+            f"- 开头接得住前一章，结尾交得回后一章\n"
+            f"- 章节名不要与全书已用过的重复\n\n"
+            f"每章按下面格式输出，章与章之间用一行 ###fenge 分隔：\n"
+            f"第N章 章节名\n出场角色：…\n剧情1：…\n剧情2：…\n爽点：…\n章末钩子：…")
+        r = call("planning", prompt, on_delta, max_tokens=6000)
+        parts = [clean(x) for x in re.split(r"###fenge", r.text) if x.strip()]
+        done = 0
+        for part in parts:
+            m = re.search(r"第\s*(\d{1,4})\s*章", part[:60])
+            if not m:
+                continue
+            idx = int(m.group(1))
+            if idx not in chapters:      # 越界的丢掉, 不许它顺手改别的章
+                continue
+            co[str(idx)] = self.clean_outline(part)
+            done += 1
+        if done:
+            self.register_new_cast(parts)
+            self.p.write("chapter_outlines.json",
+                         json.dumps(co, ensure_ascii=False, indent=2))
+            self._log(f"定点重排 {done}/{len(chapters)} 章：{demand[:40]}")
+        return done
+
     def outline_sweep(self, start: int, end: int) -> Dict[str, int]:
         """一批细纲排完后的连续性巡检 —— 排纲阶段的**生产者**。
 
