@@ -1977,16 +1977,30 @@ class Novelist:
             for line in out.splitlines():
                 if "=" not in line:
                     continue
-                w, zh = line.split("=", 1)
-                w, zh = w.strip().strip("-· "), zh.strip()
-                # 换过来的必须是中文, 且不能又带英文 —— 否则等于没换
-                if w in en and zh and not re.search(r"[A-Za-z]", zh) and len(zh) <= 12:
-                    fixed = fixed.replace(w, zh)
+                lhs, zh = line.split("=", 1)
+                # 左边**不要求精确相等**：模型时不时加装饰（`**cases**=案例`、
+                # 「- cases = 案例」），精确匹配一挡就整章跳过，日志上还写着
+                # 「未能全换」，看着像模型没给对，其实是校验太死。
+                # 只要左边包含某个待换词，就认这一条。
+                key = next((x for x in en if x in lhs), None)
+                zh = zh.strip().strip("*`「」\"' 　")
+                if key and zh and not re.search(r"[A-Za-z]", zh) and len(zh) <= 12:
+                    fixed = fixed.replace(key, zh)
                     hit += 1
+            # 只有一个词要换时，模型常常不带等号、直接回一个词（实测回了「游骑」）。
+            # 这种回法信息是全的，没道理因为格式不合就整章跳过。
+            if not hit and len(en) == 1:
+                cand = clean(out).strip().strip("*`「」\"' 　。")
+                if cand and not re.search(r"[A-Za-z]", cand) and len(cand) <= 12:
+                    fixed = fixed.replace(en[0], cand)
+                    hit = 1
             # 换完把英文原来占位留下的空格收掉：「给钱就 卖」→「给钱就卖」
             fixed = re.sub(r"(?<=[一-鿿])[ \t]+(?=[一-鿿，。、；：！？」）])", "", fixed)
             if not hit or self.outline_english(fixed):
-                self._log(f"第{n}章英文残留未能全换：{self.outline_english(fixed)[:4]}")
+                # 连模型原话一起记，否则只看「未能全换」查不出是模型没给
+                # 还是校验挡了
+                self._log(f"第{n}章英文残留未能全换：{self.outline_english(fixed)[:4]}"
+                          f"｜模型原话 {out[:80]!r}")
                 continue
             co[str(n)] = fixed
             done += 1
