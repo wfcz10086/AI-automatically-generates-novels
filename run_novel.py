@@ -237,4 +237,7 @@ if __name__ == "__main__":
     s.add_argument("--title", required=True)
 
     a = ap.parse_args()
-    a.f(a)
+    # 返回值就是退出码，必须传出去。丢掉它的后果是静默的：cmd_outline 检测到
+    # 代码变更后 return 3 请守护热轮转，可进程退的是 0，守护当成「排完了」就
+    # 收工 —— 排纲在第 17/346 章停住，而日志上写着「排纲完成」。
+    sys.exit(a.f(a) or 0)
