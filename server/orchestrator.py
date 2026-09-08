@@ -1891,10 +1891,28 @@ class Novelist:
         r = call("planning", prompt, on_delta, max_tokens=8000)
         parts = [clean(x) for x in re.split(r"###fenge", r.text) if x.strip()]
         outlines = self.p._load("chapter_outlines.json", {})
+        # 章号以**正文里写的**为准, 不能按顺序硬编号。实测要它排 37-54,
+        # 它排出的是「第75章…第87章」, 而 str(start+i) 把这些内容存成了
+        # 第 37-50 章 —— 键和内容对不上, 写正文时按第 37 章取到的是第 75 章的剧情。
+        end = start + count - 1
+        kept, drift, out_of_range = 0, [], []
         for i, part in enumerate(parts):
-            outlines[str(start + i)] = self.clean_outline(part)
+            m = re.search(r"第\s*(\d{1,4})\s*章", part[:60])
+            idx = int(m.group(1)) if m else start + i
+            if m and idx != start + i:
+                drift.append((start + i, idx))
+            if not (start <= idx <= end):
+                out_of_range.append(idx)
+                continue                      # 越界的丢掉, 下一轮重排
+            outlines[str(idx)] = self.clean_outline(part)
+            kept += 1
         self.p.write("chapter_outlines.json", json.dumps(outlines, ensure_ascii=False, indent=2))
-        self._log(f"细纲 {start}-{start+len(parts)-1} 共 {len(parts)} 章 / {r.elapsed:.1f}s")
+        note = ""
+        if out_of_range:
+            note = f"，丢弃越界 {len(out_of_range)} 章（{out_of_range[:4]}）"
+        elif drift:
+            note = f"，章号偏移 {len(drift)} 处（如 {drift[0][0]}→{drift[0][1]}）"
+        self._log(f"细纲 {start}-{end} 收 {kept} 章 / {r.elapsed:.1f}s{note}")
         return parts
 
     def step_chapter(self, n: int, on_delta=None, retry_on_low: int | None = None) -> Dict[str, Any]:
