@@ -426,8 +426,14 @@ class Novelist:
         self.p = project
         m = project.meta
         self.type = registry.types[m["type_id"]]
-        self.genre = registry.genres.get(m.get("genre_id")) or {}
-        self.style = registry.styles.get(m.get("style_id")) or {}
+        # 题材包/文风包是**默认值**，不是铁板。本书可以覆盖任意字段 ——
+        # 实测同人包写着「打赢原作人物就是崩人设」「靠武力赢原作强者是第一大雷」，
+        # 这对绝大多数同人是对的，可这一本要的恰恰是「打服武松」。
+        # 没有覆盖口子的话，只能改包（伤别的书）或跟包对着写（模型两头听、写歪）。
+        self.genre = self._with_overrides(
+            registry.genres.get(m.get("genre_id")) or {}, "genre")
+        self.style = self._with_overrides(
+            registry.styles.get(m.get("style_id")) or {}, "style")
         self.common = registry.common
         self.cfg = project.cfg
         self.g = self.cfg["generation"]
@@ -1031,6 +1037,26 @@ class Novelist:
     def _ask_planner(self, q: str, cap: int = 4000) -> str:
         return clean(call("planning", q, max_tokens=cap).text)
 
+    def _with_overrides(self, pack: Dict[str, Any], kind: str) -> Dict[str, Any]:
+        """把本书的 pack_overrides 盖在包上。
+
+        meta.pack_overrides = {"genre": {...}, "style": {...}}
+          · 给值      → 整个字段替换（列表整体换掉，不做逐项合并：
+                        逐项合并的话「删掉某一条规则」表达不出来）
+          · 给 null   → 删掉这个字段
+        包本身不动，别的书不受影响。
+        """
+        ov = ((self.p.meta.get("pack_overrides") or {}).get(kind) or {})
+        if not isinstance(ov, dict) or not ov:
+            return pack
+        out = dict(pack)
+        for k, v in ov.items():
+            if v is None:
+                out.pop(k, None)
+            else:
+                out[k] = v
+        return out
+
     def hard_rules(self) -> List[str]:
         """本书铁律 —— 每一章都必须成立的设定约束。
 
@@ -1090,9 +1116,20 @@ class Novelist:
             return st["promises"]
         got = sc.build_promises(outline=self.asset("outline.md"),
                                 title=self.p.meta.get("title", ""), ask=self._ask_planner)
+        # 铁律点名的东西**强制进承诺清单**，不靠模型从总纲里抽。
+        # 承诺清单是从总纲抽的，总纲也是模型写的 —— 总纲写歪了，承诺跟着歪，
+        # 整条链没有一处会发现「这跟用户要的不一样」。实测：premise 里写明
+        # 「一把手枪一百二十发，最后保命手段」，总纲没把它当承诺，
+        # 承诺清单里没有它，于是 346 章一发没开、开篇钩子当场被晾。
+        base = len(got)
+        for i, r in enumerate(self.hard_rules()):
+            got.append({"id": 900 + i, "kind": "铁律",
+                        "text": r[:120], "keywords": [], "last_advanced": 0})
         if got:
             st["promises"] = got
             self.p.save()
+            if len(got) > base:
+                self._log(f"承诺清单 {base} 条 + 铁律强制 {len(got) - base} 条")
         return got
 
     def ladders(self, rebuild: bool = False) -> Dict[str, List[Dict[str, Any]]]:
@@ -1789,6 +1826,83 @@ class Novelist:
         t = re.sub(r"^\s*注\s*[:：][^\n]*$", "", t, flags=re.M)
         t = re.sub(r"[^\n]{0,12}不存在的年代[^\n]{0,12}", "", t)
         return re.sub(r"\n{3,}", "\n\n", t).strip()
+
+    @staticmethod
+    def _bigrams(s: str) -> set:
+        z = re.sub(r"[^一-鿿]", "", s or "")
+        return {z[i:i + 2] for i in range(len(z) - 1)}
+
+    def link_check(self, limit: int = 40, thresh: float = 0.05) -> List[Dict[str, Any]]:
+        """逐章核对「承接」有没有真的接住上一章的「章末钩子」。
+
+        字面重合率**只做零成本预筛**，不当判据：实测重合率为 0 的五对里有三对
+        其实接得好好的，只是换了说法（钩子「女真人起了国号叫金，辽的盐路断了」→
+        承接「泊码头探市，辽金开战风声入耳」）。接没接住是语义问题，
+        用字面判会把改写判成断裂。
+
+        所以：先用二元组重合率挑出最可疑的若干对（便宜、可全量跑），
+        再把这些对交给模型判定，模型只回断没断、怎么断的。
+        """
+        co = self.p._load("chapter_outlines.json", {})
+        ks = sorted(int(k) for k in co)
+        if len(ks) < 2:
+            return []
+
+        def field(n: int, k: str) -> str:
+            m = re.search(rf"^\s*{k}\s*[:：]\s*(.+)$", str(co.get(str(n), "")), re.M)
+            return m.group(1).strip() if m else ""
+
+        cand = []
+        for n in ks[1:]:
+            hook, link = field(n - 1, "章末钩子"), field(n, "承接")
+            if not hook or not link:
+                cand.append((0.0, n, hook, link))
+                continue
+            kh = self._bigrams(hook)
+            ov = len(kh & self._bigrams(link)) / max(1, len(kh))
+            if ov < thresh:
+                cand.append((ov, n, hook, link))
+        cand.sort()
+        cand = cand[:limit]
+        if not cand:
+            return []
+
+        listing = "\n\n".join(
+            f"{i+1}. 第{n-1}章钩子：{h[:110]}\n   第{n}章承接：{l[:110]}"
+            for i, (_, n, h, l) in enumerate(cand))
+        prompt = (
+            "下面是一部长篇作品里若干**相邻两章的接缝**：上一章的「章末钩子」"
+            "与下一章的「承接」。\n\n"
+            "逐对判断：下一章**是不是真的接住了**上一章的钩子？\n"
+            "换个说法叙述同一件事**算接住**（钩子写「女真人起了国号叫金，辽的盐路断了」，"
+            "承接写「泊码头探市，辽金开战风声入耳」，这是接住了）。\n"
+            "只有这四种才算断：\n"
+            "① 钩子被晾着不管，下一章另起一摊事；\n"
+            "② 承接只复述钩子的字面，没真的处理它；\n"
+            "③ 时间接不上（上一章深夜、下一章突然开春却没交代）；\n"
+            "④ 人在哪接不上（上一章人在东京，下一章凭空回到阳谷）。\n\n"
+            f"{listing}\n\n"
+            '只输出 JSON，不要代码围栏：{"breaks":[{"i":1,"why":"哪一种断法，一句话"}]}\n'
+            "接住了的不要列。宁可漏报，不要把改写判成断裂。")
+        try:
+            data = sc.parse_json(clean(call("judging", prompt, max_tokens=2500).text),
+                                 "breaks")
+        except Exception as e:
+            self._log(f"接缝核对跳过: {e}")
+            return []
+        out = []
+        for b in (data.get("breaks") or [])[:limit]:
+            try:
+                i = int(b.get("i")) - 1
+            except (TypeError, ValueError):
+                continue
+            if 0 <= i < len(cand):
+                ov, n, h, l = cand[i]
+                out.append({"ch": n, "prev": n - 1, "overlap": round(ov, 3),
+                            "why": str(b.get("why") or "")[:120],
+                            "hook": h[:100], "link": l[:100]})
+        self._log(f"接缝核对：预筛 {len(cand)} 对 → 模型判定真断 {len(out)} 对")
+        return sorted(out, key=lambda x: x["ch"])
 
     def outline_repairs(self, upto: int = 0) -> List[Dict[str, Any]]:
         """把各检测器的结论落成「哪几章要重排、为什么」。
@@ -2813,6 +2927,17 @@ class Novelist:
             outlines[str(idx)] = body
             kept += 1
         self.register_new_cast(parts)
+        # 章末钩子逐章入伏笔库。钩子本来就是「明写的待兑现项」，可原来只有巡检
+        # 从细纲里**猜**伏笔，钩子这个现成的字段反而没人管 —— 实测 346 章里
+        # 六处接缝断裂全是「钩子被晾着」，包括开篇那把枪的悬念。
+        for idx in range(start, end + 1):
+            body = outlines.get(str(idx)) or ""
+            m = re.search(r"^\s*章末钩子\s*[:：]\s*(.+)$", body, re.M)
+            if m and len(m.group(1).strip()) > 6:
+                try:
+                    self.p.mem.add_foreshadow(idx, "【钩子】" + m.group(1).strip()[:56])
+                except Exception:
+                    pass
         self.p.write("chapter_outlines.json", json.dumps(outlines, ensure_ascii=False, indent=2))
         note = ""
         if truncated:
