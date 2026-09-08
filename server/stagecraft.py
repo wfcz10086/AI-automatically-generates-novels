@@ -89,13 +89,22 @@ def slot_menu(genre: Optional[Dict[str, Any]] = None) -> str:
 
 # ---------------------------------------------------------------- JSON 兜底
 
-def parse_json(text: str, want: str = "") -> Dict[str, Any]:
-    """从模型输出里抠出第一个合法 JSON 对象。
+def parse_json(text: str, want: Any = "") -> Dict[str, Any]:
+    """从模型输出里抠出目标 JSON 对象。
 
     括号配平逐个试解析 —— 模型爱在 JSON 前后加解释、加代码围栏、
     甚至在 JSON 之后再补一段说明，直接 json.loads 十次有三次挂。
+
+    `want` 可以是一个键名或一组键名；**不传 want 是个坑**：返回的是第一个
+    配平的对象，而外层对象里但凡嵌了子对象（"plant":[{"ch":88,...}]），
+    第一个配平的往往是那个**子对象** —— 于是调用方 .get("plant") 拿到 None，
+    整批状态静默记成零。实测排纲巡检有一半批次因此白跑。
+    所以：嵌套结构一律把外层的键传进来。
     """
+    keys = [want] if isinstance(want, str) else list(want or [])
+    keys = [k for k in keys if k]
     raw = re.sub(r"^```[a-z]*\s*|\s*```$", "", (text or "").strip(), flags=re.M)
+    best: Dict[str, Any] = {}
     for m in re.finditer(r"\{", raw):
         depth, end = 0, None
         for i in range(m.start(), len(raw)):
@@ -112,9 +121,15 @@ def parse_json(text: str, want: str = "") -> Dict[str, Any]:
             cand = json.loads(raw[m.start():end])
         except Exception:
             continue
-        if isinstance(cand, dict) and (not want or want in cand):
+        if not isinstance(cand, dict):
+            continue
+        if not keys:
             return cand
-    return {}
+        if any(k in cand for k in keys):
+            # 命中的里面取最外层(最长的那个), 防止外层还没试到就被子对象截胡
+            if len(raw[m.start():end]) > len(json.dumps(best, ensure_ascii=False)) or not best:
+                best = cand
+    return best
 
 
 # ---------------------------------------------------------------- 名字归一

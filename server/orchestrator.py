@@ -1994,9 +1994,18 @@ class Novelist:
             "how 要写清「这次是怎么露的面」——下一批要靠它避免重复写法\n"
             "拿不准就不填，宁缺毋滥。")
         try:
-            data = sc.parse_json(clean(call("polishing", prompt, max_tokens=1200).text))
+            # 1200 装不下六个字段的完整 JSON —— 实测返回停在半个字符串上，
+            # 解析失败后静默记成全零，一半批次的状态就这么丢了。
+            txt = clean(call("polishing", prompt, max_tokens=3000).text)
+            data = sc.parse_json(txt, ("plant", "resolve", "advanced", "threads"))
         except Exception as e:
             self._log(f"细纲巡检跳过: {e}")
+            return {}
+        if not data:
+            # 解析不出来要吭声。静默返回零和「本批确实没埋伏笔」长得一模一样，
+            # 而后者几乎不可能发生 —— 分不清就永远发现不了链路断了。
+            self._log(f"细纲巡检 {start}-{end}：JSON 解析失败，模型原话 "
+                      f"{(txt or '')[:120]}")
             return {}
 
         got = {"plant": 0, "resolve": 0, "advanced": 0, "touched": 0}
