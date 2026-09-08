@@ -1735,7 +1735,14 @@ class Novelist:
                    r"章[^\n]{0,12}\s*$", "", t, flags=re.M)
         # 申报行是给流水线看的手续, 登记完就不该留在细纲产物里
         t = re.sub(r"^\s*新角色\s*[:：].*$", "", t, flags=re.M)
-        return t.strip()
+        # 模型跟人说话的话不该留在产物里 —— 实测混进细纲的有
+        # 「（如需继续 106-110 章，请续批。）」「注：」「原件拍照不存在的年代」
+        # 这类既破叙事墙、又会被下一批当成格式学走。
+        t = re.sub(r"[（(]?\s*(?:如需继续|请续批|如需补充|以上为|以上是|待续)"
+                   r"[^\n]{0,40}[）)]?\s*$", "", t, flags=re.M)
+        t = re.sub(r"^\s*注\s*[:：][^\n]*$", "", t, flags=re.M)
+        t = re.sub(r"[^\n]{0,12}不存在的年代[^\n]{0,12}", "", t)
+        return re.sub(r"\n{3,}", "\n\n", t).strip()
 
     def outline_repairs(self, upto: int = 0) -> List[Dict[str, Any]]:
         """把各检测器的结论落成「哪几章要重排、为什么」。
@@ -1924,6 +1931,55 @@ class Novelist:
             self.p.write("chapter_outlines.json",
                          json.dumps(co, ensure_ascii=False, indent=2))
             self._log(f"定点重排 {done}/{len(chapters)} 章：{demand[:40]}")
+        return done
+
+    _OUT_EN_OK = {"cpu", "dna", "gdp", "app", "kpi", "ceo", "cto"}
+
+    def outline_english(self, text: str) -> List[str]:
+        return [w for w in re.findall(r"[A-Za-z]{2,}", text or "")
+                if w.lower() not in self._OUT_EN_OK]
+
+    def fix_outline_english(self, chapters: List[int]) -> int:
+        """把细纲里混进的英文单词换成中文。
+
+        正文阶段早有这道硬闸（fix_english），排纲阶段一直没有 —— 于是细纲里
+        留着「藏在 ship 的旧档里」「从档房 deepest 的柜里」「谈了三round」
+        「不 TERGIVERSAR 人」这类词，写正文时模型照着细纲写，还会把它当成
+        本书的用词习惯学去。
+
+        检出是确定性的（中文细纲里出现拉丁字母就是错），换成什么是判断题，
+        交给模型；只改词、不重写，并用字数守卫兜住。
+        """
+        co = self.p._load("chapter_outlines.json", {})
+        done = 0
+        for n in chapters:
+            raw = str(co.get(str(n)) or "")
+            en = self.outline_english(raw)
+            if not en:
+                continue
+            prompt = (f"下面这段章节细纲里混进了英文单词：{'、'.join(dict.fromkeys(en))}。\n"
+                      f"把它们换成符合上下文的中文，**其余一字不改**：不要重写、"
+                      f"不要调整结构、不要增删剧情条目、不要改标点。\n"
+                      f"直接输出修改后的完整细纲，无前言。\n\n{raw}")
+            try:
+                fixed = self.clean_outline(clean(
+                    call("polishing", prompt, max_tokens=2000).text))
+            except Exception as e:
+                self._log(f"第{n}章英文修复失败: {e}")
+                continue
+            if not fixed or self.outline_english(fixed):
+                continue
+            c1 = len(re.findall(r"[一-鿿]", raw))
+            c2 = len(re.findall(r"[一-鿿]", fixed))
+            if abs(c2 - c1) > c1 * 0.15:      # 只该换几个词, 字数不该有大变化
+                self._log(f"第{n}章英文修复后字数异常（{c1}→{c2}），跳过")
+                continue
+            co[str(n)] = fixed
+            done += 1
+        if done:
+            self.p.write("chapter_outlines.json",
+                         json.dumps(co, ensure_ascii=False, indent=2))
+            self._log(f"细纲英文残留修复 {done} 章")
         return done
 
     def outline_sweep(self, start: int, end: int) -> Dict[str, int]:
@@ -2548,6 +2604,10 @@ class Novelist:
             note = f"，章号偏移 {len(drift)} 处（如 {drift[0][0]}→{drift[0][1]}）"
         self._log(f"细纲 {start}-{end} 收 {kept} 章 / {r.elapsed:.1f}s{note}")
         if kept:
+            bad = [n for n in range(start, end + 1)
+                   if str(n) in outlines and self.outline_english(outlines[str(n)])]
+            if bad:
+                self.fix_outline_english(bad)
             self.outline_sweep(start, end)
         return parts
 
