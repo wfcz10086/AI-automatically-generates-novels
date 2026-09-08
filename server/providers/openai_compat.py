@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Iterator, List, Dict, Any
 
 import requests
@@ -13,6 +14,9 @@ from .base import BaseProvider, Delta, ProviderError
 
 
 class OpenAICompatProvider(BaseProvider):
+    #: 发送阶段的重试次数（瞬时写超时用）
+    SEND_RETRIES = 3
+
     id = "openai_compat"
     name = "OpenAI 兼容"
 
@@ -63,16 +67,35 @@ class OpenAICompatProvider(BaseProvider):
                 body["enable_thinking"] = True
         body.update(kw)
 
-        try:
-            resp = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers=self._headers(),
-                json=body,
-                stream=True,
-                timeout=(20, 600),
-            )
-        except Exception as e:
-            raise ProviderError(f"连接失败: {e}") from e
+        # 发送阶段的超时是**瞬时错误**：排纲的请求体有五万多字符，实测
+        # 46 次成功里伴随 12 次 "The write operation timed out"，21% 的失败率，
+        # 而每次失败都要整批重排（四到八分钟白跑）—— 守护重来必成，说明重试
+        # 一次就够，不该把这个代价推到上层。
+        # 连接超时给到 60s：大请求体的发送过程算在连接阶段里，20s 太紧。
+        last = None
+        for attempt in range(self.SEND_RETRIES):
+            try:
+                resp = requests.post(
+                    f"{self.base_url}/chat/completions",
+                    headers=self._headers(),
+                    json=body,
+                    stream=True,
+                    timeout=(60, 600),
+                )
+                break
+            except (requests.exceptions.Timeout,
+                    requests.exceptions.ConnectionError) as e:
+                last = e
+                if attempt + 1 < self.SEND_RETRIES:
+                    wait = 3 * (attempt + 1)
+                    print(f"[provider] 发送失败（{type(e).__name__}），"
+                          f"{wait}s 后重试 {attempt + 2}/{self.SEND_RETRIES}",
+                          flush=True)
+                    time.sleep(wait)
+            except Exception as e:                 # 其余异常不重试
+                raise ProviderError(f"连接失败: {e}") from e
+        else:
+            raise ProviderError(f"连接失败（重试 {self.SEND_RETRIES} 次）: {last}") from last
 
         if resp.status_code != 200:
             # requests 按 header 猜编码, 不少网关不带 charset 就退回 latin-1,
