@@ -135,8 +135,9 @@ function newProjectModal() {
 
 /* ─────────────────────────── 项目详情 ─────────────────────────── */
 const TABS = [['overview','概览'],['setup','设定'],['outline','大纲'],
-              ['chapters','章节'],['prompts','提示词'],['quality','质检'],
-              ['memory','记忆'],['teardown','拆书'],['export','导出']];
+              ['structure','结构'],['chapters','章节'],['prompts','提示词'],
+              ['quality','质检'],['memory','记忆'],['teardown','拆书'],
+              ['export','导出']];
 
 const ProjectView = {
   title: () => S.cur ? S.cur.meta.title : '项目',
@@ -275,6 +276,15 @@ const TabRender = {
             <textarea class="ta co-edit" data-n="${k}"
               style="min-height:100px;font-size:13px">${esc(co[k])}</textarea></div>`).join('')
           : '<div class="empty">尚未生成细纲</div>'}</div></div>`;
+  },
+  structure(p) {
+    return `<div class="card"><div class="card-head">
+        <div class="card-title">故事骨架</div>
+        <div class="card-sub" id="st-sub">读取中…</div>
+        <div class="card-actions">
+          <button class="btn btn-sm" id="st-build">生成骨架</button>
+          <button class="btn btn-sm" id="st-reload">刷新</button></div>
+      </div><div id="st-body"><div class="card-sub">读取中…</div></div></div>`;
   },
   chapters(p) {
     const done = (p.state.done||[]).slice().sort((a,b)=>a-b);
@@ -500,6 +510,139 @@ const TabMount = {
       const done = Object.keys(S.cur.chapter_outlines||{}).length;
       runStep('chapter_outlines', null, '生成细纲', {n: done+1, count: 10});
     };
+  },
+  structure() {
+    const slug = encodeURIComponent(S.cur.slug);
+    const load = async () => {
+      let d;
+      try { d = await API.get(`/api/projects/${slug}/structure`); }
+      catch (e) { $('#st-body').innerHTML = `<div class="empty">读取失败：${esc(e.message)}</div>`; return; }
+      const su = d.search_usage || {};
+      $('#st-sub').textContent =
+        `细纲 ${d.chapters_planned} 章 · 阶段 ${(d.stages||[]).length} · 支线 ${(d.threads||[]).length}`
+        + ` · 张力 ${(d.tensions||[]).length} · 承诺 ${(d.promises||[]).length}`
+        + (su.calls ? ` · 检索已用 ${su.calls} 次` : '');
+      if (!d.chapters_planned) {
+        $('#st-body').innerHTML = '<div class="empty">还没有细纲，先排纲</div>'; return;
+      }
+      // 每一块都用同一套表格骨架，列宽写死 —— 各块自己排自己的版会左右参差
+      const sect = (title, sub, head, rows, empty) => `
+        <div style="margin:16px 0 22px">
+          <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:7px;
+                      padding-bottom:5px;border-bottom:2px solid var(--border)">
+            <b style="font-size:14px">${title}</b><span class="card-sub">${sub}</span></div>
+          ${rows ? `<table class="tbl" style="table-layout:fixed;width:100%">
+              <colgroup>${head.map(h=>`<col style="width:${h[1]}">`).join('')}</colgroup>
+              <thead><tr>${head.map(h=>`<th>${h[0]}</th>`).join('')}</tr></thead>
+              <tbody>${rows}</tbody></table>`
+            : `<div class="card-sub">${empty}</div>`}
+        </div>`;
+      const wrap = s => `<div style="white-space:normal;word-break:break-word">${s}</div>`;
+      const slotLabel = {}; (d.slots||[]).forEach(s => slotLabel[s.key] = s.label);
+      const kindLabel = {}; (d.ladder_kinds||[]).forEach(k => kindLabel[k.key] = k.label);
+      const mono = s => `<span style="font-family:var(--mono);font-size:12px">${s}</span>`;
+
+      const issues = (d.issues||[]).map(i => `<tr>
+          <td><span class="badge badge-warn">${esc(i.kind)}</span></td>
+          <td class="card-sub">${esc(i.where||'—')}</td>
+          <td>${wrap(esc(i.text))}</td></tr>`).join('');
+
+      const repairs = (d.repairs||[]).map(r => `<tr>
+          <td><span class="badge badge-neutral">${esc(r.kind)}</span></td>
+          <td>${mono('第 ' + r.chapters.join('、') + ' 章')}</td>
+          <td>${wrap(esc(String(r.demand).slice(0,260)))}</td></tr>`).join('');
+
+      const stages = (d.stages||[]).map(s => `<tr>
+          <td><b>${esc(s.name)}</b><div>${mono(s.start + '–' + s.end)}</div></td>
+          <td>${wrap(esc(s.goal||''))}
+            ${(s.steps||[]).length?`<div class="card-sub" style="margin-top:4px">
+              ${s.steps.map(esc).join(' → ')}</div>`:''}</td>
+          <td>${Object.entries(s.roles||{}).map(([k,v]) => (v&&v.length)
+              ? `<div style="font-size:12px;padding:1px 0">
+                   <span class="card-sub">${esc(slotLabel[k]||k)}</span> ${v.map(esc).join('、')}</div>`
+              : `<div style="font-size:12px;padding:1px 0">
+                   <span class="card-sub">${esc(slotLabel[k]||k)}</span>
+                   <span class="badge badge-warn">空缺</span></div>`).join('')}</td>
+          <td class="card-sub">${wrap(esc(s.exit||'—'))}</td></tr>`).join('');
+
+      const threads = (d.threads||[]).map(x => {
+        const end = Math.min(d.upto, x.span[1]);
+        const gap = end - (x.last_touched || x.span[0]);
+        const bad = gap >= x.cadence;
+        return `<tr>
+          <td><b>${esc(x.name)}</b>
+            <div class="card-sub">${esc(x.kind||'')}</div></td>
+          <td>${wrap((x.owner||[]).map(esc).join('、') + (x.org?`<div class="card-sub">${esc(x.org)}</div>`:''))}</td>
+          <td>${mono(x.span[0] + '–' + x.span[1])}</td>
+          <td>${mono('每 ' + x.cadence + ' 章')}</td>
+          <td>${mono(x.last_touched||'—')}</td>
+          <td><span class="badge ${bad?'badge-warn':'badge-ok'}">${bad?'断 '+gap+' 章':'正常'}</span></td>
+        </tr>`; }).join('');
+
+      const ladders = Object.entries(d.ladders||{}).map(([k,rungs]) => `<tr>
+          <td><b>${esc(kindLabel[k]||k)}</b></td>
+          <td>${rungs.map(r => {
+              const on = d.upto >= r.by;
+              return `<span class="badge ${on?'badge-ok':'badge-neutral'}"
+                style="margin:2px 3px 2px 0" title="${esc(r.check||'')}">
+                ${esc(r.stage)}<span class="card-sub"> 第${r.by}章</span></span>`;
+            }).join('')}</td></tr>`).join('');
+
+      const tensions = (d.tensions||[]).map(x => `<tr>
+          <td><b>${wrap((x.between||[]).map(esc).join(' ↔ '))}</b></td>
+          <td><span class="badge ${x.state==='已了结'?'badge-ok':'badge-neutral'}">${esc(x.state||'压着')}</span></td>
+          <td>${wrap(esc(x.about||''))}</td>
+          <td>${mono(x.last_touched||'—')}</td></tr>`).join('');
+
+      const promises = (d.promises||[]).map(x => `<tr>
+          <td><span class="badge badge-neutral">${esc(x.kind||'')}</span></td>
+          <td>${wrap(esc(x.text||''))}</td>
+          <td>${mono('第 ' + (x.last_advanced||0) + ' 章')}</td></tr>`).join('');
+
+      const cast = (d.cast||[]).slice(0,30).map(c => `<tr>
+          <td><b>${esc(c.name)}</b></td>
+          <td>${mono(c.chapters)}</td>
+          <td>${mono(c.first + '–' + c.last)}</td>
+          <td>${c.gap>=25?`<span class="badge badge-warn">${c.gap}</span>`:mono(c.gap)}</td></tr>`).join('');
+
+      $('#st-body').innerHTML =
+        sect('结构问题', `${(d.issues||[]).length} 条`,
+             [['类别','110px'],['位置','130px'],['说明','auto']], issues, '没有检出结构问题')
+      + sect('待重排', `${(d.repairs||[]).length} 条 · scripts/replan.py 执行`,
+             [['类别','130px'],['章节','160px'],['要解决什么','auto']], repairs, '没有待重排的章节')
+      + sect('阶段骨架', '目标 → 步骤 → 功能位 → 人',
+             [['阶段','130px'],['目标与步骤','auto'],['功能位','260px'],['出口状态','220px']],
+             stages, '还没生成阶段骨架')
+      + sect('支线', '主线管方向，支线管密度',
+             [['支线','150px'],['承载者','170px'],['区间','90px'],['节奏','80px'],
+              ['末次','60px'],['状态','100px']], threads, '还没生成支线')
+      + sect('三条阶梯', '力量 / 爽点 / 人设，按全书进度演进',
+             [['线','100px'],['各级（已到达的高亮）','auto']], ladders, '还没生成阶梯')
+      + sect('关系张力', '只能被明写的事件推动，不许靠一方消失来消解',
+             [['当事双方','180px'],['状态','90px'],['因何而起','auto'],['末次','60px']],
+             tensions, '还没生成张力账')
+      + sect('总纲承诺', '久未推进会被判挨饿',
+             [['类型','90px'],['承诺','auto'],['末次推进','110px']], promises, '还没生成承诺清单')
+      + sect('人物出场', '按细纲「出场角色」统计，前 30 位',
+             [['角色','140px'],['出场章数','90px'],['首–末','110px'],['最大空档','90px']],
+             cast, '还没有出场数据');
+    };
+    if ($('#st-body')) {
+      $('#st-reload').onclick = load;
+      $('#st-build').onclick = async () => {
+        if (!confirm('读总纲生成阶段骨架、支线、三条阶梯、张力账与承诺清单。\n'
+                     + '要花几次模型调用，已有的不会重建。继续？')) return;
+        const b = $('#st-build'); b.disabled = true; b.textContent = '生成中…';
+        try {
+          const r = await API.post(`/api/projects/${slug}/structure/build`, {});
+          toast(r.ok ? '骨架已生成' : ('部分失败：' + JSON.stringify(r.errors)),
+                r.ok ? 'ok' : 'err');
+          await load();
+        } catch (e) { toast('生成失败：' + e.message, 'err'); }
+        b.disabled = false; b.textContent = '生成骨架';
+      };
+      load();
+    }
   },
   chapters() {
     $$('.chapter-row').forEach(r => r.onclick = async () => {
@@ -939,6 +1082,7 @@ const SettingsView = {
           <code>\${genre_rules}</code> 题材纪律<br>
           <code>\${anti_ai_rules}</code> 去AI味纪律
           <code>\${chapter_directives}</code> 正文写法要求
+          <code>\${character_rules}</code> 人物纪律
           <code>\${common_rules}</code> 通用纪律合集</div></div>
       <div class="card"><div class="card-head"><div class="card-title">统一写作偏好</div>
         <div class="card-sub">会拼进每一次生成的提示词</div></div>
@@ -952,7 +1096,10 @@ const SettingsView = {
         <div class="field"><label>正文写法要求（每行一条，管「怎么写才像网文」）</label>
           <textarea class="ta" id="s-dir" rows="8">${esc((s.chapter_directives||[]).join('\n'))}</textarea></div>
         <div class="field"><label>去 AI 味纪律（每行一条，管「怎么写才不像 AI」）</label>
-          <textarea class="ta" id="s-anti" rows="10">${esc((s.anti_ai_rules||[]).join('\n'))}</textarea></div></div>`;
+          <textarea class="ta" id="s-anti" rows="10">${esc((s.anti_ai_rules||[]).join('\n'))}</textarea></div>
+        <div class="field"><label>人物纪律（每行一条，管「人得像个人」——不降智 / 有血有肉 / 不死板）
+          <span class="card-sub">排纲与写正文两处都会注入</span></label>
+          <textarea class="ta" id="s-char" rows="12">${esc((s.character_rules||[]).join('\n'))}</textarea></div></div>`;
   },
   mount() {
     const renderMenus = () => {
@@ -1001,6 +1148,7 @@ const SettingsView = {
       s.banned_global = $('#s-ban').value.split('\n').map(x=>x.trim()).filter(Boolean);
       s.chapter_directives = $('#s-dir').value.split('\n').map(x=>x.trim()).filter(Boolean);
       s.anti_ai_rules = $('#s-anti').value.split('\n').map(x=>x.trim()).filter(Boolean);
+      s.character_rules = $('#s-char').value.split('\n').map(x=>x.trim()).filter(Boolean);
       s.context_menus = collectMenus();
       await API.saveSettings(s);
       S.catalog = await API.catalog();          // 右键菜单立刻生效，不用刷新

@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from server.registry import registry, ROOT                       # noqa: E402
 from server.settings import load as load_settings, save as save_settings  # noqa: E402
+from server import stagecraft as sc                                # noqa: E402
 from server.orchestrator import (Project, Novelist, create_project,        # noqa: E402
                                  slugify, call, clean, PROJECTS)
 from server.exporters import EXPORTERS, BINARY_EXPORTERS, MIME, EXT                 # noqa: E402
@@ -526,6 +527,99 @@ def project_ledgers(slug: str):
     })
 
 
+@app.route("/api/projects/<slug>/structure")
+def project_structure(slug: str):
+    """故事骨架总览：阶段 / 支线 / 三阶梯 / 张力 / 承诺 / 待重排 / 检索用量。
+
+    只读已经生成的数据，**不触发任何模型调用** —— 这是个页面刷新就会打的接口，
+    让它顺手去建骨架的话，用户点一下标签页就烧掉十几次生成。
+    没有的项返回空数组，前端显示「还没生成」。
+    """
+    p = Project(slug)
+    co = p._load("chapter_outlines.json", {}) or {}
+    upto = max((int(k) for k in co), default=0)
+    stages = p._load("stages.json", []) or []
+    threads = p._load("threads.json", []) or []
+    ladders = p._load("ladders.json", {}) or {}
+    st = p.state
+    tensions = st.get("tensions") or []
+    promises = st.get("promises") or []
+
+    out = {"upto": upto, "chapters_planned": len(co), "stages": stages,
+           "threads": threads, "ladders": ladders, "ladder_kinds": sc.LADDER_KINDS,
+           "tensions": tensions, "promises": promises,
+           "slots": sc.ROLE_SLOTS, "issues": [], "repairs": [], "cast": []}
+    try:                       # 检索用量与有没有细纲无关，早退前就先填上
+        out["search_usage"] = registry.searcher().usage()
+    except Exception:
+        out["search_usage"] = {}
+    if not co:
+        return jsonify(out)
+
+    try:
+        nv = Novelist(p)
+        al = nv.name_aliases()
+        hero = (nv.alias_pair() or [""])[0]
+        app_ = sc.cast_appearances(co, aliases=al)
+        if threads:
+            sc.thread_last_seen(threads, co, al, protagonist=hero)
+        if promises:
+            sc.promise_last_seen(promises, co)
+        issues = []
+        for s in stages:
+            vac = sc.vacancies(s)
+            if vac:
+                issues.append({"kind": "功能位空缺", "where": s["name"],
+                               "text": "、".join(vac) + " 无人担当"})
+        for nm, where in sc.unregistered(stages, [c["name"] for c in nv.roster()], al):
+            issues.append({"kind": "未登记角色", "where": where, "text": nm})
+        for x in sc.arc_frozen(stages, aliases=al):
+            issues.append({"kind": "弧光停滞", "where": "", "text": x})
+        for x in sc.thread_overdue(threads, upto):
+            issues.append({"kind": "支线断线", "where": "", "text": x})
+        for x in sc.silent_resolution(tensions, app_, upto, aliases=al):
+            issues.append({"kind": "张力静默消解", "where": "", "text": x})
+        for x in sc.ladder_stalled(ladders, upto):
+            issues.append({"kind": "阶梯停滞", "where": "", "text": x})
+        for x in sc.starving(promises, upto):
+            issues.append({"kind": "承诺挨饿", "where": "", "text": x})
+        out["issues"] = issues
+        out["repairs"] = nv.outline_repairs(upto) if issues else []
+        out["cast"] = sorted(
+            ({"name": k, "chapters": len(v), "first": v[0], "last": v[-1],
+              "gap": max([b - a for a, b in zip(v, v[1:])] or [0])}
+             for k, v in app_.items()), key=lambda x: -x["chapters"])[:40]
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"
+
+    return jsonify(out)
+
+
+@app.post("/api/projects/<slug>/structure/build")
+def project_structure_build(slug: str):
+    """按需生成故事骨架（阶段／支线／三阶梯／张力／承诺）。
+
+    排纲时会自动建，但**已经排完的老书没有入口** —— 骨架是后加的功能，
+    那些书只能干看着五块全是「还没生成」。这里给一个显式的生成按钮。
+    要花几次模型调用，所以只在用户明确点击时才跑，绝不挂在页面加载上。
+    """
+    kinds = (request.json or {}).get("kinds") or ["stages", "threads", "ladders",
+                                                 "tensions", "promises"]
+    rebuild = bool((request.json or {}).get("rebuild"))
+    nv = Novelist(Project(slug))
+    got, err = {}, {}
+    for k in kinds:
+        fn = getattr(nv, k, None)
+        if not callable(fn):
+            continue
+        try:
+            v = fn(rebuild=rebuild)
+            got[k] = len(v)
+        except Exception as e:
+            err[k] = f"{type(e).__name__}: {e}"
+    return jsonify({"ok": not err, "built": got, "errors": err})
+
+
 @app.route("/api/projects/<slug>/facts", methods=["GET", "POST", "DELETE"])
 def project_facts(slug: str):
     """检索攒下的事实卡：可看、可删。
@@ -720,7 +814,7 @@ VAR_NAMES = [
     "title", "premise", "plot", "background", "characters", "relationships",
     "kb", "world_bible", "outline", "era_card", "style", "style_rules",
     "genre_rules", "common_rules", "anti_ai_rules", "chapter_directives",
-    "cliche_blacklist", "target_chapters", "target_words",
+    "character_rules", "cliche_blacklist", "target_chapters", "target_words",
 ]
 
 
@@ -776,9 +870,11 @@ def fill_vars(prompt: str, slug: Optional[str]) -> str:
             "common_rules": "\n".join(
                 (nv.common.get("rules", []) if isinstance(nv.common, dict) else [])
                 + (nv.cfg.get("chapter_directives") or [])
-                + (nv.cfg.get("anti_ai_rules") or [])),
+                + (nv.cfg.get("anti_ai_rules") or [])
+                + (nv.cfg.get("character_rules") or [])),
             "anti_ai_rules": "\n".join(nv.cfg.get("anti_ai_rules") or []),
             "chapter_directives": "\n".join(nv.cfg.get("chapter_directives") or []),
+            "character_rules": "\n".join(nv.cfg.get("character_rules") or []),
             "target_chapters": str(nv.p.meta.get("target_chapters", "")),
             "target_words": str(nv.p.meta.get("target_words", "")),
         }

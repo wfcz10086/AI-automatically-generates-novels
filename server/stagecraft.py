@@ -173,7 +173,11 @@ def cast_appearances(outlines: Dict[str, str],
         m = _CAST_LINE.search(str(v))
         if not m:
             continue
-        for nm in re.split(r"[、,，/｜|]", m.group(1)):
+        # 先剥括注再切分隔符 —— 括注里常有逗号（「蒋门神（未露面，遣军汉出面）」），
+        # 直接切会切出「蒋门神（未露面」和「遣军汉出面）」两个假角色，
+        # 前端人物统计里就会冒出这种从不存在的人。
+        line = _PAREN.sub("", m.group(1))
+        for nm in re.split(r"[、,，/｜|]", line):
             nm = canon_name(nm, aliases)
             # 名字长度设上限是为了滤掉「一群围观的百姓」这类描述性词组
             if nm and 1 < len(nm) <= 8:
