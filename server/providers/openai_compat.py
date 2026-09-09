@@ -40,6 +40,9 @@ class OpenAICompatProvider(BaseProvider):
         kw: model / temperature / max_tokens / thinking(bool)
         """
         self.last_usage = {}
+        #: 上一次生成的收尾原因。"length" = 撞上输出上限被切断 ——
+        #: 这是 API 本来就给的信号，接住它就不必逐个调用去猜 max_tokens。
+        self.last_finish = ""
         thinking = kw.pop("thinking", False)
         body: Dict[str, Any] = {
             "model": kw.pop("model", self.cfg.get("default_model")),
@@ -72,6 +75,7 @@ class OpenAICompatProvider(BaseProvider):
         # 而每次失败都要整批重排（四到八分钟白跑）—— 守护重来必成，说明重试
         # 一次就够，不该把这个代价推到上层。
         # 连接超时给到 60s：大请求体的发送过程算在连接阶段里，20s 太紧。
+        self.last_finish = ""
         last = None
         for attempt in range(self.SEND_RETRIES):
             try:
@@ -122,6 +126,9 @@ class OpenAICompatProvider(BaseProvider):
             choices = chunk.get("choices") or []
             if not choices:
                 continue
+            fr = choices[0].get("finish_reason")
+            if fr:
+                self.last_finish = str(fr)
             d = self.adapt(choices[0].get("delta") or {})
             if d:
                 yield d

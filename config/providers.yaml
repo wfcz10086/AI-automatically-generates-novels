@@ -46,10 +46,11 @@ gateways:
     # 于是 levels.get("on") 取不到值, 只能碰运气落到默认档
     thinking_levels: {"off": low, "on": high}
     context_window: 128000
-    # 实测该网关接受 32768；提到 16384 是给排纲留余量 —— 只按实际生成计费，
-    # 而且带 reasoning_effort=low 时模型自己会 stop，不会把额度烧在思考上
-    # （不带这个参数裸调，16384 token 全进思考，可见输出 0 字符）。
-    max_tokens: 16384
+    # 实测该网关接受 32768。给到 20000：只按实际生成计费，给宽没有代价，
+    # 而带 reasoning_effort=low 时模型自己会 stop，不会把额度烧在思考上
+    # （不带这个参数裸调，16384 token 全进思考、可见输出 0 字符）。
+    # 真撞上上限也不会留下半截产物 —— call() 见到 finish_reason=length 会续写。
+    max_tokens: 20000
 
   gw5:
     type: openai_compat

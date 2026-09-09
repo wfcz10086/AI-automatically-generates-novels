@@ -551,3 +551,46 @@ def test_seed_change_invalidates_downstream(tmp_path, monkeypatch):
 
     nv.p.meta["hard_rules"] = ["甲", "乙"]         # 铁律一变
     assert "outline.md" in nv.stale_assets()       # 下游立刻过期
+
+
+def test_no_silent_truncation_contract():
+    """不准截断：撞上输出上限必须续写，不接受半截产物。
+
+    截断的产物比缺失更糟 —— 它看起来是完整的，后面的环节会把半句话当成
+    写好的内容接着用：细纲里留下「第三天乖乖回来」「应二」，
+    角色档案停在「**原声」，而没有任何东西报警。
+    逐个调用去猜 max_tokens 是猜不完的（加一栏字段就得改一处预算，
+    这个坑踩了三次）；API 本来就给了 finish_reason=length，接住它才是根治。
+    """
+    import server.orchestrator as O
+    assert O.CONTINUE_ROUNDS >= 1
+    import inspect
+    from server.providers.openai_compat import OpenAICompatProvider
+    # provider 必须记录收尾原因，否则 call() 无从判断是不是被切断
+    src = inspect.getsource(OpenAICompatProvider)
+    assert "last_finish" in src and "finish_reason" in src
+    # call() 必须在 length 时续写
+    src2 = inspect.getsource(O.call)
+    assert "last_finish" in src2 and "length" in src2
+
+
+def test_character_card_gap_detection():
+    """角色卡缺栏 = 被截断（模型不会写一半就换人）。"""
+    import json as _j
+    from server.orchestrator import Novelist, Project
+    import tempfile, pathlib
+    d = pathlib.Path(tempfile.mkdtemp()) / "p"
+    (d / "chapters").mkdir(parents=True)
+    (d / "project.json").write_text(_j.dumps(
+        {"title": "T", "type_id": "novel", "genre_id": "", "style_id": "",
+         "target_chapters": 10, "target_words": 30000, "fields": {}},
+        ensure_ascii=False), encoding="utf-8")
+    (d / "state.json").write_text('{"done": [], "current": 0}', encoding="utf-8")
+    nv = Novelist(Project(str(d)))
+    full = ("### 1. 姓名：甲\n**身份**：x\n**核心动机**：x\n**与主角关系**：x\n"
+            "**自称**：我\n**口头禅**：x\n**语感**：x\n**原声样本**：x\n"
+            "**禁用词**：x\n**结局走向**：x\n")
+    cut = full + "\n### 2. 姓名：乙\n**身份**：x\n**核心动机**：x\n**原声"
+    assert nv._card_gaps(full) == []
+    gaps = nv._card_gaps(cut)
+    assert gaps and "乙" in gaps[0]

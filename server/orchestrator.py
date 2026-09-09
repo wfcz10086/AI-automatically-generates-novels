@@ -324,9 +324,15 @@ def _trace(profile: str, prompt: str, kw: Dict[str, Any], out: str,
 THINK_BUDGET_X = 3
 
 
+#: 撞上输出上限时自动续写的轮数。**不准截断** —— 截断的产物比缺失更糟：
+#: 它看起来是完整的，后面的环节会把半句话当成写好的内容接着用
+#: （实测细纲里留下「第三天乖乖回来」「应二」，角色档案停在「**原声」）。
+CONTINUE_ROUNDS = 3
+
+
 def call(profile: str, prompt: str, on_delta: Optional[Callable[[str], None]] = None,
          system: str = "", max_tokens: Optional[int] = None,
-         _retry: bool = True) -> GenResult:
+         _retry: bool = True, _cont: int = 0) -> GenResult:
     """一次生成. 自动处理 reasoning/content 三种字段 + 空 content 兜底.
 
     实测坑: 开思考时模型可能把全部内容留在 reasoning 里 content 为空, 或思考
@@ -375,6 +381,22 @@ def call(profile: str, prompt: str, on_delta: Optional[Callable[[str], None]] = 
               f"预算、耗时 {time.time() - t0:.0f}s），关思考重试 —— "
               f"这一次等于白跑，考虑把该档位的 thinking 关掉", flush=True)
         return call(profile, prompt, on_delta, system, max_tokens, _retry=False)
+    # ★ 兜底 3: 撞上输出上限就**接着写**，不接受半截产物。
+    # 逐个调用去猜 max_tokens 是猜不完的（加一栏字段就得改一处预算，
+    # 这个坑已经踩了三次：细纲批量、细纲审阅、角色档案）。
+    # API 本来就给了 finish_reason=length 这个信号，接住它，从根上不截断。
+    if (out and _cont < CONTINUE_ROUNDS
+            and getattr(provider, "last_finish", "") == "length"):
+        print(f"  [call] {profile} 撞上输出上限（{kw.get('max_tokens')} tok，"
+              f"已出 {len(out)} 字），第 {_cont + 1} 次续写", flush=True)
+        tail = out[-1200:]
+        more = call(profile,
+                    prompt + "\n\n【上次输出被上限切断了，下面是已经写出来的结尾】\n"
+                    + tail + "\n\n请**从断口处接着写**：不要重复上面已有的内容，"
+                    "不要重新开头，不要加任何说明，直接续写剩下的部分。",
+                    on_delta, system, max_tokens, _retry=False, _cont=_cont + 1)
+        if more.text:
+            out = out + more.text
     _trace(profile, prompt, kw, out, rsn, time.time() - t0, dict(raw_usage))
     res = GenResult(text=out, reasoning=rsn, elapsed=time.time() - t0,
                     chars=len(out), usage=dict(raw_usage))
@@ -1813,7 +1835,7 @@ class Novelist:
         bg = self.sanitize_facts(
             self.ground("world", context=ctx.get("premise", "") + "\n" + ctx.get("background", "")))
         prompt += self.facts_block(bg)
-        r = call("planning", prompt, on_delta, max_tokens=4000)
+        r = call("planning", prompt, on_delta, max_tokens=int(self.g.get("max_tokens_outline") or 8000))
         wb = clean(r.text)
         self.p.write("world_bible.md", wb)
         n = self.p.mem.index_document("world", "world_bible", wb)
@@ -1828,12 +1850,65 @@ class Novelist:
         bg = self.sanitize_facts(self.ground("cast", context=self.asset("world_bible.md")))
         prompt += self.facts_block(bg, scope="姓名、称谓、职业、阶层、女性处境",
                                    limit=5000)
-        r = call("planning", prompt, on_delta, max_tokens=4000)
+        # 声音卡把每张角色卡从 6 栏加到 12 栏，4000 的上限装不下十来个角色 ——
+        # 实测最后一个角色停在「**原声」三个字上，缺了三栏。
+        # 加了字段就得同步提预算，这是同一个坑第三次（细纲批量、审阅、这里）。
+        r = call("planning", prompt, on_delta,
+                 max_tokens=int(self.g.get("max_tokens_outline") or 8000))
         ch = clean(r.text)
+        ch = self._complete_characters(ch, prompt, on_delta)
         self.p.write("characters.md", ch)
         n = self.p.mem.index_document("role", "characters", ch)
         self._log(f"角色档案 {len(ch)} 字 / {r.elapsed:.1f}s / 入索引 {n} 条")
         return ch
+
+    #: 每张角色卡必须齐的栏目。缺栏 = 被截断（模型不会写一半就换人）。
+    _CARD_FIELDS = ("身份", "核心动机", "与主角关系", "自称", "口头禅",
+                    "语感", "原声样本", "禁用词", "结局走向")
+
+    def _card_gaps(self, text: str) -> List[str]:
+        """哪几个角色的卡不完整。"""
+        blocks = re.split(r"\n(?=#{2,4}\s*\d+\s*[.、]\s*姓名)", text or "")
+        out = []
+        for b in blocks[1:] if len(blocks) > 1 else blocks:
+            m = re.search(r"姓名\s*[:：]\s*([^\n]+)", b)
+            if not m:
+                continue
+            lack = [f for f in self._CARD_FIELDS
+                    if not re.search(rf"\*?\*?{f}\*?\*?\s*[:：]\s*\S", b)]
+            if lack:
+                out.append(f"{m.group(1).strip()[:12]}（缺 {'、'.join(lack)}）")
+        return out
+
+    def _complete_characters(self, ch: str, prompt: str, on_delta=None) -> str:
+        """截断了就续写，不整篇重来。
+
+        整篇重生成会把已经写好的九张卡也换掉（实测那九张质量很好），
+        而且再截一次的概率一样大。只补缺的那几张，接在后面。
+        """
+        gaps = self._card_gaps(ch)
+        if not gaps:
+            return ch
+        self._log(f"角色档案不完整：{'；'.join(gaps[:3])} —— 续写补齐")
+        tail = ch.rstrip()
+        # 截断的那一张整段丢掉，从它的标题处截断，让模型重写这一张
+        m = list(re.finditer(r"\n(?=#{2,4}\s*\d+\s*[.、]\s*姓名)", tail))
+        if m:
+            tail = tail[:m[-1].start()].rstrip()
+        ask = (prompt + "\n\n【已经写好的部分，不要重复】\n" + self.condense(tail, 4000)
+               + f"\n\n上面还差 {len(gaps)} 个角色（含被截断的那个）。"
+               f"**只补这几个**，从「### N. 姓名：」开始接着写，"
+               f"每张卡十二栏一栏不能少，不要重写前面已有的角色。")
+        try:
+            more = clean(call("planning", ask, on_delta,
+                              max_tokens=int(self.g.get("max_tokens_outline") or 8000)).text)
+        except Exception as e:
+            self._log(f"角色档案续写失败: {e}")
+            return ch
+        merged = tail + "\n\n" + more.strip()
+        if self._card_gaps(merged):
+            self._log(f"续写后仍不完整：{'；'.join(self._card_gaps(merged)[:2])}")
+        return merged
 
     def fix_scale(self, text: str) -> str:
         """纠正总纲里模型自己编的体量数字。
@@ -1862,7 +1937,7 @@ class Novelist:
         ctx["characters"] = self.p.read("characters.md")
         ov = self.prompt_override("outline")
         prompt = render(ov or lvl["prompt"], ctx)
-        r = call("planning", prompt, on_delta, max_tokens=6000)
+        r = call("planning", prompt, on_delta, max_tokens=int(self.g.get("max_tokens_outline") or 8000))
         ol = self.fix_scale(clean(r.text))
         self.p.write("outline.md", ol)
         self._log(f"总纲 {len(ol)} 字 / {r.elapsed:.1f}s")
@@ -1892,7 +1967,7 @@ class Novelist:
               f"本卷高潮：（具体事件）\n卷末钩子：…\n主要出场：（3-6 个角色名）\n"
               f"实力/地位变化：（主角从什么状态到什么状态）\n\n"
               f"要求：卷与卷之间要有明显的格局升级，不能原地打转。直接输出，无前言。")
-        r = call("planning", prompt, on_delta, max_tokens=4000)
+        r = call("planning", prompt, on_delta, max_tokens=int(self.g.get("max_tokens_outline") or 8000))
         vols: List[Dict[str, Any]] = []
         cur = 1
         for blk in [clean(x) for x in re.split(r"###fenge", r.text) if x.strip()]:
@@ -2218,7 +2293,7 @@ class Novelist:
             f"每章按下面格式输出，章与章之间用一行 ###fenge 分隔：\n"
             + outline_format_block(6) +
             f"\n⚠ 五个字段一个都不能少 —— 缺字段的章不予采用。")
-        r = call("planning", prompt, on_delta, max_tokens=6000)
+        r = call("planning", prompt, on_delta, max_tokens=int(self.g.get("max_tokens_outline") or 8000))
         parts = [clean(x) for x in re.split(r"###fenge", r.text) if x.strip()]
         done = 0
         for part in parts:
@@ -2831,7 +2906,7 @@ class Novelist:
                  f"请看这八件事（只报本段内看得出的问题）。"
                  f"**推进与承接是重点，逐章核，宁可多报**：\n{CHECKS}\n{JSON_FMT}")
             try:
-                d = parse(call("judging", p, on_delta, max_tokens=2500).text)
+                d = parse(call("judging", p, on_delta, max_tokens=int(self.g.get("max_tokens_outline") or 8000)).text)
             except Exception as e:
                 self._log(f"细纲审阅第{i}段失败: {str(e)[:40]}")
                 continue
@@ -3443,7 +3518,7 @@ class Novelist:
               + (f"（已有规则，不要重复：{json.dumps(rules_now, ensure_ascii=False)[:600]}）\n"
                  if rules_now else "")
               + "先输出守则，再输出 ===RULES=== 与 JSON。")
-        r = call("judging", prompt, on_delta, max_tokens=2200)
+        r = call("judging", prompt, on_delta, max_tokens=int(self.g.get("max_tokens_outline") or 8000))
         body = clean(r.text)
         guide, _, rules_raw = body.partition("===RULES===")
         guide = guide.strip()
