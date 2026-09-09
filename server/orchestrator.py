@@ -2266,7 +2266,25 @@ class Novelist:
         if lens:
             l, c = lens.most_common(1)[0]
             if c / len(ks) >= 0.6:
-                out.append(f"章名有 {c}/{len(ks)} 个是 {l} 字，长短一个模子")
+                # 只报「占比高」不够: 实测上一批 60/60 是 2 字, 纠偏说「2 字
+                # 不超过 25 个」, 下一批就 5/5 全变 3 字 —— 单调性没解决,
+                # 只是换了个长度。模型执行配额时倾向**取一个值全用**。
+                # 所以把跨批的连跑长度也算进来, 让它看见自己在来回摆。
+                allk = sorted(int(x) for x in co if str(x).isdigit()
+                              and int(x) <= end)
+                seq = [len((re.search(r"第\d+章\s*(.+)",
+                                     str(co[str(n)]).splitlines()[0])
+                            or [None, ""])[1].strip()) for n in allk]
+                run = best = 1
+                for a, b in zip(seq, seq[1:]):
+                    run = run + 1 if a == b else 1
+                    best = max(best, run)
+                tail = ""
+                if best >= 8:
+                    tail = (f"；而且全书出现过连续 {best} 章同字数的段落 —— "
+                            f"不要把配额理解成「换一个长度全用」，"
+                            f"要 2/3/4/5 字**交替**出现，同一字数不许连排 3 章以上")
+                out.append(f"章名有 {c}/{len(ks)} 个是 {l} 字，长短一个模子{tail}")
         return out
 
     def outline_recap(self, upto: int, limit: int = 3000) -> str:

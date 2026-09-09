@@ -807,3 +807,24 @@ def test_sweep_candidates_use_end_not_start():
     assert any(x["planted"] == 8 for x in aged), "第 8 章的伏笔要在候选里"
     bad = [x for x in pend if start - x["planted"] >= 20][:8]
     assert not bad, "用 start 算就是这个空结果 —— 回归防护"
+
+
+def test_patterns_flags_name_length_runs():
+    """章名不能只是从「全 2 字」换成「全 3 字」。
+
+    踩过: 纠偏说「2 字不超过 25 个」, 下一批就 5/5 全变 3 字 —— 模型执行
+    配额时倾向取一个值全用, 单调性只是换了个长度。
+    """
+    from server.orchestrator import Novelist
+
+    def mk(n, name):
+        return (f"第{n}章 {name}\n一句话：某事\n承接：上一章\n出场角色：甲、乙、丙\n"
+                f"剧情1：动作\n重场：剧情1\n爽点：甲当众交出账册\n"
+                f"章末钩子：门被推开")
+
+    co = {str(i): mk(i, "断线线") for i in range(1, 13)}   # 12 章全 3 字
+    nv = Novelist.__new__(Novelist)
+    nv.p = type("P", (), {"_load": lambda self, f, d: co})()
+    hit = [x for x in nv.outline_patterns(1, 12) if "章名" in x]
+    assert hit and "连续" in hit[0], hit
+    assert "交替" in hit[0]
