@@ -900,3 +900,17 @@ def test_finite_resource_numbers_must_not_grow():
     # 铁律没声明的单位不查 —— 钱粮本来就该涨
     nv.hard_rules = lambda: ["主角有一百二十贯本钱"]
     assert nv._finite_units() == []
+
+
+def test_tension_demand_offers_remote_forms():
+    """张力纠偏要给远程也能执行的路子。
+
+    踩过: 只说「让消失的那一方重新出现」, 而主角在辽东、潘金莲在千里外的
+    阳谷 —— 连报三批都被跳过。模型没错, 硬把人拽到场才是崩。
+    """
+    import pathlib
+    src = pathlib.Path("server/orchestrator.py").read_text(encoding="utf-8")
+    i = src.index("张力静默消解")
+    seg = src[i:i + 900]
+    assert "书信" in seg and "传到耳朵里" in seg
+    assert "不是非得让人到场" in seg
