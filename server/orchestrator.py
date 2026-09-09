@@ -2102,6 +2102,116 @@ class Novelist:
         self._log(f"接缝核对：预筛 {len(cand)} 对 → 模型判定真断 {len(out)} 对")
         return sorted(out, key=lambda x: x["ch"])
 
+    #: 章末钩子的四类。轮换是硬要求 —— 实测某书 86 章里「话出口」占 51%、
+    #: 「物件出现」占 35%，两类吃掉 86%，而「局面翻」只有 2 章。
+    #: 钩子类型单一，读者翻页的理由每章都一样。
+    HOOK_KINDS = [
+        ("人到", r"来了|进城|到了|登门|上门|找上|寻来|回城"),
+        ("物现", r"信|帖|条|文书|包袱|匣|印|契|单|册|物件|东西"),
+        ("话出", r"说|问|撂下|留话|低声|一字一顿|开口|补一句|冷笑道"),
+        ("局翻", r"翻|反|倒|变了|不见了|空的|换了|没了|死了|走水|塌"),
+    ]
+
+    def outline_patterns(self, start: int, end: int) -> List[str]:
+        """扫这一批**自己写出来的**东西有什么重复套路。
+
+        零成本的确定性预筛，不下判断 —— 判断交给模型。
+        状态回路（谁断线、哪条支线超期、赢法分布）管的是**写什么**，
+        这里管的是**怎么写**：钩子类型、重场落点、报信人、章名句式。
+        实测一整批 25 章的钩子有一半是「某人说了一句」，
+        而没有任何东西看得见这件事。
+        """
+        import collections
+        co = self.p._load("chapter_outlines.json", {})
+        ks = [n for n in range(start, end + 1) if str(n) in co]
+        if len(ks) < 6:
+            return []
+
+        def fld(n: int, k: str) -> str:
+            m = re.search(rf"^\s*{k}\s*[:：]\s*(.+)$", str(co[str(n)]), re.M)
+            return m.group(1).strip() if m else ""
+
+        out = []
+        hooks = [fld(n, "章末钩子") for n in ks]
+        kinds = collections.Counter()
+        for h in hooks:
+            for lab, pat in self.HOOK_KINDS:
+                if re.search(pat, h):
+                    kinds[lab] += 1
+                    break
+        if kinds:
+            top, cnt = kinds.most_common(1)[0]
+            if cnt / len(ks) >= 0.45:
+                cold = [k for k, _ in self.HOOK_KINDS if kinds.get(k, 0) <= 1]
+                out.append(f"章末钩子有 {cnt}/{len(ks)} 章是「{top}」型"
+                           f"（{int(cnt * 100 / len(ks))}%）"
+                           + (f"，「{'、'.join(cold)}」几乎没用过" if cold else ""))
+        # 钩子开头四字重复 —— 同一个人反复当报信的
+        heads = collections.Counter(h[:4] for h in hooks if len(h) >= 4)
+        rep = [f"「{k}…」{v} 次" for k, v in heads.most_common(3) if v >= 3]
+        if rep:
+            out.append("钩子开头重复：" + "；".join(rep))
+        # 重场老落在同一拍
+        beats = collections.Counter(fld(n, "重场") for n in ks if fld(n, "重场"))
+        if beats:
+            b, c = beats.most_common(1)[0]
+            if c / len(ks) >= 0.5:
+                out.append(f"重场有 {c}/{len(ks)} 章落在「{b}」—— 轻重节奏成了固定套路")
+        # 章名字数单一
+        names = [(re.search(r"第\d+章\s*(.+)", str(co[str(n)]).splitlines()[0])
+                  or [None, ""])[1].strip() for n in ks]
+        lens = collections.Counter(len(x) for x in names if x)
+        if lens:
+            l, c = lens.most_common(1)[0]
+            if c / len(ks) >= 0.6:
+                out.append(f"章名有 {c}/{len(ks)} 个是 {l} 字，长短一个模子")
+        return out
+
+    def outline_selfcheck(self, start: int, end: int) -> List[str]:
+        """看完自己刚写的一批，给下一批写几条针对性的纠偏指令。
+
+        这是**排纲阶段的自审回路**。step_reflect 只管正文，排纲一直没有 ——
+        于是同一个套路能重复两百章而无人发现：状态回路知道「谁断线了」，
+        不知道「钩子写法都一个样」。
+
+        确定性扫描出模式（零成本），纠偏指令交给模型写 —— 因为
+        「怎么改才不生硬」是判断题。指令要具体到能照着做，
+        不要「注意多样性」这种没法执行的话。
+        """
+        pats = self.outline_patterns(start, end)
+        if not pats:
+            return []
+        co = self.p._load("chapter_outlines.json", {})
+        sample = "\n".join(
+            f"第{n}章 {str(co[str(n)]).splitlines()[0][:24]}｜钩子："
+            + (re.search(r"^\s*章末钩子\s*[:：]\s*(.+)$", str(co[str(n)]), re.M)
+               or [None, ""])[1][:60]
+            for n in range(start, end + 1) if str(n) in co)
+        prompt = (
+            "你在给一部长篇的排纲做**写法自审**。下面是刚排好的一批章节，"
+            "以及机器扫出来的重复模式。\n\n"
+            f"【扫出来的模式】\n" + "\n".join(f"- {x}" for x in pats) +
+            f"\n\n【这一批的章名与钩子】\n{self.condense(sample, 4000)}\n\n"
+            "请给下一批写 2-4 条**纠偏指令**。要求：\n"
+            "- 具体到能照着做：说清「改成什么」，不是「注意多样性」这种没法执行的话\n"
+            "- 带数量：比如「本批至少 5 章的钩子改用『局面翻』型："
+            "东西不见了／人换了／账对不上／说好的事变了」\n"
+            "- 只针对扫出来的模式，不要泛泛而谈写作技巧\n"
+            "每行一条，直接输出，无前言。")
+        try:
+            out = clean(call("polishing", prompt, max_tokens=800).text)
+        except Exception as e:
+            self._log(f"排纲自审跳过: {e}")
+            return []
+        tips = [re.sub(r"^[-•*\d.、\s]+", "", x).strip()
+                for x in out.splitlines() if len(x.strip()) > 8][:4]
+        if tips:
+            st = self.p.state
+            st["outline_guide"] = tips
+            self.p.save()
+            self._log(f"排纲自审 {start}-{end}：{len(pats)} 个模式 → {len(tips)} 条纠偏")
+        return tips
+
     def outline_repairs(self, upto: int = 0) -> List[Dict[str, Any]]:
         """把各检测器的结论落成「哪几章要重排、为什么」。
 
@@ -2463,7 +2573,7 @@ class Novelist:
             + "\n\n".join(blocks) +
             "\n\n请判断四件事，只输出 JSON，不要代码围栏：\n"
             '{"plant":[{"ch":163,"text":"某处埋下的悬念，一句话"}],'
-            '"resolve":[2,5],"advanced":[1,4],"fulfilled":[{"id":3,"ch":88}],"touched":[1],"ladder":["power"],"modes":["outwit"],"setbacks":[{"ch":88,"what":"押错了船期，赔掉半年脚费"}],"threads":[{"id":1,"how":"一句话说清这条线这次是怎么露的面：""在什么场合、由谁带出、发生了什么事"}]}\n'
+            '"resolve":[2,5],"advanced":[1,4],"fulfilled":[{"id":3,"ch":88}],"touched":[1],"ledger":{"资源":"子弹:118发；现银:三百二十贯","力量":"横练小成，能接三十招","身份":"西门庆·阳谷县生药铺主人","势力":"县衙:县尉主事，与主角互扣","条款":"茶坊分成:一成","时间":"政和五年冬"},"ladder":["power"],"modes":["outwit"],"setbacks":[{"ch":88,"what":"押错了船期，赔掉半年脚费"}],"threads":[{"id":1,"how":"一句话说清这条线这次是怎么露的面：""在什么场合、由谁带出、发生了什么事"}]}\n'
             "- plant：本批**新埋下**的悬念/伏笔（最多 6 条，写清是哪一章埋的）\n"
             "- resolve：本批**明确兑现或解开**的伏笔编号。只是提到、只是继续铺垫、"
             "只是相关，都不算\n"
@@ -2474,6 +2584,15 @@ class Novelist:
             "只有真开了那一枪才算。没有就给空数组\n"
             "- touched：本批**正面碰到**的张力编号（T 后面的数字）。"
             "双方同框、或一方为此付出代价、或明写了它的进展\n"
+            "- ledger：本批结束时的**状态快照**，只记**变了的**：\n"
+            "    资源=可数的东西现在是多少（钱、子弹、船、人手…写「名目:数值」）\n"
+            "    力量=实力／地位现在到哪一档（含伤势）\n"
+            "    身份=主角与主要人物此刻的身份与所在地\n"
+            "    势力=组织的掌事者／规模／立场有什么结构性变化\n"
+            "    条款=本批立下的、后文要当规矩守的数量约定"
+            "（几成干股／几日为限／月息几分…）\n"
+            "    时间=本批结束时是什么时候（年号年月或相对时间）\n"
+            "  没变的不要写。这些会原样喂给下一批，写错一条错一路。\n"
             "- ladder：本批**实质推进**了的线（power／pleasure／persona）。"
             "只是维持现状不算，要看得出比上一批往前走了\n"
             "- modes：本批**关键冲突主角是靠哪几种赢法赢的**，从 "
@@ -2529,6 +2648,17 @@ class Novelist:
             self.p.mem.resolve_foreshadow(c["id"], end)
             got["resolve"] += 1
         by_id = {p["id"]: p for p in proms}
+        led = data.get("ledger") or {}
+        if isinstance(led, dict) and led:
+            st4 = self.p.state
+            snap = st4.setdefault("outline_state", {})
+            for k, v in led.items():
+                if not str(v).strip():
+                    continue
+                snap[str(k)[:8]] = {"at": end, "v": str(v)[:160]}
+            self.p.save()
+        got["ledger"] = len([1 for v in led.values() if str(v).strip()]) if isinstance(led, dict) else 0
+
         got["fulfilled"] = 0
         for f in (data.get("fulfilled") or [])[:6]:
             if not isinstance(f, dict):
@@ -2617,7 +2747,7 @@ class Novelist:
                   f"／推进承诺 {got['advanced']}／触及张力 {got['touched']}"
                   f"／推进阶梯 {got['ladder']}／推进支线 {got['threads']}"
                   f"／赢法 {got.get('modes', 0)}／挫败 {got.get('setbacks', 0)}"
-                  f"／兑现 {got.get('fulfilled', 0)}")
+                  f"／兑现 {got.get('fulfilled', 0)}／台账 {got.get('ledger', 0)}")
         return got
 
     _DECLARE = re.compile(r"^\s*新角色\s*[:：]\s*(.+)$", re.M)
@@ -2659,64 +2789,86 @@ class Novelist:
 
     def outline_digest(self, before: int, full_span: int = 0,
                        limit: int = 0) -> str:
-        """已排好的细纲，分层喂给下一批：近的完整，远的压缩。
+        """已排好的细纲喂给下一批：**每章一句话保底，余额给最近几章完整版**。
 
-        全部压成一行会把最近几章的细节也丢掉 —— 而接缝处最需要的恰恰是
-        「上一章结在哪、谁还在场、埋了什么没收」这些细节。所以：
-          · 最近 full_span 章：**原文完整喂入**（单章约 456 字，20 章才 6k tok）
-          · 更早的：压成「N. 章名｜核心事件」一行
-        总量受 limit 约束，超了先砍最远的压缩行，再砍完整段。
+        两档，顺序也是这个：
+          1. 先给**每一章**一句话 —— 一章不漏。这是底线，不是可选项。
+          2. 剩下的预算，从最近的章往回给完整细纲。
+
+        原来反着来：先划一段最近的给完整版，剩下的才轮到压缩行，装不下就丢。
+        实测排到第 346 章，345 章前情只覆盖 134 章、**丢了 211 章**，
+        而预算 40000 字符只用掉 25150 —— 前两百多章在模型眼里根本不存在，
+        它凭什么接得住那时候埋的线。
+
+        一句话按 60 字算，346 章也只要两万字符，全书永远装得下；
+        完整版是锦上添花，不是保底项。
         """
         limit = limit or self.OUTLINE_INPUT_CHARS
         co = self.p._load("chapter_outlines.json", {}) or {}
         keys = sorted(k for k in (int(x) for x in co) if k < before)
         if not keys:
             return ""
-        # 完整段能给多少给多少: 先按预算的六成留给完整细纲, 剩下的给压缩行。
-        # 原来固定给一批的量(18 章), 白白浪费了一半预算。
-        span = full_span or max(self.outline_batch(),
-                                int(limit * 0.6 / 480))
-        full_keys = keys[-span:]
-        brief_keys = keys[:-span] if len(keys) > span else []
 
         def one_line(k: int) -> str:
-            t = str(co[str(k)])
-            head = t.split("\n")[0].strip()
-            m = re.search(r"核心事件[：:]\s*(.+)", t) or re.search(r"剧情1[：:]\s*(.+)", t)
-            core = m.group(1).strip()[:70] if m else t[:70]
-            return f"{k}. {head[:24]}｜{core}"
+            """一章一句话：章名 + 重场那一拍（重场是本章分量最重的一拍）。"""
+            s = str(co[str(k)])
+            head = (re.search(r"第\d+章\s*(.+)", s.splitlines()[0])
+                    or [None, ""])[1].strip()[:14]
+            core = ""
+            mb = re.search(r"重场\s*[:：]\s*剧情\s*(\d)", s)
+            if mb:
+                mm = re.search(rf"剧情{mb.group(1)}\s*[:：]\s*(.+)", s)
+                core = mm.group(1).strip() if mm else ""
+            if not core:
+                mm = (re.search(r"核心事件[：:]\s*(.+)", s)
+                      or re.search(r"剧情1[：:]\s*(.+)", s))
+                core = mm.group(1).strip() if mm else s[:60]
+            return f"{k}.{head}｜{core[:52]}"
 
-        brief = [one_line(k) for k in brief_keys]
-        # 分隔符不能长得像内容 —— 实测用「—— 第N章 ——」当分隔符, 模型把它
-        # 当成细纲格式学了去, 15 章的细纲正文里都带上了这一行。
-        full = [f"[[CH{k}]]\n{str(co[str(k)]).strip()}" for k in full_keys]
+        lines = [one_line(k) for k in keys]
+        used = sum(len(x) for x in lines) + len(lines)
+        # 保底装不下才砍，且从最老砍起（最近的更要紧）
+        while lines and used > limit * 0.8:
+            used -= len(lines[0]) + 1
+            lines.pop(0)
 
-        # 超预算时**降级**, 不是丢弃：最老的完整段压成一行, 排到压缩区末尾。
-        # 原来是反过来的 —— 先把压缩行从最远处砍光, 完整段一章不让, 于是
-        # 前面几十章直接从上下文里消失, 连一行摘要都不剩, 而近处的二三十章
-        # 完整细纲吃掉了全部预算。一行一百字承载一整章, 完整段一章四百多字,
-        # 预算紧张时该让的是完整段。
-        def total():
-            return sum(len(x) for x in brief) + sum(len(x) for x in full)
+        # 余额给最近几章的完整细纲
+        span = full_span or max(self.outline_batch(), 12)
+        full, budget = [], limit - used
+        for k in reversed(keys[-span:]):
+            body = f"[[CH{k}]]\n{str(co[str(k)]).strip()}"
+            if len(body) > budget:
+                break
+            full.insert(0, body)
+            budget -= len(body)
 
-        while total() > limit and len(full) > 3:
-            k = full_keys[len(full_keys) - len(full)]
-            full.pop(0)
-            brief.append(one_line(k))
-        # 全降成一行还是装不下, 才从最远处开始真丢
-        while brief and total() > limit:
-            brief.pop(0)
-        while len(full) > 1 and total() > limit:
-            full.pop(0)
         out = []
-        if brief:
-            out.append("【更早各章（压缩，一行一章）】\n" + "\n".join(brief))
+        if lines:
+            # 按卷分组加小标题。三百多行平铺，模型多半只看头尾；
+            # 同样的内容分成七八段带标题，读起来是结构而不是流水账。
+            vols = self.p._load("volumes.json", []) or []
+            kept = keys[len(keys) - len(lines):]
+            body, i = [], 0
+            for v in vols:
+                a, b = int(v.get("start", 0)), int(v.get("end", 0))
+                grp = [lines[j] for j, k in enumerate(kept) if a <= k <= b]
+                if grp:
+                    body.append(f"── {v.get('name','')}（第{a}-{b}章）──\n"
+                                + "\n".join(grp))
+                    i += len(grp)
+            if i < len(lines):                 # 没落进任何一卷的
+                inv = {k for v in vols
+                       for k in range(int(v.get("start", 0)), int(v.get("end", 0)) + 1)}
+                rest = [lines[j] for j, k in enumerate(kept) if k not in inv]
+                if rest:
+                    body.append("── 其余 ──\n" + "\n".join(rest))
+            out.append(f"【前面每一章一句话（共 {len(lines)} 章，一章不漏）】\n"
+                       + "\n\n".join(body if body else lines))
         if full:
             out.append("【最近各章（完整细纲，本批要接住的就是这些）】\n"
                        + "\n\n".join(full))
         return "\n\n".join(out)
 
-    @staticmethod
     def split_outline(text: str, want: int = 0) -> List[str]:
         """把一批细纲切成单章 —— 分隔符靠不住，得有兜底。
 
@@ -3019,6 +3171,21 @@ class Novelist:
         if hr:
             cons.append("【本书铁律（违反一次就穿帮，每章都要成立）】\n"
                         + "\n".join(f"- {x}" for x in hr))
+        snap = self.p.state.get("outline_state") or {}
+        if snap:
+            # 台账是模型从细纲里抽出来的，会抽错。措辞不能写死成铁律 ——
+            # 抽错一条就把错误固化成规矩，后面每一批都照着错的写。
+            # 说清「谁记的、哪一章记的」，并允许本批剧情明确改变它。
+            cons.append("【此刻的账（从前面的细纲里抽的，可能有误）："
+                        "本批不得**无缘无故**与它冲突；"
+                        "确实要变，就在剧情里写明怎么变的】\n"
+                        + "\n".join(
+                            f"- {k}（第{v.get('at','?')}章）：{v.get('v','')}"
+                            for k, v in snap.items()))
+        guide = self.p.state.get("outline_guide") or []
+        if guide:
+            cons.append("【上一批排出来的毛病，本批必须纠正】\n"
+                        + "\n".join(f"- {x}" for x in guide))
         cons.append(dl.brief(self.dials()))
         st_ = self.p.state
         mb = sc.mode_brief(st_.get("resolution_modes") or [], start)
@@ -3177,6 +3344,7 @@ class Novelist:
             if bad:
                 self.fix_outline_english(bad)
             self.outline_sweep(start, end)
+            self.outline_selfcheck(start, end)
         return parts
 
     def step_chapter(self, n: int, on_delta=None, retry_on_low: int | None = None) -> Dict[str, Any]:

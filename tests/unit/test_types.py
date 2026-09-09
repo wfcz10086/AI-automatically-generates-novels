@@ -365,44 +365,35 @@ def test_outline_batch_is_computed_not_hardcoded():
     assert "self.outline_batch(count)" in gen
 
 
-def test_outline_digest_is_layered(tmp_path):
-    """已排细纲要分层喂：近的完整，远的压缩。
+def test_outline_digest_covers_every_chapter():
+    """每章一句话保底，一章不漏 —— 丢章是最严重的记忆事故。
 
-    全部压成一行会把最近几章的细节也丢掉 —— 而接缝处最需要的恰恰是
-    「上一章结在哪、谁还在场、埋了什么没收」这些细节。
+    原来先划一段最近的给完整版、剩下的才轮到压缩行、装不下就丢：
+    实测排到第 346 章，345 章前情只覆盖 134 章、丢了 211 章，
+    而预算只用掉 63%。前两百多章在模型眼里根本不存在，
+    它凭什么接得住那时候埋的线。
     """
-    import json as _j
+    import json as _j, re, tempfile, pathlib as _p
     from server.orchestrator import Novelist, Project
-    from server.settings import load
-
-    d = tmp_path / "书"
+    d = _p.Path(tempfile.mkdtemp()) / "p"
     (d / "chapters").mkdir(parents=True)
     (d / "project.json").write_text(_j.dumps(
-        {"title": "t", "type_id": "novel", "genre_id": "lishi",
-         "style_id": "qidian-lishi", "target_chapters": 100,
-         "target_words": 300000, "fields": {}}, ensure_ascii=False), encoding="utf-8")
+        {"title": "T", "type_id": "novel", "genre_id": "", "style_id": "",
+         "target_chapters": 300, "target_words": 900000, "fields": {}},
+        ensure_ascii=False), encoding="utf-8")
     (d / "state.json").write_text('{"done": [], "current": 0}', encoding="utf-8")
-    body = "第N章 标题\n核心事件：某事发生\n剧情1：细节甲\n剧情2：细节乙\n" + "补充。" * 120
+    body = ("第N章 标题\n承接：接住上章\n出场角色：甲、乙、丙\n"
+            + "".join(f"剧情{i}：细节{i}\n" for i in range(1, 7))
+            + "重场：剧情3\n爽点：翻盘\n章末钩子：有人来报")
     (d / "chapter_outlines.json").write_text(_j.dumps(
-        {str(i): body.replace("第N章", f"第{i}章") for i in range(1, 61)},
+        {str(i): body.replace("第N章", f"第{i}章") for i in range(1, 300)},
         ensure_ascii=False), encoding="utf-8")
 
     nv = Novelist(Project(str(d)))
-    # 预算充足时全部完整喂（上下文够大就不该压）
-    out = nv.outline_digest(61, limit=200000)
-    assert "【最近各章（完整细纲" in out, "近的没有完整喂"
-    assert out.count("[[CH") == 60, "预算够却没全给完整版"
-    assert "【更早各章（压缩" not in out, "预算够却还在压缩"
-
-    # 预算收紧时才分层：近的完整、远的压成一行
-    out2 = nv.outline_digest(61, limit=12000)
-    assert "【更早各章（压缩" in out2, "预算不足时没有压缩远端"
-    n_full = out2.count("[[CH")
-    assert 1 <= n_full < 60, f"完整段章数不合理：{n_full}"
-    head, tail = out2.split("【最近各章（完整细纲", 1)
-    assert "剧情2：" in tail, "完整段丢了剧情点"
-    assert "剧情2：" not in head, "压缩段没压住"
-
+    out = nv.outline_digest(300)
+    lines = len(re.findall(r"^\d+\.", out, re.M))
+    assert lines == 299, f"丢了 {299 - lines} 章"
+    assert "[[CH" in out, "完整档没了"
 
 def test_three_stage_flow_exists():
     """流程要分三段：排全书细纲 → 审阅 → 写正文。
