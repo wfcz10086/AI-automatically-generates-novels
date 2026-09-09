@@ -1124,3 +1124,28 @@ def test_finite_check_names_the_anchor_number():
     hit = next(h for h in nv.outline_finite_check() if "涨回去" in h)
     assert "第104章的 105发" in hit, "要指名上一个对的数"
     assert "一百多发" in hit, "要显式禁掉模糊量词"
+
+
+def test_ledger_mismatch_becomes_a_replan_job():
+    """台账矛盾要落成**重排工单**, 光靠纠偏下一批修不好。
+
+    纠偏单只能要求「下一批怎么写」, 而错的数已经落盘 —— 实测第145章写成
+    119发(第104章还剩 105发), 连着三批纠偏都没改掉: 模型读到上下文里白纸
+    黑字的 119, 只会接着往下写 118; 让它跳回 105 反倒是制造新矛盾。
+    往后追加修不好已经写错的账, 得回去改那一章本身。
+    """
+    from server.orchestrator import Novelist
+
+    nv = Novelist.__new__(Novelist)
+    nv.hard_rules = lambda: [
+        "【沙漠之鹰】主角带着一把沙漠之鹰、一百二十发子弹",
+        "子弹只减不增，造不出也补不了，每次开枪当场记账",
+    ]
+    co = {"104": "剩105发", "145": "剩119发"}
+    nv.p = type("P", (), {"_load": lambda self, *a: co})()
+
+    jobs = nv._ledger_jobs()
+    assert jobs, "台账矛盾要能落成工单"
+    assert jobs[0]["chapters"] == [145], "要指向写错的那一章, 不是下一批"
+    assert "不大于 105" in jobs[0]["demand"], "要给出上限"
+    assert "剧情一律不动" in jobs[0]["demand"], "只改数字, 别把整章重写了"

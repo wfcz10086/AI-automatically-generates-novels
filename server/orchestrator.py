@@ -2744,6 +2744,35 @@ class Novelist:
             self._log(f"排纲自审 {start}-{end}：{len(pats)} 个模式 → {len(tips)} 条纠偏")
         return tips
 
+    def _ledger_jobs(self) -> List[Dict[str, Any]]:
+        """把台账矛盾落成**重排工单**（outline_repairs 的第 ⑤ 类）。
+
+        这一类只能靠重排修: 纠偏单只能要求「下一批怎么写」, 而错的数已经落盘
+        —— 实测第145章写成 119发(第104章还剩 105发), 连着三批纠偏都没能改掉:
+        模型读到上下文里白纸黑字的 119, 只会接着往下写 118, 让它跳回 105 反倒
+        是制造新矛盾。**往后追加修不好已经写错的账**, 得回去改那一章本身。
+        检测器报得出来却没有任何东西能把它修回去 —— 又一次「有生产者没消费者」,
+        所以落成工单交给 replan.py。
+        """
+        jobs: List[Dict[str, Any]] = []
+        for hit in self.outline_finite_check():
+            m = re.search(r"第(\d+)章写成 (\d+)(\S+?)。最后一个对的数是"
+                          r"第(\d+)章的 (\d+)", hit)
+            if not m:
+                continue
+            bad_n, bad_v, unit, ok_n, ok_v = (int(m.group(1)), int(m.group(2)),
+                                              m.group(3), int(m.group(4)),
+                                              int(m.group(5)))
+            jobs.append({
+                "kind": "台账对不上", "chapters": [bad_n],
+                "demand": f"这一章把「{unit}」的存量写成了 {bad_v}{unit}，"
+                          f"可第 {ok_n} 章就只剩 {ok_v}{unit} 了 —— "
+                          f"只减不增，这一章的数**必须不大于 {ok_v}**。"
+                          f"重排时**剧情一律不动**，只把这个数改对：按这一章"
+                          f"和第 {ok_n} 章之间实际开过几枪往下减，"
+                          f"并写清「这是第几{unit}、还剩多少{unit}」"})
+        return jobs
+
     def outline_repairs(self, upto: int = 0) -> List[Dict[str, Any]]:
         """把各检测器的结论落成「哪几章要重排、为什么」。
 
@@ -2888,6 +2917,11 @@ class Novelist:
             if chs:
                 jobs.append({"kind": "承诺挨饿", "chapters": chs,
                              "demand": f"总纲承诺久未兑现：{s}。这几章里必须推进它"})
+        # ⑤ 台账对不上（见 _ledger_jobs 的说明）
+        try:
+            jobs.extend(self._ledger_jobs())
+        except Exception as e:
+            self._log(f"台账工单跳过: {e}")
         # 落在同一批章节上的合并成一条 —— 否则同几章被重排多次，后一次覆盖前一次
         return sc.merge_repairs(jobs)
 
@@ -4001,9 +4035,12 @@ class Novelist:
                 s = re.sub(r"这几章", "接下来这一批", s)
                 return s
 
+            # 「台账对不上」是**重排单专用**, 不并进纠偏: 它要求改的是已经落盘
+            # 的那一章, 下一批做不到; 而纠偏单里已经有 outline_finite_check()
+            # 直接塞的同一件事(要求下一批接着往下减)。并进来只会重复占名额。
             fresh = [f"{j['kind']}（**在接下来这一批里解决**）："
                      f"{_retarget(j['demand'])}" for j in jobs
-                     if j.get("demand")][:3]
+                     if j.get("demand") and j["kind"] != "台账对不上"][:3]
             # 有限资源的硬矛盾**插在最前面**。它和重排单一样是零成本确定性检测,
             # 但优先级更高: 风格问题(钩子雷同)晚 25 章再改无所谓, 子弹从 105 发
             # 涨回 119 发是当场穿帮。原本它只挂在 outline_patterns 上, 而那条路
@@ -4021,9 +4058,9 @@ class Novelist:
                 guide = [g for g in (st0.get("outline_guide") or [])][:3]
                 st0["outline_guide"] = guide + fresh
                 self.p.save()
+                kinds = [j["kind"] for j in jobs if j["kind"] != "台账对不上"]
                 self._log(f"重排单并入纠偏 {len(fresh)} 条："
-                          + "；".join(["台账对不上"] * len(hard)
-                                      + [j["kind"] for j in jobs[:3]]))
+                          + "；".join(["台账对不上"] * len(hard) + kinds[:3]))
         return parts
 
     def step_chapter(self, n: int, on_delta=None, retry_on_low: int | None = None) -> Dict[str, Any]:
