@@ -939,7 +939,7 @@ def test_destroyed_item_must_not_revive_silently():
     co["5"] = mk(5, "他从地窖取出沙漠之鹰，擦拭枪身")
     nv.p = type("P", (), {"_load": lambda self, f, d: co})()
     hit = [x for x in nv.outline_patterns(1, 6) if "写死" in x]
-    assert hit and "第5" in hit[0], hit
+    assert hit and "第 5 章" in hit[0], hit
 
     # 明写了怎么回来的就不报
     co2 = dict(co)
