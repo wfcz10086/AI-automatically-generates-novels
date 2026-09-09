@@ -865,3 +865,34 @@ def test_duplicate_chapter_is_rejected():
     assert Novelist._dup_of(old["114"], old, 114) == 0
     # 太短的一句话不判
     assert Novelist._dup_of("第122章 乙\n一句话：短\n", old, 122) == 0
+
+
+def test_finite_resource_numbers_must_not_grow():
+    """铁律声明只减不增的东西, 数字涨回去要报警。
+
+    踩过: 子弹账走成 118→117→116→**119**→1→119→116→1, 还写出过
+    「第 121 发」而全书总共 120 发。铁律白纸黑字要求「每次开枪当场记账」,
+    可没有任何东西在核对这个数 —— 台账管事件, 不管数量。
+    """
+    from server.orchestrator import Novelist
+
+    def mk(n, body):
+        return (f"第{n}章 标题\n一句话：{body}\n承接：上一章\n出场角色：甲、乙、丙\n"
+                f"剧情1：{body}\n重场：剧情1\n爽点：甲交出账册\n章末钩子：门开了")
+
+    nv = Novelist.__new__(Novelist)
+    nv.hard_rules = lambda: ["一百二十发只减不增，宋朝造不出也补不了"]
+    assert nv._finite_units() == ["发"]
+
+    co = {"1": mk(1, "还剩118发"), "2": mk(2, "还剩117发"), "3": mk(3, "还剩119发")}
+    nv.p = type("P", (), {"_load": lambda self, f, d: co})()
+    hit = [x for x in nv.outline_patterns(1, 3) if "不可再生" in x]
+    assert hit and "119发" in hit[0], hit
+
+    ok = {"1": mk(1, "还剩118发"), "2": mk(2, "还剩117发"), "3": mk(3, "还剩116发")}
+    nv.p = type("P", (), {"_load": lambda self, f, d: ok})()
+    assert not [x for x in nv.outline_patterns(1, 3) if "不可再生" in x]
+
+    # 铁律没声明的单位不查 —— 钱粮本来就该涨
+    nv.hard_rules = lambda: ["主角有一百二十贯本钱"]
+    assert nv._finite_units() == []

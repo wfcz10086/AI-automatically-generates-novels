@@ -2195,6 +2195,22 @@ class Novelist:
         ("局翻", r"翻|反|倒|变了|不见了|空的|换了|没了|死了|走水|塌"),
     ]
 
+    def _finite_units(self) -> List[str]:
+        """铁律里声明了「只减不增／不可再生」的计量单位。
+
+        从铁律原文里读, 不写死 —— 换一本书可能是丹药、箭矢、灵石、疫苗。
+        没声明的单位不查: 钱粮兵马本来就该涨, 拿同一把尺子量会误报一片。
+        """
+        units, pat = [], re.compile(r"(\d+|[一二三四五六七八九十百千万]+)\s*"
+                                    r"([发枚颗粒支张片瓶]|块|把)")
+        for r in self.hard_rules():
+            if not re.search(r"只减不增|不可再生|用一.{0,2}少一|补不了|造不出", r):
+                continue
+            for m in pat.finditer(r):
+                if m.group(2) not in units:
+                    units.append(m.group(2))
+        return units[:3]
+
     def outline_patterns(self, start: int, end: int) -> List[str]:
         """扫这一批**自己写出来的**东西有什么重复套路。
 
@@ -2259,6 +2275,23 @@ class Novelist:
             b, c = beats.most_common(1)[0]
             if c / len(ks) >= 0.5:
                 out.append(f"重场有 {c}/{len(ks)} 章落在「{b}」—— 轻重节奏成了固定套路")
+        # 铁律里点名「只减不增」的资源, 数字涨回去就是穿帮。
+        # 实测子弹账走成 118→117→116→**119**→1→119→116→1, 还写出过
+        # 「第 121 发」(总共才 120 发)。铁律白纸黑字要求「每次开枪当场记账」,
+        # 可没有任何东西在核对这个数 —— 台账管的是事件, 不管数量。
+        # 只查铁律自己声明了不可再生的单位, 别去管钱粮那类本来就该涨的。
+        for unit in self._finite_units():
+            seen = []
+            for n in sorted(int(x) for x in co if str(x).isdigit()):
+                for mm in re.finditer(rf"(\d{{1,4}})\s*{unit}", str(co[str(n)])):
+                    seen.append((n, int(mm.group(1))))
+            bad = [(n, v) for (pn, pv), (n, v) in zip(seen, seen[1:]) if v > pv]
+            if bad:
+                out.append(
+                    f"「{unit}」这类不可再生的东西数字涨回去了："
+                    + "；".join(f"第{n}章写成 {v}{unit}" for n, v in bad[:4])
+                    + f"。铁律要求只减不增、每次消耗当场记账 —— "
+                      f"接下来这一批必须接着上一个数往下减，不许重新起数")
         # 章名字数单一
         names = [(re.search(r"第\d+章\s*(.+)", str(co[str(n)]).splitlines()[0])
                   or [None, ""])[1].strip() for n in ks]
