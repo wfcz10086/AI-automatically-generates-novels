@@ -659,8 +659,18 @@ class Novelist:
             wb = self.p.read("world_bible.md")
             m = re.search(r"参考朝代[^\n]*?[:：]\s*([^\n，,。]{1,10})", wb) or \
                 re.search(r"(?:朝代|时代)\s*[:：]\s*([^\n，,。]{1,10})", wb)
-            era = (self.p.meta.get("era") or (m.group(1).strip() if m else "")
-                   or self.genre.get("name", ""))
+            era = (self.p.meta.get("era") or (m.group(1).strip() if m else ""))
+            if not era:
+                # 世界观还没生成时从正文里捞朝代。**不能回退到题材包名** ——
+                # 「同人二创」不是时代，拿它当跨书考据库的键，
+                # 同一件事在「北宋|…」和「同人二创|…」两个键下各存一份，
+                # 共享库就白建了（实测 1110 张卡一张也命中不了）。
+                src = wb or (self.p.meta.get("fields", {}) or {}).get("premise", "")
+                m2 = re.search(r"(北宋|南宋|西汉|东汉|北魏|东晋|西晋|五代|"
+                               r"秦|汉|唐|宋|元|明|清|民国)", src[:1500])
+                era = m2.group(1) if m2 else ""
+            if not era:
+                era = self.genre.get("name", "")     # 实在捞不到才拿题材名兜底
             self._retriever = Retriever(
                 self.p.mem, self.p.dir, era=era,
                 enable_web=bool(self.mcfg.get("web_search", True)),

@@ -69,6 +69,18 @@ class Retriever:
         # 缓存与计数由 registry 统一绑好（仓库级 .cache/search，跨书共享）——
         # 按次计费的源下，「同一个宋代盐引怎么走」不该因为换本书就再花一次额度。
         self.sx = registry.searcher(endpoint) if enable_web else None
+        # 仓库级考据卡库：原始搜索结果本来就跨书共享（.cache/search），
+        # 可「逐条判定 + 摘成卡片」那两次模型调用每本书都重跑了一遍 ——
+        # 而那才是贵的部分。实测「宋代仵作验尸制度」被四本书各查一遍、
+        # 「盐引制度」三遍。卡片按「时代 + 归一化主题」入库，跨书复用。
+        self.shared_path = (Path(__file__).resolve().parents[1]
+                            / ".cache" / "facts.json")
+        self.shared: Dict[str, Any] = {}
+        try:
+            if self.shared_path.exists():
+                self.shared = json.loads(self.shared_path.read_text(encoding="utf-8"))
+        except Exception:
+            self.shared = {}
         self.facts_path = project_dir / "facts.json"
         self.facts: Dict[str, Any] = {}
         if self.facts_path.exists():
@@ -128,6 +140,22 @@ class Retriever:
 
     def _by_key(self) -> Dict[str, str]:
         return {self._key(k): k for k in self.facts}
+
+    def _shared_key(self, topic: str) -> str:
+        """跨书键：时代 + 归一化主题。
+
+        时代必须进键 —— 「盐引制度」在北宋和明代不是一回事，
+        混用会把明代的卡片喂给宋代的书。
+        """
+        return f"{self._key(self.era)}|{self._key(topic)}"
+
+    def _save_shared(self) -> None:
+        try:
+            self.shared_path.parent.mkdir(parents=True, exist_ok=True)
+            self.shared_path.write_text(
+                json.dumps(self.shared, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
     # ---------------- 结果过滤: 一条一条交给模型 ----------------
     _TAG = re.compile(r"(?is)<(script|style|nav|footer|header|aside)[^>]*>.*?</\1>")
@@ -220,6 +248,18 @@ class Retriever:
             self.facts[topic] = dict(self.facts[twin], alias_of=twin)
             self._save()
             return self.facts[topic]
+        # 别的书查过同一个时代的同一件事就直接用，省掉判定与摘要两次调用
+        sk = self._shared_key(topic)
+        hit = self.shared.get(sk)
+        if hit and hit.get("card"):
+            rec = dict(hit, topic=topic, from_shared=True)
+            self.facts[topic] = rec
+            self._save()
+            try:
+                self.mem.add("fact", f"fact-{topic}", f"考据·{topic}", rec["card"])
+            except Exception:
+                pass
+            return rec
         if not (self.enable_web and self.sx and self.sx.available()):
             return None
 
@@ -244,6 +284,10 @@ class Retriever:
                            "built_at": time.strftime("%F %T")}
                     self.facts[topic] = rec
                     self._save()
+                    # 入共享库，并记下**管用的那条检索式** —— 下次别的书查同类
+                    # 主题时，把它当范例给规划模型看，比凭空想强
+                    self.shared[sk] = dict(rec, era=self.era, good_query=q)
+                    self._save_shared()
                     self.mem.add("fact", f"fact-{topic}", f"考据·{topic}", card)
                     return rec
             q = self._reformulate(topic, tried)
@@ -318,6 +362,12 @@ class Retriever:
         if not self.plan:
             return []
         hint_line = ("参考方向（可以不用）：" + "、".join(hints[:8])) if hints else ""
+        # 把**同时代查成过的检索式**当范例给它看。凭空想检索式的命中率不稳，
+        # 而「这几条在同一个时代查出过东西」是现成的、便宜的经验。
+        samples = [v.get("good_query") for k, v in list(self.shared.items())[-60:]
+                   if v.get("good_query") and k.startswith(self._key(self.era) + "|")]
+        ex_line = ("\n【同类题材查成过的检索式，照这个路数写】\n"
+                   + "\n".join(f"- {q}" for q in samples[-6:])) if samples else ""
         stage_desc = {"world": "构建世界观/时代背景", "cast": "设计人物与关系表",
                       "plot": "设计章节剧情", "chapter": "写本章正文",
                       "drive": "找能推动剧情的真实素材"}.get(stage, stage)
@@ -339,7 +389,7 @@ class Retriever:
         prompt = (
             f"你在帮一位网文作者做资料准备。当前任务：{stage_desc}。\n\n"
             f"下面是已有的设定与内容：\n{context[:3500]}\n\n"
-            f"{hint_line}\n\n"
+            f"{hint_line}{ex_line}\n\n"
             f"{ask_line}"
             f"输出最多 {k} 条，每行一条，严格格式：\n"
             f"主题|检索式\n"
@@ -408,13 +458,65 @@ class Retriever:
                      for t in hints]
         needs += [{"topic": e, "hint": e, "query": f"{self.era} {e}"} for e in (extra or [])]
 
+        # 每个知识点要走「搜索 → 逐条判定 → 摘成卡片」三步，一步几秒，
+        # 十几个主题串起来就是好几分钟 —— 而它们**彼此无关**，
+        # 一个主题查什么不取决于另一个主题查到了什么。并发查。
+        #
+        # 已经有卡的直接取，不进线程池（那是纯读缓存）。
+        todo = [nd for nd in needs if not (self.facts.get(nd["topic"]) or {}).get("card")]
+        if todo:
+            self._parallel_fetch(todo)
+
         blocks: List[str] = []
         for nd in needs:
-            rec = self.facts.get(nd["topic"]) or self.fact_for(nd) or {}
+            rec = self.facts.get(nd["topic"]) or {}
             card = rec.get("card")
             if card:
                 blocks.append(f"【{nd['topic']}】{card.strip()}")
         return "\n\n".join(blocks)
+
+    #: 并发查几个知识点。调高没用 —— 瓶颈在搜索源与判定模型的限流，
+    #: 而且并发越高越容易触发对方的速率限制，反而更慢。
+    FETCH_WORKERS = 4
+
+    def _parallel_fetch(self, needs: List[Dict[str, str]]) -> None:
+        """并发把这批知识点查回来。
+
+        fact_for 会写 self.facts 并落盘，所以结果**必须回主线程合并** ——
+        多个线程同时写同一个 dict 再各自 _save()，后写的会覆盖先写的，
+        丢卡片还查不出原因。这里让工作线程只负责「查」，
+        写入与落盘留在主线程一次做完。
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
+        def fetch(nd: Dict[str, str]):
+            try:
+                # 复制一份事实表给工作线程用，避免它顺手写主表
+                saved, self_facts = self.facts, dict(self.facts)
+                try:
+                    self.facts = self_facts
+                    rec = self.fact_for(nd)
+                finally:
+                    self.facts = saved
+                return nd["topic"], (self_facts.get(nd["topic"]) or rec)
+            except Exception as e:
+                print(f"[retrieval] 「{nd.get('topic')}」查失败: {e}")
+                return nd["topic"], None
+
+        with ThreadPoolExecutor(max_workers=self.FETCH_WORKERS) as ex:
+            got = list(ex.map(fetch, needs))
+        n = 0
+        for topic, rec in got:
+            if rec and topic not in self.facts:
+                self.facts[topic] = rec
+                n += 1
+                if rec.get("card"):
+                    try:
+                        self.mem.add("fact", f"fact-{topic}", f"考据·{topic}", rec["card"])
+                    except Exception:
+                        pass
+        if n:
+            self._save()
 
     # ---------------- 统一召回 ----------------
     def recall(self, chapter_outline: str, k: int = 6) -> Dict[str, Any]:
