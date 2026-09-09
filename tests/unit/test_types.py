@@ -1179,3 +1179,36 @@ def test_finite_check_does_not_name_past_chapters_in_the_guide():
 
     named = "\n".join(nv.outline_finite_check(name_chapters=True))
     assert "第30章" in named and "第145章" in named, "重排工单那一路照旧点名"
+
+
+def test_finite_check_compares_against_running_minimum():
+    """只减不增要跟**历史最小值**比, 不是跟前一项比。
+
+    相邻比对只抓得到第一处断裂, 之后所有数都以那个错值为基准: 实测
+    105(第104章) → 119(第145章) 报了出来, 可后面 119→118→118→107 每一步
+    都在减, 于是第249章的 107 一路放过 —— 而它比第104章的 105 还高。
+    每一处都要出重排工单, 只派一张单子等于其余几章没人管。
+    """
+    from server.orchestrator import Novelist
+
+    nv = Novelist.__new__(Novelist)
+    nv.hard_rules = lambda: [
+        "【沙漠之鹰】主角带着一把沙漠之鹰、一百二十发子弹",
+        "子弹只减不增，造不出也补不了，每次开枪当场记账",
+    ]
+    nv.p = type("P", (), {"_load": lambda self, *a: {
+        "104": "剩105发",
+        "145": "剩119发",      # 断裂
+        "195": "剩118发",      # 相对 119 在减, 但仍高过 105
+        "249": "剩107发",      # 同上
+        "300": "剩100发",      # 这个才是真的合规
+    }})()
+
+    hit = next(h for h in nv.outline_finite_check() if "涨回去" in h)
+    for n in ("第145章", "第195章", "第249章"):
+        assert n in hit, f"{n} 高过历史最低值, 必须报"
+    assert "第300章" not in hit, "低于历史最低值的不该报"
+
+    jobs = nv._ledger_jobs()
+    assert sorted(j["chapters"][0] for j in jobs) == [145, 195, 249], \
+        "每一处都要出工单, 不能只派第一张"

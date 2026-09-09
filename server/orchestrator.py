@@ -2456,7 +2456,17 @@ class Novelist:
                         + where
                         + f"序号是**已经用掉的第几{unit}**，"
                           f"不是章号也不是剩余数：第几{unit} + 还剩几{unit} = {total}")
-            bad = [(n, v) for (pn, pv), (n, v) in zip(seen, seen[1:]) if v > pv]
+            # 跟**历史最小值**比, 不是跟前一项比。只减不增意味着任何一章的
+            # 存量都不能高过此前出现过的最低值 —— 相邻比对只抓得到第一处断裂,
+            # 之后所有数都以那个错值为基准: 实测 105(第104章) → 119(第145章)
+            # 报了, 可后面 119→118→118→107 每一步都在减, 于是第249章的 107
+            # 一路放过, 而它比第104章的 105 还高, 台账照样对不上。
+            bad, floor = [], None
+            for n, v in seen:
+                if floor is not None and v > floor:
+                    bad.append((n, v))
+                else:
+                    floor = v if floor is None else min(floor, v)
             if bad:
                 # **把上一个有效存量的准数写进来**。只说「接着上一个数往下减」,
                 # 模型并不知道那个数是几 —— 实测第174章被点名后确实提了子弹,
@@ -2764,21 +2774,27 @@ class Novelist:
         """
         jobs: List[Dict[str, Any]] = []
         for hit in self.outline_finite_check():
-            m = re.search(r"第(\d+)章写成 (\d+)(\S+?)。最后一个对的数是"
-                          r"第(\d+)章的 (\d+)", hit)
-            if not m:
+            # **每一处都要出工单**。这里回读 outline_finite_check 拼好的消息串,
+            # 用 re.search 只取得到第一处 —— 实测四章对不上(145/197/200/249)
+            # 却只派了一张单子, 其余三章没人管。
+            anchor = re.search(r"最后一个对的数是第(\d+)章的 (\d+)(\S+?)[ ，。—]",
+                               hit)
+            if not anchor:
                 continue
-            bad_n, bad_v, unit, ok_n, ok_v = (int(m.group(1)), int(m.group(2)),
-                                              m.group(3), int(m.group(4)),
-                                              int(m.group(5)))
-            jobs.append({
-                "kind": "台账对不上", "chapters": [bad_n],
-                "demand": f"这一章把「{unit}」的存量写成了 {bad_v}{unit}，"
-                          f"可第 {ok_n} 章就只剩 {ok_v}{unit} 了 —— "
-                          f"只减不增，这一章的数**必须不大于 {ok_v}**。"
-                          f"重排时**剧情一律不动**，只把这个数改对：按这一章"
-                          f"和第 {ok_n} 章之间实际开过几枪往下减，"
-                          f"并写清「这是第几{unit}、还剩多少{unit}」"})
+            ok_n, ok_v, unit = (int(anchor.group(1)), int(anchor.group(2)),
+                                anchor.group(3))
+            for m in re.finditer(r"第(\d+)章写成 (\d+)", hit):
+                bad_n, bad_v = int(m.group(1)), int(m.group(2))
+                if bad_n == ok_n:
+                    continue
+                jobs.append({
+                    "kind": "台账对不上", "chapters": [bad_n],
+                    "demand": f"这一章把「{unit}」的存量写成了 {bad_v}{unit}，"
+                              f"可第 {ok_n} 章就只剩 {ok_v}{unit} 了 —— "
+                              f"只减不增，这一章的数**必须不大于 {ok_v}**。"
+                              f"重排时**剧情一律不动**，只把这个数改对：按这一章"
+                              f"和第 {ok_n} 章之间实际开过几枪往下减，"
+                              f"并写清「这是第几{unit}、还剩多少{unit}」"})
         return jobs
 
     def outline_repairs(self, upto: int = 0) -> List[Dict[str, Any]]:
