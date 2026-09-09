@@ -686,3 +686,49 @@ def test_seed_stamp_covers_pack_rules():
     assert nv.seed_stamp() != a, "题材规范变了, 指纹必须跟着变"
     nv.genre = {"name": "同人", "corePleasure": "甲"}
     assert nv.seed_stamp() == a, "同样的规范必须给出同样的指纹"
+
+
+def test_era_asked_from_model_and_cached():
+    """朝代交给模型判, 答完存 meta 复用。
+
+    两种正则猜法都实测栽过: 单字裸匹配把「元祐党籍碑」认成元朝(共享库
+    1263 张卡全废); 只认「北宋」这类无歧义写法, 又碰上通篇只写「政和五年」
+    「徽宗朝」的世界观, 一次都匹配不上。
+    """
+    from server.orchestrator import Novelist
+    nv = Novelist.__new__(Novelist)
+    saved = {}
+    nv.p = type("P", (), {"meta": {}, "save": lambda self: saved.setdefault("n", 0)})()
+    calls = []
+
+    import server.orchestrator as orc
+    real_call, real_clean = orc.call, orc.clean
+    orc.call = lambda prof, q, **kw: (calls.append(q),
+                                      type("R", (), {"text": "北宋"})())[1]
+    orc.clean = lambda x: x
+    try:
+        assert nv._ask_era("政和五年，徽宗朝，蔡京立元祐党籍碑") == "北宋"
+        assert nv.p.meta["era"] == "北宋", "答案要存进 meta"
+        assert len(calls) == 1
+        assert nv._ask_era("随便什么") == "北宋" and len(calls) == 1, "第二次要走缓存"
+        # 空设定不问, 也不乱填
+        nv.p.meta.clear()
+        assert nv._ask_era("") == ""
+    finally:
+        orc.call, orc.clean = real_call, real_clean
+
+
+def test_era_blank_for_fictional_world():
+    """架空世界留空, 别硬塞一个朝代。"""
+    from server.orchestrator import Novelist
+    import server.orchestrator as orc
+    nv = Novelist.__new__(Novelist)
+    nv.p = type("P", (), {"meta": {}, "save": lambda self: None})()
+    real_call, real_clean = orc.call, orc.clean
+    orc.call = lambda prof, q, **kw: type("R", (), {"text": "无"})()
+    orc.clean = lambda x: x
+    try:
+        assert nv._ask_era("修真大陆，灵气复苏") == ""
+        assert "era" not in nv.p.meta
+    finally:
+        orc.call, orc.clean = real_call, real_clean

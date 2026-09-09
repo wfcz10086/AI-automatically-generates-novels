@@ -673,6 +673,33 @@ class Novelist:
         return ctx
 
     # ---------- 统一检索 ----------
+    def _ask_era(self, src: str) -> str:
+        """问模型这是哪个朝代, 答案存进 meta 复用。
+
+        考据卡跨书共享的键是「朝代|主题」—— 朝代认错, 整本书的考据都白查;
+        朝代空着, 「盐引制度」在北宋和明代会被当成同一件事。所以宁可花一次
+        调用也要问准。取不到就留空, 让检索退化成不带朝代的查询, 别乱填。
+        """
+        got = (self.p.meta.get("era") or "").strip()
+        if got:
+            return got
+        if not (src or "").strip():
+            return ""
+        try:
+            ans = clean(call("planning", 
+                "下面是一部小说的设定。它发生在中国历史上的哪个朝代？\n"
+                "只回答朝代名, 2-4 个字, 比如「北宋」「明」「唐」。\n"
+                "架空世界或无法判断就回答「无」, 不要解释。\n\n"
+                + src[:1200], max_tokens=20).text)[:6].strip()
+        except Exception:
+            return ""
+        ans = re.sub(r"[^\u4e00-\u9fff]", "", ans)
+        if not ans or ans in ("无", "架空", "无法判断"):
+            return ""
+        self.p.meta["era"] = ans
+        self.p.save()
+        return ans
+
     @property
     def retriever(self) -> Retriever:
         """内部记忆 + 外部搜索合一。搜索不是独立步骤, 是召回层的一半。"""
@@ -687,9 +714,15 @@ class Novelist:
                 # 同一件事在「北宋|…」和「同人二创|…」两个键下各存一份，
                 # 共享库就白建了（实测 1110 张卡一张也命中不了）。
                 src = wb or (self.p.meta.get("fields", {}) or {}).get("premise", "")
-                m2 = re.search(r"(北宋|南宋|西汉|东汉|北魏|东晋|西晋|五代|"
-                               r"秦|汉|唐|宋|元|明|清|民国)", src[:1500])
-                era = m2.group(1) if m2 else ""
+                # 朝代交给模型判, **别用正则猜**。两种猜法都实测栽过:
+                #   单字裸匹配 —— 「元祐党籍碑」里的「元」被认成元朝,
+                #     这本北宋书的考据键成了「元|…」, 共享库 1263 张卡全废;
+                #   只认「北宋」「宋代」这类无歧义写法 —— 可这本的世界观通篇
+                #     写的是「政和五年」「徽宗朝」「靖康」, 一次都没出现朝代名,
+                #     于是又回退成了题材包名。
+                # 年号到朝代的映射本来就是常识题, 模型一次就答对, 答完存进
+                # meta 复用, 全书只花这一次。
+                era = self._ask_era(src)
             if not era:
                 era = self.genre.get("name", "")     # 实在捞不到才拿题材名兜底
             self._retriever = Retriever(
