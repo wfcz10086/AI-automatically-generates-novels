@@ -410,7 +410,12 @@ class Retriever:
                 topic, q = re.split(r"[|｜]", line, 1)
             else:
                 topic, q = line[:10], line
-            topic, q = topic.strip()[:20], q.strip()[:80]
+            # 模型偶尔把**列名也抄进来**: 「主题|检索式：宋刑统 告事不实…」,
+            # 于是「检索式：」三个字被当成搜索词发出去, 白白拉低召回。
+            # 实测 161 次检索里出现过一次。剥掉行首的列名标签。
+            topic = re.sub(r"^\s*(?:主题|topic)\s*[:：]\s*", "", topic.strip())
+            q = re.sub(r"^\s*(?:检索式|查询|query|搜索词)\s*[:：]\s*", "", q.strip())
+            topic, q = topic[:20], q[:80]
             if topic and q and len(q) > 3:
                 out.append({"topic": topic, "hint": topic, "query": q})
             if len(out) >= k:

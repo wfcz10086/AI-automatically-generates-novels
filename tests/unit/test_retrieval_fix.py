@@ -28,3 +28,25 @@ class TestJunkHost:
         for u in ["http://economy.guoxue.com/?p=6960",
                   "https://www.fujian.gov.cn/zwgk/", "https://zh.wikipedia.org/wiki/市舶司"]:
             assert not JUNK_HOST.search(u), u
+
+
+def test_plan_queries_strips_column_labels():
+    """模型把列名抄进检索式时要剥掉。
+
+    实测发出去过「检索式：宋刑统 告事不实 反坐…」—— 「检索式：」被当成
+    搜索词, 白白拉低召回。
+    """
+    from server.retrieval import Retriever
+    rt = Retriever.__new__(Retriever)
+    rt.plan = lambda q: ("刑名|检索式：宋刑统 告事不实 反坐\n"
+                         "主题：制度|宋代 进纳授官 纳粟\n"
+                         "地理|宋代 东平府 建制")
+    rt.era = "北宋"
+    rt.facts = {}
+    rt.topics = {}
+    rt.shared = {}
+    got = rt.plan_queries(stage="chapter", context="正文" * 20, k=5)
+    qs = [g["query"] for g in got]
+    assert qs[0] == "宋刑统 告事不实 反坐", qs
+    assert got[1]["topic"] == "制度", got
+    assert qs[2] == "宋代 东平府 建制"
