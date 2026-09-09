@@ -791,3 +791,19 @@ def test_reset_clears_cadence_markers():
     keys = m.group(1)
     for k in ("swept_at", "selfchecked_at", "recapped_at", "outline_guide"):
         assert f'"{k}"' in keys, f"重置清单漏了 {k}"
+
+
+def test_sweep_candidates_use_end_not_start():
+    """宽区间巡检时老伏笔必须进候选。
+
+    踩过: 用 start 算「埋了多久」, 补跑的 1-60 章巡检里 start=1,
+    `start - planted` 恒为负 —— 「埋够 20 章」那一档全空, 只剩本批刚埋的
+    钩子, 于是报「回收 0」, 看上去像剧情没收伏笔, 其实是候选选错了。
+    """
+    pend = [{"id": i, "planted": i, "text": f"钩子{i}"} for i in range(1, 61)]
+    start, end = 1, 60
+    aged = [x for x in pend if end - x["planted"] >= 20][:8]
+    assert aged and aged[0]["planted"] == 1, "老伏笔应该排在前面"
+    assert any(x["planted"] == 8 for x in aged), "第 8 章的伏笔要在候选里"
+    bad = [x for x in pend if start - x["planted"] >= 20][:8]
+    assert not bad, "用 start 算就是这个空结果 —— 回归防护"

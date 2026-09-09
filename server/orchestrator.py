@@ -2693,8 +2693,13 @@ class Novelist:
         if not body.strip():
             return {}
         pend = self.p.mem.pending_foreshadow()
-        cands = ([x for x in pend if start - x["planted"] >= 20][:8]
-                 + [x for x in pend if start - x["planted"] < 20][-10:])
+        # 「埋了多久」要用 **end** 算, 不是 start。补跑的宽区间巡检
+        # (比如一次扫 1-60 章) start=1, `start - planted` 恒为负, 于是
+        # 「埋了 20 章以上」那一档全空, 只剩「最后 10 条」—— 也就是这一批
+        # 刚埋下的钩子。最该查回收的老伏笔(第 8 章埋的石灰, 第 9 章就踩到了)
+        # 压根没进候选, 模型只能报「回收 0」, 而这个 0 看上去像是剧情问题。
+        cands = ([x for x in pend if end - x["planted"] >= 20][:8]
+                 + [x for x in pend if end - x["planted"] < 20][-10:])
         cands = list({f["id"]: f for f in cands}.values())
         proms = self.promises()
         tens = self.tensions()
