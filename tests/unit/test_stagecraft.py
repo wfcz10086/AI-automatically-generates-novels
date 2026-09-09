@@ -306,3 +306,35 @@ class TestSetbacks:
         hist = ["outwit", "force", "trade", "leverage",
                 "persuade", "endure", "upend", "outwit", "force"]
         assert sc.mode_unused(hist) == []
+
+
+class TestFulfillment:
+    """推进 ≠ 兑现。这几条锁的是我自己踩过两次的静默失败。"""
+
+    def test_prompt_actually_asks_for_done_when(self):
+        """提示词里必须真的出现 done_when。
+
+        实测替换模式没匹配上、`.replace` 静默失败，提示词里一次没提，
+        于是 20 条承诺带判据的是 0 条 —— 而检测器明写「没有判据就跳过」，
+        专门为此建的检测器整个失效。
+        """
+        seen = {}
+        sc.build_promises(outline="总纲内容" * 50, title="X",
+                          ask=lambda p: seen.setdefault("p", p) and "{}")
+        assert "done_when" in seen["p"]
+        assert "兑现判据" in seen["p"]
+
+    def test_unfulfilled_skips_without_criteria(self):
+        p = [{"id": 1, "kind": "铁律", "text": "x", "done_when": "", "done_at": 0}]
+        assert sc.unfulfilled(p, upto=300, total=346) == []
+
+    def test_unfulfilled_reports_late_only(self):
+        p = [{"id": 1, "kind": "铁律", "text": "那把枪必须开过",
+              "done_when": "至少三次真到最后关头开枪", "done_at": 0}]
+        assert sc.unfulfilled(p, upto=100, total=346) == []      # 中途不报
+        assert sc.unfulfilled(p, upto=300, total=346)            # 快完了才报
+
+    def test_fulfilled_is_silent(self):
+        p = [{"id": 1, "kind": "铁律", "text": "x",
+              "done_when": "开枪", "done_at": 210}]
+        assert sc.unfulfilled(p, upto=300, total=346) == []

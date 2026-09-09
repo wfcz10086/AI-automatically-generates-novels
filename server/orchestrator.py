@@ -1138,8 +1138,12 @@ class Novelist:
         # 承诺清单里没有它，于是 346 章一发没开、开篇钩子当场被晾。
         base = len(got)
         for i, r in enumerate(self.hard_rules()):
-            got.append({"id": 900 + i, "kind": "铁律",
-                        "text": r[:120], "keywords": [], "last_advanced": 0})
+            # 铁律也要有兑现判据，否则 unfulfilled() 会把它跳过 ——
+            # 专门为「一百二十发一发没开」建的检测器，反倒对铁律不生效。
+            # 铁律自己就是判据：它说必须发生什么，那就是必须发生什么。
+            got.append({"id": 900 + i, "kind": "铁律", "text": r[:120],
+                        "done_when": r[:120], "done_at": 0,
+                        "keywords": [], "last_advanced": 0})
         if got:
             st["promises"] = got
             self.p.save()
