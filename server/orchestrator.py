@@ -2380,6 +2380,85 @@ class Novelist:
                     units.append(m.group(2))
         return units[:3]
 
+    def outline_finite_check(self) -> List[str]:
+        """有限资源台账的**硬矛盾**检查（零模型调用, 每批都跑）。
+
+        原本这段长在 outline_patterns 里, 而 outline_patterns 只有每 25 章的
+        outline_selfcheck 消费, 还要先经模型改写成 ≤4 条 —— 两道都会吃掉它:
+          · 节奏: 第145章的错账要等到第175章才轮到自审, 中间 30 章照错;
+          · 丢失: 实测「126-150：3 个模式 → 3 条纠偏」, 出来的全是钩子和章名,
+                  弹药那两条一条没进。
+        风格类的问题(钩子雷同、章名一个模子)等 25 章不要紧, **事实性矛盾不行**:
+        子弹从 105 发涨回 119 发是穿帮, 读者当场就看出来。所以拆出来走
+        outline_repairs 那条路 —— 每批都算、原文并进纠偏, 不经模型改写。
+        """
+        co = self.p._load("chapter_outlines.json", {})
+        if not co:
+            return []
+        out: List[str] = []
+        # 铁律里点名「只减不增」的资源, 数字涨回去就是穿帮。
+        # 实测子弹账走成 118→117→116→**119**→1→119→116→1, 还写出过
+        # 「第 121 发」(总共才 120 发)。铁律白纸黑字要求「每次开枪当场记账」,
+        # 可没有任何东西在核对这个数 —— 台账管的是事件, 不管数量。
+        # 只查铁律自己声明了不可再生的单位, 别去管钱粮那类本来就该涨的。
+        for unit in self._finite_units():
+            # **只认存量, 不认分项和序数**。裸抓「N发」会把
+            #   「子弹剩余115发，其中1发已暴露原理，114发是最后的威慑」
+            # 读成 115→1→114 而报「涨回去了」, 也会把「第121发」这种序数
+            # 当成存量。噪声大的检测器比没有更糟 —— 一条假账挤掉一条真账。
+            # 一章里只取第一个存量数, 后面的分项一律不看。
+            stock = re.compile(rf"(?:剩余|还剩|仅剩|尚有|只剩|剩下|剩)\s*"
+                               rf"(\d{{1,4}})\s*{unit}")
+            seen = []
+            for n in sorted(int(x) for x in co if str(x).isdigit()):
+                mm = stock.search(str(co[str(n)]))
+                if mm:
+                    seen.append((n, int(mm.group(1))))
+            # 「最后一发」被反复用也是账没记住 —— 数字检测抓不到它, 因为
+            # 根本没写存量。实测第 63、65、140、197 章各来了一次「最后一发」,
+            # 每次危机都是最后一发, 等于子弹永远打不完, 铁律要的
+            # 「越来越不舍得」就架空了。
+            LAST = re.compile(rf"最后(?:一|1)\s*{unit}")
+            lasts = [n for n in sorted(int(x) for x in co if str(x).isdigit())
+                     if LAST.search(str(co[str(n)]))]
+            if len(lasts) >= 2:
+                out.append(
+                    f"「最后一{unit}」出现了 {len(lasts)} 次"
+                    f"（第 {'、'.join(map(str, lasts[:6]))} 章）—— "
+                    f"每次危机都是最后一{unit}, 等于永远用不完。"
+                    f"要么写清具体还剩几{unit}, 要么就别再说「最后一{unit}」")
+            # 序数那一栏也要对账: 「第N发」+「剩M发」必须等于总数。
+            # 存量单调不代表账对 —— 实测存量 119→117→…→105 一路单调,
+            # 序号却写成「第47发, 剩112发」(第47章)、「第50发, 剩111发」
+            # (第50章): **章号漏进了序号栏**; 还有「第108发, 剩108发」
+            # (第68章): 剩余数漏进了序号栏。读者一眼就看出来。
+            total = self._finite_total(unit)
+            if total:
+                PAIR = re.compile(rf"第\s*(\d{{1,4}})\s*{unit}[^)）]{{0,12}}?"
+                                  rf"剩\s*(?:余\s*)?(\d{{1,4}})\s*{unit}")
+                mism = []
+                for n in sorted(int(x) for x in co if str(x).isdigit()):
+                    for m in PAIR.finditer(str(co[str(n)])):
+                        o, rem = int(m.group(1)), int(m.group(2))
+                        if o + rem != total:
+                            mism.append((n, o, rem, total - rem))
+                if mism:
+                    out.append(
+                        f"「第几{unit}」和「还剩几{unit}」对不上账（共 {total}{unit}）："
+                        + "；".join(f"第{n}章写「第{o}{unit}、剩{r}{unit}」"
+                                    f"（该是第{c}{unit}）"
+                                    for n, o, r, c in mism[:4])
+                        + f"。序号是**已经用掉的第几{unit}**，"
+                          f"不是章号也不是剩余数：第几{unit} + 还剩几{unit} = {total}")
+            bad = [(n, v) for (pn, pv), (n, v) in zip(seen, seen[1:]) if v > pv]
+            if bad:
+                out.append(
+                    f"「{unit}」这类不可再生的东西数字涨回去了："
+                    + "；".join(f"第{n}章写成 {v}{unit}" for n, v in bad[:4])
+                    + f"。铁律要求只减不增、每次消耗当场记账 —— "
+                      f"接下来这一批必须接着上一个数往下减，不许重新起数")
+        return out
+
     def outline_patterns(self, start: int, end: int) -> List[str]:
         """扫这一批**自己写出来的**东西有什么重复套路。
 
@@ -2511,67 +2590,9 @@ class Novelist:
                     f"第 {'、'.join(map(str, revived[:4]))} 章却又拿出来用 —— "
                     f"要么把它彻底当没有，要么在复活的那一章明写它是怎么回来的"
                     f"（谁捞的、谁修的、哪来的备用），不许悄悄复活")
-        # 铁律里点名「只减不增」的资源, 数字涨回去就是穿帮。
-        # 实测子弹账走成 118→117→116→**119**→1→119→116→1, 还写出过
-        # 「第 121 发」(总共才 120 发)。铁律白纸黑字要求「每次开枪当场记账」,
-        # 可没有任何东西在核对这个数 —— 台账管的是事件, 不管数量。
-        # 只查铁律自己声明了不可再生的单位, 别去管钱粮那类本来就该涨的。
-        for unit in self._finite_units():
-            # **只认存量, 不认分项和序数**。裸抓「N发」会把
-            #   「子弹剩余115发，其中1发已暴露原理，114发是最后的威慑」
-            # 读成 115→1→114 而报「涨回去了」, 也会把「第121发」这种序数
-            # 当成存量。噪声大的检测器比没有更糟 —— 一条假账挤掉一条真账。
-            # 一章里只取第一个存量数, 后面的分项一律不看。
-            stock = re.compile(rf"(?:剩余|还剩|仅剩|尚有|只剩|剩下|剩)\s*"
-                               rf"(\d{{1,4}})\s*{unit}")
-            seen = []
-            for n in sorted(int(x) for x in co if str(x).isdigit()):
-                mm = stock.search(str(co[str(n)]))
-                if mm:
-                    seen.append((n, int(mm.group(1))))
-            # 「最后一发」被反复用也是账没记住 —— 数字检测抓不到它, 因为
-            # 根本没写存量。实测第 63、65、140、197 章各来了一次「最后一发」,
-            # 每次危机都是最后一发, 等于子弹永远打不完, 铁律要的
-            # 「越来越不舍得」就架空了。
-            LAST = re.compile(rf"最后(?:一|1)\s*{unit}")
-            lasts = [n for n in sorted(int(x) for x in co if str(x).isdigit())
-                     if LAST.search(str(co[str(n)]))]
-            if len(lasts) >= 2:
-                out.append(
-                    f"「最后一{unit}」出现了 {len(lasts)} 次"
-                    f"（第 {'、'.join(map(str, lasts[:6]))} 章）—— "
-                    f"每次危机都是最后一{unit}, 等于永远用不完。"
-                    f"要么写清具体还剩几{unit}, 要么就别再说「最后一{unit}」")
-            # 序数那一栏也要对账: 「第N发」+「剩M发」必须等于总数。
-            # 存量单调不代表账对 —— 实测存量 119→117→…→105 一路单调,
-            # 序号却写成「第47发, 剩112发」(第47章)、「第50发, 剩111发」
-            # (第50章): **章号漏进了序号栏**; 还有「第108发, 剩108发」
-            # (第68章): 剩余数漏进了序号栏。读者一眼就看出来。
-            total = self._finite_total(unit)
-            if total:
-                PAIR = re.compile(rf"第\s*(\d{{1,4}})\s*{unit}[^)）]{{0,12}}?"
-                                  rf"剩\s*(?:余\s*)?(\d{{1,4}})\s*{unit}")
-                mism = []
-                for n in sorted(int(x) for x in co if str(x).isdigit()):
-                    for m in PAIR.finditer(str(co[str(n)])):
-                        o, rem = int(m.group(1)), int(m.group(2))
-                        if o + rem != total:
-                            mism.append((n, o, rem, total - rem))
-                if mism:
-                    out.append(
-                        f"「第几{unit}」和「还剩几{unit}」对不上账（共 {total}{unit}）："
-                        + "；".join(f"第{n}章写「第{o}{unit}、剩{r}{unit}」"
-                                    f"（该是第{c}{unit}）"
-                                    for n, o, r, c in mism[:4])
-                        + f"。序号是**已经用掉的第几{unit}**，"
-                          f"不是章号也不是剩余数：第几{unit} + 还剩几{unit} = {total}")
-            bad = [(n, v) for (pn, pv), (n, v) in zip(seen, seen[1:]) if v > pv]
-            if bad:
-                out.append(
-                    f"「{unit}」这类不可再生的东西数字涨回去了："
-                    + "；".join(f"第{n}章写成 {v}{unit}" for n, v in bad[:4])
-                    + f"。铁律要求只减不增、每次消耗当场记账 —— "
-                      f"接下来这一批必须接着上一个数往下减，不许重新起数")
+        # 有限资源的硬矛盾另有一条**每批都跑**的通道(见 outline_finite_check),
+        # 这里也带上, 让每 25 章的自审同样看得见。
+        out.extend(self.outline_finite_check())
         # 章名字数单一
         names = [(re.search(r"第\d+章\s*(.+)", str(co[str(n)]).splitlines()[0])
                   or [None, ""])[1].strip() for n in ks]
@@ -3971,13 +3992,26 @@ class Novelist:
             fresh = [f"{j['kind']}（**在接下来这一批里解决**）："
                      f"{_retarget(j['demand'])}" for j in jobs
                      if j.get("demand")][:3]
+            # 有限资源的硬矛盾**插在最前面**。它和重排单一样是零成本确定性检测,
+            # 但优先级更高: 风格问题(钩子雷同)晚 25 章再改无所谓, 子弹从 105 发
+            # 涨回 119 发是当场穿帮。原本它只挂在 outline_patterns 上, 而那条路
+            # 每 25 章才走一次、还要先经模型改写成 ≤4 条 —— 实测「126-150：3 个
+            # 模式 → 3 条纠偏」出来的全是钩子和章名, 弹药那两条一条没进。
+            try:
+                hard = self.outline_finite_check()[:2]
+            except Exception as e:
+                hard = []
+                self._log(f"台账核对跳过: {e}")
+            fresh = [f"台账对不上（**在接下来这一批里解决**）：{h}"
+                     for h in hard] + fresh
             if fresh:
                 st0 = self.p.state
                 guide = [g for g in (st0.get("outline_guide") or [])][:3]
                 st0["outline_guide"] = guide + fresh
                 self.p.save()
                 self._log(f"重排单并入纠偏 {len(fresh)} 条："
-                          + "；".join(j["kind"] for j in jobs[:3]))
+                          + "；".join(["台账对不上"] * len(hard)
+                                      + [j["kind"] for j in jobs[:3]]))
         return parts
 
     def step_chapter(self, n: int, on_delta=None, retry_on_low: int | None = None) -> Dict[str, Any]:

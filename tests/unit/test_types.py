@@ -1068,3 +1068,33 @@ def test_finite_units_reads_across_rules():
     # 没有任何一条声明不可再生, 就一个也不查 —— 钱粮兵马本来就该涨
     nv.hard_rules = lambda: ["主角开局有一百二十发子弹，随时能掏"]
     assert nv._finite_units() == []
+
+
+def test_finite_check_is_its_own_per_batch_channel():
+    """有限资源的硬矛盾要有一条独立的、每批都跑的通道。
+
+    原本这段只长在 outline_patterns 里, 而那条路每 25 章才被 outline_selfcheck
+    走一次、还要先经模型改写成 ≤4 条 —— 两道都会吃掉它:
+      · 节奏: 第145章的错账要等到第175章才轮到自审;
+      · 丢失: 实测「126-150：3 个模式 → 3 条纠偏」出来的全是钩子和章名。
+    风格问题晚 25 章再改无所谓, 子弹从 105 发涨回 119 发是当场穿帮。
+    """
+    from server.orchestrator import Novelist
+
+    nv = Novelist.__new__(Novelist)
+    nv.hard_rules = lambda: [
+        "【沙漠之鹰】主角带着一把沙漠之鹰、一百二十发子弹",
+        "子弹只减不增，造不出也补不了，每次开枪当场记账",
+    ]
+    nv.p = type("P", (), {"_load": lambda self, *a: {
+        "10": "剧情1：开了一枪（第1发，剩119发）",
+        "20": "剧情2：又开一枪，剩118发",
+        "30": "剧情3：掏枪再开（第30发，剩117发）",   # 章号漏进序号栏
+        "40": "剧情4：清点弹药，剩余119发",            # 涨回去了
+    }})()
+
+    hits = nv.outline_finite_check()
+    assert any("涨回去" in h for h in hits), "存量涨回去要报"
+    assert any("对不上账" in h and "第30章" in h for h in hits), "序号错要报"
+    # 账对得上的章不许被点名
+    assert not any("第10章" in h for h in hits)
