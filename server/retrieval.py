@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import re
 import time
 from pathlib import Path
@@ -82,12 +83,29 @@ class Retriever:
         except Exception:
             self.shared = {}
         self.facts_path = project_dir / "facts.json"
-        self.facts: Dict[str, Any] = {}
+        self._facts: Dict[str, Any] = {}
+        # 并发抓取时每个工作线程要用自己的一份考据表, 见 _parallel_fetch。
+        # **必须线程局部**: 直接往 self.facts 上赋值是实例级的, 4 个 worker
+        # 会互相覆盖 —— A 设成自己的副本, B 紧接着设成 B 的, A 再读就读到
+        # 了 B 的表; 某个线程的 finally 还会在别人干到一半时把表还原回去。
+        # 实测后果: _cover_hit 查的是别人的表, 覆盖率 0.471 已经过门槛的
+        # 主题照样又付费搜了一遍。
+        self._local = threading.local()
         if self.facts_path.exists():
             try:
-                self.facts = json.loads(self.facts_path.read_text(encoding="utf-8"))
+                self._facts = json.loads(self.facts_path.read_text(encoding="utf-8"))
             except Exception:
-                self.facts = {}
+                self._facts = {}
+
+    @property
+    def facts(self) -> Dict[str, Any]:
+        # 测试会用 __new__ 造壳实例, 两个属性都可能不在, 所以都走 getattr。
+        local = getattr(self, "_local", None)
+        return getattr(local, "facts", None) or self.__dict__.setdefault("_facts", {})
+
+    @facts.setter
+    def facts(self, v: Dict[str, Any]) -> None:
+        self._facts = v
 
     # ---------------- 事实卡 ----------------
     _last_raw = ""
@@ -590,13 +608,15 @@ class Retriever:
 
         def fetch(nd: Dict[str, str]):
             try:
-                # 复制一份事实表给工作线程用，避免它顺手写主表
-                saved, self_facts = self.facts, dict(self.facts)
+                # 复制一份事实表给工作线程用，避免它顺手写主表。
+                # 挂在 threading.local 上而不是 self —— self.facts 是实例级的,
+                # 4 个 worker 往同一个属性上赋值等于没隔离(见 __init__ 注释)。
+                self_facts = dict(self._facts)
+                self._local.facts = self_facts
                 try:
-                    self.facts = self_facts
                     rec = self.fact_for(nd)
                 finally:
-                    self.facts = saved
+                    self._local.facts = None
                 return nd["topic"], (self_facts.get(nd["topic"]) or rec)
             except Exception as e:
                 print(f"[retrieval] 「{nd.get('topic')}」查失败: {e}")

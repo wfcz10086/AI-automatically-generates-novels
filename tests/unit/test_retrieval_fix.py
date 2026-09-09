@@ -224,3 +224,39 @@ def test_have_list_ranks_by_relevance_not_name_length():
     assert rel(padded) <= rel(long_irrelevant) + 1e-9, "加长名字不该抬高相关性"
     assert len(set(padded) & ctx_ch) > len(set(long_irrelevant) & ctx_ch), (
         "老写法(未归一化的单字重合)会因为名字变长而给出更高的分")
+
+
+def test_worker_facts_are_thread_local():
+    """并发抓取时每个工作线程的考据表必须互不可见。
+
+    老写法 `self.facts = 自己的副本` 是**实例级**赋值, 4 个 worker 互相覆盖:
+    A 设成 copyA、B 紧接着设成 copyB, A 再读就读到 copyB; 某个线程的
+    finally 还会在别人干到一半时把表还原回去。后果是 _cover_hit 查的是
+    别人的表 —— 实测覆盖率 0.471 已经过门槛的主题照样又付费搜了一遍。
+    """
+    import threading
+    from server.retrieval import Retriever
+
+    r = Retriever.__new__(Retriever)
+    r._facts = {"主表": {"card": "主"}}
+    r._local = threading.local()
+
+    seen = {}
+    barrier = threading.Barrier(2)
+
+    def worker(name):
+        r._local.facts = {name: {"card": name}}
+        barrier.wait()          # 两个线程都设完了再读, 逼出串表
+        seen[name] = dict(r.facts)
+        r._local.facts = None
+
+    ts = [threading.Thread(target=worker, args=(n,)) for n in ("甲", "乙")]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+
+    assert set(seen["甲"]) == {"甲"}, "甲读到了别的线程的表"
+    assert set(seen["乙"]) == {"乙"}, "乙读到了别的线程的表"
+    # 线程收工后主表原封不动
+    assert set(r.facts) == {"主表"}
