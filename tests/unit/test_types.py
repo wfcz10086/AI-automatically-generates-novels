@@ -987,3 +987,16 @@ def test_repeated_last_one_is_flagged():
     co2 = dict(co); co2["6"] = mk(6, "他在算账")
     nv.p = type("P", (), {"_load": lambda self, f, d: co2})()
     assert not [x for x in nv.outline_patterns(1, 7) if "最后一" in x]
+
+
+def test_hard_rules_reach_worldbuilding_and_cast():
+    """铁律必须进世界观和人物卡的提示词。
+
+    踩过: 铁律第一条写着「他是本地地头蛇, 不许写成缩着脖子过日子的人」,
+    可这两步的提示词里根本没有铁律 —— 世界观写出「他的阶层天花板是商字的
+    结构性屈辱」, 人物卡写出「身份：生药铺老板 / 性格：隐忍 / 动机：从
+    待宰肥羊进化为操盘手」, 全和铁律正相反。人设一旦定歪, 往后三百章跟着歪。
+    """
+    import server.orchestrator as orc
+    for key in ("world_bible", "characters"):
+        assert "${hard_rules}" in orc.BUILTIN_PROMPTS[key], key
