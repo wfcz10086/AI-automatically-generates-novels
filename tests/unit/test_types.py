@@ -775,3 +775,19 @@ def test_patterns_flags_commentary_pleasure():
     co2 = {str(i + 1): mk(i + 1, good[i]) for i in range(6)}
     nv.p = type("P", (), {"_load": lambda self, f, d: co2})()
     assert not [x for x in nv.outline_patterns(1, 6) if "点评" in x], "写的是事件却误报"
+
+
+def test_reset_clears_cadence_markers():
+    """重开一轮时节奏标记必须一起清。
+
+    踩过: swept_at 留着上一轮的 60, 新一轮才排到 50, 于是「离上次巡检
+    不到 10 章」一路成立, 50 章一次巡检都没跑 —— 伏笔台账、承诺兑现、
+    张力推进的唯一生产者歇了整整一轮, 日志里看不出任何异常。
+    """
+    import pathlib, re
+    src = pathlib.Path("run_novel.py").read_text(encoding="utf-8")
+    m = re.search(r"for k in \((.*?)\):\s*\n\s*st\.pop", src, re.S)
+    assert m, "找不到重置清单"
+    keys = m.group(1)
+    for k in ("swept_at", "selfchecked_at", "recapped_at", "outline_guide"):
+        assert f'"{k}"' in keys, f"重置清单漏了 {k}"

@@ -79,9 +79,16 @@ def cmd_outline(a):
         for f in stale:
             (p.dir / f).unlink(missing_ok=True)
         st = p.state
+        # 节奏标记也是下游状态, 必须一起清。**漏了它是静默故障**:
+        # 实测重开一轮后 swept_at 还留着上一轮的 60, 而新一轮才排到 50,
+        # 于是「离上次巡检不到 10 章」一路成立, 50 章一次巡检都没跑 ——
+        # 伏笔台账、承诺兑现、张力推进的唯一生产者就这么歇了整整一轮,
+        # 日志里看不出任何异常。outline_guide 同理: 那是对上一轮章节的
+        # 纠偏, 套到新一轮的章节上是错的。
         for k in ("promises", "tensions", "orgs", "setbacks", "resolution_modes",
                   "pending_sweeps", "summaries", "timeline", "ledger", "power",
-                  "identity", "roles", "terms"):
+                  "identity", "roles", "terms",
+                  "swept_at", "selfchecked_at", "recapped_at", "outline_guide"):
             st.pop(k, None)
         st["done"], st["current"] = [], 0
         p.save()
