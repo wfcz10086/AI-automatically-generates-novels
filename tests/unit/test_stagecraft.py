@@ -356,3 +356,21 @@ def test_threads_prompt_carries_anti_fade_rule():
     assert "明写的事件" in p, "支线提示词漏了铁律"
     for bad in ("时间冲淡", "转身离去", "不了了之"):
         assert bad in p, f"没禁掉「{bad}」这类淡出写法"
+
+
+def test_starving_skips_not_yet_due_promises():
+    """没到点的承诺不算欠账。
+
+    踩过: 第 105 章报「玉佩这条已饿 95 章」, 可它的兑现判据写着
+    「第252章赵若锦被救时…第335章凭此证明身份」—— 人还没登场就催债。
+    误报会挤掉真正的欠账。
+    """
+    import server.stagecraft as sc
+    later = {"kind": "核心道具", "text": "玉佩要变成身份证明", "last_advanced": 0,
+             "done_when": "第252章赵若锦被救时玉佩是唯一皇室标志→第335章凭此证明"}
+    now = {"kind": "主线", "text": "武松的血债要有个了断", "last_advanced": 0,
+           "done_when": "两人当面把账算清"}
+    assert sc.starving([later, now], 105, gap=60) == sc.starving([now], 105, gap=60)
+    assert len(sc.starving([later, now], 105, gap=60)) == 1
+    # 到点之后照常报
+    assert len(sc.starving([later], 260, gap=60)) == 1

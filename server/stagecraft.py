@@ -516,12 +516,26 @@ def build_promises(*, outline: str, title: str = "",
     return out
 
 
+def due_at(p: Dict[str, Any]) -> int:
+    """这条承诺**最早该开始动**的章号 —— 判据里写明了就按判据。
+
+    没到点的事不算欠账。实测第 105 章时报「玉佩这条已饿 95 章」, 可它的
+    兑现判据白纸黑字写着「第252章赵若锦被救时…第335章凭此证明身份」——
+    人还没登场就催债, 模型不理它是对的, 而这种误报会挤掉真正的欠账。
+    """
+    nums = [int(x) for x in re.findall(r"第(\d{1,4})章",
+                                       str(p.get("done_when") or ""))]
+    return min(nums) if nums else 0
+
+
 def starving(promises: Sequence[Dict[str, Any]], upto: int,
              gap: int = 60) -> List[str]:
-    """已经 gap 章没被推进过的承诺。"""
+    """已经 gap 章没被推进过的承诺（没到点的不算）。"""
     out = []
     for p in promises or []:
         last = int(p.get("last_advanced") or 0)
+        if upto < due_at(p):
+            continue
         if upto - last >= gap:
             out.append(f"[{p.get('kind','')}] {p['text']}"
                        f"（末次推进第 {last} 章，已饿 {upto - last} 章）")
