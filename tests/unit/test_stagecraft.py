@@ -374,3 +374,19 @@ def test_starving_skips_not_yet_due_promises():
     assert len(sc.starving([later, now], 105, gap=60)) == 1
     # 到点之后照常报
     assert len(sc.starving([later], 260, gap=60)) == 1
+
+
+def test_silent_resolution_skips_never_seen():
+    """从未登场的人不算「静默消解」。
+
+    踩过: 赵若锦按总纲第 221 章才出现, 却在第 160 章被报成「已断 160 章」,
+    而且排在前面, 把真账(潘金莲末次出场第 103 章、已断 57 章)挤出了
+    纠偏清单 —— 清单只并前三条。
+    """
+    import server.stagecraft as sc
+    tens = [{"between": ["西门庆", "赵若锦"], "about": "帝姬是筹码还是人"},
+            {"between": ["西门庆", "潘金莲"], "about": "她要被当人，他只会当资产"}]
+    app = {"西门庆": list(range(1, 161)), "潘金莲": [50, 103]}   # 赵若锦从未出场
+    got = sc.silent_resolution(tens, app, upto=160, gap=25)
+    assert len(got) == 1, got
+    assert "潘金莲" in got[0] and "赵若锦" not in got[0]

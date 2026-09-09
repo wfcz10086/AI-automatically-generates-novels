@@ -459,6 +459,13 @@ def silent_resolution(tensions: Sequence[Dict[str, Any]],
                 continue
             cs = appearances.get(nm) or []
             last = cs[-1] if cs else 0
+            # **从未登场的人不算「消失」**。「静默消解」的语义是「本来在场,
+            # 然后悄悄没了」; 一个还没出场的角色(总纲安排他第 221 章才来)
+            # 被报成「已断 160 章」是纯误报, 而且它排在前面, 会把真账
+            # (潘金莲末次出场第 103 章、已断 57 章)挤出纠偏清单。
+            # 没登场是另一回事 —— 那属于「该来的还没来」, 不归这个检测器管。
+            if not cs:
+                continue
             if upto - last >= gap:
                 missing.append(f"{nm}（末次出场第 {last or 0} 章，已断 {upto - last} 章）")
         if missing:
