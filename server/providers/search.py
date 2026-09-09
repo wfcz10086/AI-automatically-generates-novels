@@ -86,6 +86,25 @@ class BaseSearch:
         except Exception:
             pass
 
+    def _log_query(self, query: str, hit: bool, n: int) -> None:
+        """把检索式本身落一行盘。
+
+        缓存文件名是查询的哈希, 光看目录**看不出查过什么** —— 想知道钱花在
+        哪些检索式上、哪些查了等于没查(命中 0 条), 只能靠这个日志。
+        写不进去就算了, 记账不该拖垮检索。
+        """
+        if not self._stats:
+            return
+        import time as _t
+        line = json.dumps({"at": _t.strftime("%F %T"), "q": query,
+                           "hit": hit, "n": n, "src": self.id}, ensure_ascii=False)
+        try:
+            with (self._stats.parent / "search_log.jsonl").open(
+                    "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except Exception:
+            pass
+
     def available(self) -> bool:
         raise NotImplementedError
 
@@ -104,6 +123,7 @@ class BaseSearch:
                 try:
                     got = json.loads(cp.read_text(encoding="utf-8"))
                     if len(got) >= k or len(got) >= self.CACHE_WIDTH:
+                        self._log_query(query, True, len(got[:k]))
                         return got[:k]
                 except Exception:
                     pass
@@ -112,6 +132,7 @@ class BaseSearch:
             raw = self._fetch(query, max(k * 3, self.CACHE_WIDTH))
         except Exception as e:
             print(f"[search:{self.id}] {query!r} 失败: {e}")
+            self._log_query(query, False, -1)
             return []
         out = []
         for it in raw:
@@ -128,6 +149,7 @@ class BaseSearch:
                 break
         if cp:
             cp.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+        self._log_query(query, False, len(out))
         return out[:k]
 
 
