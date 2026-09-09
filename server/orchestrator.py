@@ -2167,6 +2167,58 @@ class Novelist:
                 out.append(f"章名有 {c}/{len(ks)} 个是 {l} 字，长短一个模子")
         return out
 
+    def outline_recap(self, upto: int, limit: int = 3000) -> str:
+        """到此为止的**剧情概要** —— 每批重写一次。
+
+        与「每章一句话」分工：
+          · 一句话是**存储**：一章一条，永不丢，可查（第 47 章发生了什么）
+          · 概要是**视图**：把它们读成一段连贯的故事，模型顺着往下接更顺
+
+        关键是概要每次都从「上一版概要 + 全部一句话」**重新生成**，
+        不是自己迭代自己 —— 自迭代会复利式失真：第 100 章那次重写丢了
+        一个细节，之后永远找不回来，而且没人知道丢了什么。
+        从一句话重生成，丢失就不累积。
+        """
+        co = self.p._load("chapter_outlines.json", {})
+        ks = sorted(k for k in (int(x) for x in co) if k <= upto)
+        if len(ks) < 8:
+            return ""
+        lines = []
+        for k in ks:
+            s = str(co[str(k)])
+            mo = re.search(r"^\s*一句话\s*[:：]\s*(.+)$", s, re.M)
+            head = (re.search(r"第\d+章\s*(.+)", s.splitlines()[0]) or [None, ""])[1]
+            lines.append(f"{k}.{head.strip()[:12]}｜"
+                         + (mo.group(1).strip()[:56] if mo else ""))
+        prev = str(self.p.state.get("outline_recap") or "")
+        prompt = (
+            f"下面是一部长篇作品第 1-{upto} 章的**逐章一句话**，"
+            f"以及上一版的剧情概要。\n\n"
+            + (f"【上一版概要（写到第 {self.p.state.get('recap_at', 0)} 章）】\n{prev}\n\n"
+               if prev else "")
+            + f"【逐章一句话】\n{self.condense(chr(10).join(lines), 24000)}\n\n"
+            f"请重写一份**到第 {upto} 章为止的剧情概要**，{limit} 字以内：\n"
+            f"- 按卷或按阶段分段，每段说清这一段发生了什么、局面怎么变的\n"
+            f"- 保留**后面还要用到的东西**：埋下没收的线、欠着没还的账、"
+            f"现在谁在哪、手里有什么\n"
+            f"- 不要写成流水账，也不要写成评论；写成「一个人给另一个人讲到这儿的故事」\n"
+            f"- 上一版里有、这一版该保留的，不要漏掉；"
+            f"上一版里没有但一句话里有的重要转折，要补进去\n"
+            f"直接输出，无前言。")
+        try:
+            out = clean(call("polishing", prompt,
+                             max_tokens=int(self.g.get("max_tokens_outline") or 8000)).text)
+        except Exception as e:
+            self._log(f"剧情概要跳过: {e}")
+            return prev
+        if len(out) < 200:
+            return prev
+        st = self.p.state
+        st["outline_recap"], st["recap_at"] = out[:limit * 2], upto
+        self.p.save()
+        self._log(f"剧情概要更新至第 {upto} 章（{len(out)} 字）")
+        return out
+
     def outline_selfcheck(self, start: int, end: int) -> List[str]:
         """看完自己刚写的一批，给下一批写几条针对性的纠偏指令。
 
@@ -2851,7 +2903,11 @@ class Novelist:
             full.insert(0, body)
             budget -= len(body)
 
+        recap = str(self.p.state.get("outline_recap") or "")
         out = []
+        if recap:
+            out.append(f"【到第 {self.p.state.get('recap_at', 0)} 章为止的剧情概要"
+                       f"（先读这个，把故事读顺）】\n{recap}")
         if lines:
             # 按卷分组加小标题。三百多行平铺，模型多半只看头尾；
             # 同样的内容分成七八段带标题，读起来是结构而不是流水账。
@@ -3354,6 +3410,7 @@ class Novelist:
                 self.fix_outline_english(bad)
             self.outline_sweep(start, end)
             self.outline_selfcheck(start, end)
+            self.outline_recap(end)
         return parts
 
     def step_chapter(self, n: int, on_delta=None, retry_on_low: int | None = None) -> Dict[str, Any]:
