@@ -668,3 +668,21 @@ def test_genre_rules_no_char_splitting():
     out = nv.genre_rules()
     assert "核心爽点：熟悉感 × 意外感" in out
     assert "熟；悉" not in out and "原；作" not in out
+
+
+def test_seed_stamp_covers_pack_rules():
+    """包渲染结果变了, 下游资产必须判定为作废。
+
+    踩过: 修好「包字段整句被逐字拆开」后, 喂给模型的题材规范从乱码变成正常
+    句子, 但指纹只盖本书 meta, 用乱码规范生成的总纲原地留着继续往下长。
+    """
+    from server.orchestrator import Novelist
+    nv = Novelist.__new__(Novelist)
+    nv.p = type("P", (), {"meta": {}, "state": {}})()
+    nv.style = {}
+    nv.genre = {"name": "同人", "corePleasure": "甲"}
+    a = nv.seed_stamp()
+    nv.genre = {"name": "同人", "corePleasure": "乙"}
+    assert nv.seed_stamp() != a, "题材规范变了, 指纹必须跟着变"
+    nv.genre = {"name": "同人", "corePleasure": "甲"}
+    assert nv.seed_stamp() == a, "同样的规范必须给出同样的指纹"

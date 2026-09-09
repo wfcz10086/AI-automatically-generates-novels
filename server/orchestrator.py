@@ -1191,8 +1191,14 @@ class Novelist:
 
     def seed_stamp(self) -> str:
         import hashlib
-        raw = json.dumps({k: self.p.meta.get(k) for k in self._SEED_KEYS},
-                         ensure_ascii=False, sort_keys=True)
+        seed = {k: self.p.meta.get(k) for k in self._SEED_KEYS}
+        # 题材/文风包**渲染后的文本**也要进指纹, 不只是本书 meta。
+        # 踩过: 修好「包字段是整句时被逐字拆开」这个 bug 之后, 题材规范从
+        # 「核心爽点：熟；悉；感」变成了正常一句话 —— 可总纲是用乱码规范生成的,
+        # 指纹没变, 于是坏种子原地留着往下长。包本身改了也是同理。
+        # 盖渲染结果而不是包文件, 是因为真正喂给模型的就是这段文本。
+        seed["_rules"] = self.genre_rules() + "\n" + self.style_rules()
+        raw = json.dumps(seed, ensure_ascii=False, sort_keys=True)
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
     def stale_assets(self) -> List[str]:
