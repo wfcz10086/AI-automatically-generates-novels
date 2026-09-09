@@ -2336,16 +2336,23 @@ class Novelist:
         if not pats:
             return []
         co = self.p._load("chapter_outlines.json", {})
+        def _f(n: int, k: str, cap: int) -> str:
+            return (re.search(rf"^\s*{k}\s*[:：]\s*(.+)$", str(co[str(n)]), re.M)
+                    or [None, ""])[1][:cap]
+
+        # 样本必须**带上被扫出问题的那个字段**。原先只给章名和钩子, 于是
+        # 机器报「爽点写成了评语」, 自审的模型却看不到一条爽点原文,
+        # 只能写出「注意爽点要具体」这种照着做不了的话。
         sample = "\n".join(
-            f"第{n}章 {str(co[str(n)]).splitlines()[0][:24]}｜钩子："
-            + (re.search(r"^\s*章末钩子\s*[:：]\s*(.+)$", str(co[str(n)]), re.M)
-               or [None, ""])[1][:60]
+            f"第{n}章 {str(co[str(n)]).splitlines()[0][:24]}"
+            f"｜钩子：{_f(n, '章末钩子', 60)}"
+            f"｜爽点：{_f(n, '爽点', 60)}"
             for n in range(start, end + 1) if str(n) in co)
         prompt = (
             "你在给一部长篇的排纲做**写法自审**。下面是刚排好的一批章节，"
             "以及机器扫出来的重复模式。\n\n"
             f"【扫出来的模式】\n" + "\n".join(f"- {x}" for x in pats) +
-            f"\n\n【这一批的章名与钩子】\n{self.condense(sample, 4000)}\n\n"
+            f"\n\n【这一批的章名、钩子与爽点】\n{self.condense(sample, 5000)}\n\n"
             "请给下一批写 2-4 条**纠偏指令**。要求：\n"
             "- 具体到能照着做：说清「改成什么」，不是「注意多样性」这种没法执行的话\n"
             "- 带数量：比如「本批至少 5 章的钩子改用『局面翻』型："
