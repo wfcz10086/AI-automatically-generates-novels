@@ -537,9 +537,20 @@ def due_at(p: Dict[str, Any]) -> int:
 
 def starving(promises: Sequence[Dict[str, Any]], upto: int,
              gap: int = 60) -> List[str]:
-    """已经 gap 章没被推进过的承诺（没到点的不算）。"""
+    """已经 gap 章没被推进过的承诺（没到点的、以及铁律，都不算）。
+
+    **铁律必须排除**。铁律是被强制塞进承诺清单的常驻约束(见 promises()),
+    塞进来是为了让 unfulfilled() 能查「这件事到底发生过没有」—— 那是对的。
+    可「最近推进过没有」对常驻约束根本不成立: 「每一章都要有一个当场兑现的
+    小胜」不存在推进一次就打勾, last_advanced 永远停在 0/40, 于是**每一批
+    都报挨饿**。而纠偏单只有 3 个名额, 实测 131-140 那批三个名额全被铁律
+    占满(「承诺挨饿；承诺挨饿；承诺挨饿」), 真正挨饿的承诺一条都露不出来。
+    噪声检测器比没有更糟。
+    """
     out = []
     for p in promises or []:
+        if p.get("kind") == "铁律":
+            continue
         last = int(p.get("last_advanced") or 0)
         if upto < due_at(p):
             continue

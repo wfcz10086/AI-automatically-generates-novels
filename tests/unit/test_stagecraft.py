@@ -390,3 +390,29 @@ def test_silent_resolution_skips_never_seen():
     got = sc.silent_resolution(tens, app, upto=160, gap=25)
     assert len(got) == 1, got
     assert "潘金莲" in got[0] and "赵若锦" not in got[0]
+
+
+def test_starving_skips_iron_rules_but_unfulfilled_still_covers_them():
+    """铁律不参与「挨饿」判定, 但仍要参与「到底兑现过没有」判定。
+
+    铁律是被强制塞进承诺清单的**常驻约束**: 「每一章都要有一个当场兑现的
+    小胜」没有「推进一次就打勾」这回事, last_advanced 永远停在 0, 于是每一
+    批都报挨饿。实测 131-140 那批纠偏单 3 个名额被铁律占满
+    (「承诺挨饿；承诺挨饿；承诺挨饿」), 真挨饿的承诺一条都露不出来。
+    """
+    from server.stagecraft import starving, unfulfilled
+
+    rule = {"id": 900, "kind": "铁律", "text": "每一章都要有一个当场兑现的小胜",
+            "done_when": "每一章都要有一个当场兑现的小胜", "done_at": 0,
+            "keywords": [], "last_advanced": 0}
+    real = {"id": 1, "kind": "人物", "text": "雷横最终死在城门下",
+            "done_when": "雷横死", "done_at": 0,
+            "keywords": [], "last_advanced": 10}
+
+    hits = starving([rule, real], upto=140, gap=60)
+    assert len(hits) == 1, "铁律不该报挨饿"
+    assert "雷横" in hits[0], "真承诺必须还能报出来"
+
+    # unfulfilled 那一路照旧覆盖铁律 —— 它问的是「发生过没有」, 对铁律成立
+    miss = unfulfilled([rule, real], upto=300, total=346)
+    assert any("小胜" in m for m in miss), "铁律仍要参与兑现判定"
