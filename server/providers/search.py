@@ -112,7 +112,23 @@ class BaseSearch:
         raise NotImplementedError
 
     # --- 通用: 缓存 + 清洗 ---
+    @staticmethod
+    def plain(query: str) -> str:
+        """把检索式剥成朴素关键词串。
+
+        放在 search() 这个**咽喉处**而不是某一条生成路径上 —— 检索式有好几个
+        来源(规划、重写、兜底正则), 在其中一条上清洗, 另一条照样漏。实测在
+        plan_queries 里剥过一次, 查询重写那条路仍然发出了
+        `宋代 "寄留" OR "托寄" OR "寄藏" 争讼 案例`。
+        引号和布尔词对博查这类接口只是噪声词, 还会顶掉真正的关键词。
+        """
+        q = re.sub("[\"\u201c\u201d\u2018\u2019']", " ", query or "")
+        q = re.sub(r"(?<=\s)(?:或|OR|AND|NOT|与)(?=\s)", " ", q)
+        q = re.sub(r"[+~^*]|(?<=\s)-(?=\S)", " ", q)
+        return re.sub(r"\s+", " ", q).strip()
+
     def search(self, query: str, k: int = 6) -> List[Dict[str, Any]]:
+        query = self.plain(query)
         cp = None
         if self._cache:
             # 缓存键**不含 k**：同一条检索式要 5 条和要 6 条，在按次计费的源上

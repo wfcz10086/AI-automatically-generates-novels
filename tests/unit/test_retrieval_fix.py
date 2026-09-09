@@ -89,3 +89,18 @@ def test_plan_queries_shows_existing_topics():
     assert "已经查过" in p_ and "阳谷东平东京地理" in p_
     assert "宋代郓州济州行政隶属" in p_
     assert "没卡片的主题" not in p_, "没卡片的不该算已查过"
+
+
+def test_search_strips_syntax_at_the_choke_point():
+    """清洗要放在 search() 这个咽喉处, 不能只放在某一条生成路径上。
+
+    实测在 plan_queries 里剥过一次引号和布尔词, 查询重写那条路仍然发出了
+    `宋代 "寄留" OR "托寄" OR "寄藏" 争讼 案例`。
+    """
+    from server.providers.search import BaseSearch
+    got = BaseSearch.plain('宋代 "寄留" OR "托寄" OR "寄藏" 争讼 案例')
+    assert '"' not in got and " OR " not in got
+    assert got == "宋代 寄留 托寄 寄藏 争讼 案例", got
+    # 正常检索式不能被改坏
+    keep = "宋代 仵作 检验不实 杖 徒"
+    assert BaseSearch.plain(keep) == keep
