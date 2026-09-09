@@ -3579,6 +3579,28 @@ class Novelist:
                 st0 = self.p.state
                 st0[key] = end
                 self.p.save()
+
+            # 巡检把「赢法单一／阶段没挫败／支线写法重复／承诺挨饿」记进了台账,
+            # 可 outline_repairs() **只有手动脚本 replan.py 在调用** —— 排纲跑
+            # 的时候从没人问过它, 这些检测全在空转。又一次「有生产者没消费者」。
+            # 它是纯确定性的(零模型调用), 每批算一次不花钱, 结论并进纠偏清单
+            # 直接喂给下一批。
+            # 只并「换个写法」类的要求, 不并「重排第 X 章」—— 已经排好的章
+            # 在这条回路里没法回头改, 说了也做不到, 反而挤占提示词。
+            try:
+                jobs = self.outline_repairs(end)
+            except Exception as e:
+                jobs = []
+                self._log(f"重排单跳过: {e}")
+            fresh = [f"{j['kind']}：{j['demand']}" for j in jobs
+                     if j.get("demand")][:3]
+            if fresh:
+                st0 = self.p.state
+                guide = [g for g in (st0.get("outline_guide") or [])][:3]
+                st0["outline_guide"] = guide + fresh
+                self.p.save()
+                self._log(f"重排单并入纠偏 {len(fresh)} 条："
+                          + "；".join(j["kind"] for j in jobs[:3]))
         return parts
 
     def step_chapter(self, n: int, on_delta=None, retry_on_low: int | None = None) -> Dict[str, Any]:
