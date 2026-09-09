@@ -283,8 +283,18 @@ _trace_seq = [0]
 def bind_trace(d: Optional[Path]) -> None:
     global _TRACE_DIR
     _TRACE_DIR = d
-    if d:
-        d.mkdir(parents=True, exist_ok=True)
+    if not d:
+        return
+    d.mkdir(parents=True, exist_ok=True)
+    # 序号要接着已有的往下走。进程重启后从 1 重来的话，新记录会**覆盖**
+    # 同号的旧记录 —— 追踪列表里既看不到新的（被排在中间），
+    # 也丢了旧的，正好在最需要回溯的时候（崩溃重启后）失效。
+    try:
+        got = [int(f.name.split("_")[0]) for f in d.glob("*.json")
+               if f.name.split("_")[0].isdigit()]
+        _trace_seq[0] = max(got) if got else 0
+    except Exception:
+        _trace_seq[0] = 0
 
 
 def _trace(profile: str, prompt: str, kw: Dict[str, Any], out: str,
