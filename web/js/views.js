@@ -1193,7 +1193,14 @@ const SettingsView = {
         <div class="row">${num('l-ch','单本章节上限',l.max_chapters)}
           ${num('l-w','单本总字数上限',l.max_total_words)}</div></div>
       <div class="card"><div class="card-head"><div class="card-title">生成参数</div></div>
-        <div class="row">${num('g-batch','每批细纲章数',g.outline_batch)}
+        <div class="row">${num('g-bmax','每批细纲章数上限',g.outline_batch_max,
+            '小批次产出率高得多：25 章一批时模型会漏写字段（实测 16 章里 6 章漏了「一句话」，整章被丢，产出率 40%），5 章一批拿得住，丢了也只丢 5 章')}
+          ${num('g-batch','每批细纲章数（0=按输出上限自动算）',g.outline_batch)}</div>
+        <div class="row">${num('g-sweep','巡检间隔（章）',g.sweep_every,
+            '伏笔／承诺／张力／支线／阶梯／赢法／挫败／台账')}
+          ${num('g-recap','剧情概要重写间隔（章）',g.recap_every,'最贵，一次要吐三千多字')}
+          ${num('g-selfck','写法自审间隔（章）',g.selfcheck_every,'要看够多的章才看得出套路')}</div>
+        <div class="row">
           <div class="field"><label>记忆体预算 (token)</label>
           <input class="input" id="g-ctx" value="${esc(String(g.context_budget))}">
           <div class="hint">填 <code>auto</code> 按网关窗口自动推导；或填数字。限定 ${fmtNum(g.min_context_budget)}–${fmtNum(g.max_context_budget)}</div></div></div>
@@ -1285,6 +1292,8 @@ const SettingsView = {
       const s = JSON.parse(JSON.stringify(S.settings));
       const v = id => +$(id).value;
       Object.assign(s.generation, {chapter_words_min:v('#g-min'), chapter_words_max:v('#g-max'),
+        outline_batch_max:v('#g-bmax'), sweep_every:v('#g-sweep'),
+        recap_every:v('#g-recap'), selfcheck_every:v('#g-selfck'),
         outline_batch:v('#g-batch'),
         context_budget: ($('#g-ctx').value.trim().toLowerCase() === 'auto'
                          ? 'auto' : (+$('#g-ctx').value || 'auto')),

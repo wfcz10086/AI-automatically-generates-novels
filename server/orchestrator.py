@@ -3437,9 +3437,26 @@ class Novelist:
                    if str(n) in outlines and self.outline_english(outlines[str(n)])]
             if bad:
                 self.fix_outline_english(bad)
-            self.outline_sweep(start, end)
-            self.outline_selfcheck(start, end)
-            self.outline_recap(end)
+            # 巡检／自审／概要都不便宜（概要一次要吐三千多字），批次小了之后
+            # 每批只多五章，状态和套路都还没变，每批重跑一遍纯属浪费。
+            # 改成按「距上次跑过多少章」触发，与批量大小解耦。
+            st0 = self.p.state
+            for key, cfg, fn, span in (
+                    ("swept_at", "sweep_every", self.outline_sweep, True),
+                    ("selfchecked_at", "selfcheck_every", self.outline_selfcheck, True),
+                    ("recapped_at", "recap_every", self.outline_recap, False)):
+                every = int(self.g.get(cfg) or 1)
+                last = int(st0.get(key) or 0)
+                if end - last < every and end < int(
+                        self.p.meta.get("target_chapters") or 0):
+                    continue
+                try:
+                    fn(last + 1, end) if span else fn(end)
+                except Exception as e:
+                    self._log(f"{cfg} 跳过: {e}")
+                st0 = self.p.state
+                st0[key] = end
+                self.p.save()
         return parts
 
     def step_chapter(self, n: int, on_delta=None, retry_on_low: int | None = None) -> Dict[str, Any]:
