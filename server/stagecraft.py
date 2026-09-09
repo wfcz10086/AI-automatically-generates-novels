@@ -499,6 +499,12 @@ def build_promises(*, outline: str, title: str = "",
             "id": i + 1,
             "kind": str(p.get("kind") or "")[:8],
             "text": str(p["text"])[:120],
+            # 兑现判据。只记「推进到第几章」是不够的 —— 实测某书铁律写明
+            # 「一百二十发必须有被打出去的时候」，进了承诺清单，巡检每批都报
+            # 「推进了」（因为点验一次弹单也算推进），全书 346 章一发没开。
+            # 「推进」与「兑现」是两回事，必须分开记。
+            "done_when": str(p.get("done_when") or "")[:120],
+            "done_at": 0,
             "keywords": [str(x)[:12] for x in (p.get("keywords") or [])][:6],
             "last_advanced": 0,
         })
@@ -514,6 +520,27 @@ def starving(promises: Sequence[Dict[str, Any]], upto: int,
         if upto - last >= gap:
             out.append(f"[{p.get('kind','')}] {p['text']}"
                        f"（末次推进第 {last} 章，已饿 {upto - last} 章）")
+    return out
+
+
+def unfulfilled(promises: Sequence[Dict[str, Any]], upto: int,
+                total: int = 0) -> List[str]:
+    """有兑现判据、却始终没兑现的承诺。
+
+    与「挨饿」不同：挨饿看的是久没推进，这里看的是**到底有没有发生过那件事**。
+    一条承诺可以章章都在推进，却一次都没兑现 —— 那把从第一章挂到最后一章、
+    一发没开的枪就是这么来的。
+    """
+    out = []
+    for p in promises or []:
+        dw = str(p.get("done_when") or "").strip()
+        if not dw or p.get("done_at"):
+            continue
+        # 全书快走完了才报，中途没兑现是正常的
+        if total and upto < total * 0.75:
+            continue
+        out.append(f"[{p.get('kind','')}] {str(p.get('text',''))[:50]}"
+                   f" —— 判据「{dw[:60]}」至今没发生过")
     return out
 
 
@@ -549,6 +576,7 @@ LADDER_KINDS: List[Dict[str, str]] = [
 
 def build_ladders(*, outline: str, total_chapters: int, title: str = "",
                   genre: Optional[Dict[str, Any]] = None,
+                  extra_kinds: Optional[Sequence[Dict[str, str]]] = None,
                   ask: Callable[[str], str]) -> Dict[str, List[Dict[str, Any]]]:
     """按本书总纲实例化三条阶梯。
 
@@ -559,10 +587,15 @@ def build_ladders(*, outline: str, total_chapters: int, title: str = "",
         return {}
     spec = (genre or {}).get("ledgers") or {}
     power_hint = ((spec.get("power") or {}).get("hint") or "").strip()
+    # 额外的线：题材包的 power 槽常把两件事塞在一起（「战力与身份」），
+    # 模型只会挑一半去排 —— 实测某书 8 级阶梯里 5 级是商业地位，
+    # 武功线排到第 3 级就停了，而武功恰恰是本书点名要兑现的成长线。
+    # 所以点名的线要能**独立成一条**，不跟别人挤一个槽。
+    all_kinds = list(LADDER_KINDS) + list(extra_kinds or [])
     kinds = "\n".join(f"- {k['label']}（{k['key']}）：{k['hint']}"
                       + (f"\n  本题材的口径：{power_hint}"
                          if k["key"] == "power" and power_hint else "")
-                      for k in LADDER_KINDS)
+                      for k in all_kinds)
     prompt = (
         f"下面是长篇作品《{title}》的总纲，全书 {total_chapters} 章。\n\n"
         f"为它排三条**随进度演进的阶梯**：\n{kinds}\n\n"
@@ -573,11 +606,12 @@ def build_ladders(*, outline: str, total_chapters: int, title: str = "",
         f"只输出 JSON，不要代码围栏：\n"
         '{"power":[{"stage":"这一级是什么","by":50,"check":"怎么验证"}],'
         '"pleasure":[...],"persona":[...]}\n'
+        f"（上面列出的每一条线都要给，一条都不能省）\n"
         f"by 是章号（1-{total_chapters}），必须递增。\n\n"
         f"#总纲\n{outline[:12000]}")
     data = parse_json(ask(prompt))
     out: Dict[str, List[Dict[str, Any]]] = {}
-    for k in (x["key"] for x in LADDER_KINDS):
+    for k in (x["key"] for x in all_kinds):
         rungs = []
         for r in (data.get(k) or [])[:8]:
             if not isinstance(r, dict) or not str(r.get("stage") or "").strip():
@@ -612,11 +646,12 @@ def ladder_next(rungs: Sequence[Dict[str, Any]], n: int) -> Optional[Dict[str, A
     return None
 
 
-def ladder_brief(ladders: Dict[str, List[Dict[str, Any]]], n: int) -> str:
+def ladder_brief(ladders: Dict[str, List[Dict[str, Any]]], n: int,
+                 extra_kinds: Optional[Sequence[Dict[str, str]]] = None) -> str:
     """注入排纲/写作的阶梯约束块。"""
     if not ladders:
         return ""
-    lab = {k["key"]: k["label"] for k in LADDER_KINDS}
+    lab = {k["key"]: k["label"] for k in list(LADDER_KINDS) + list(extra_kinds or [])}
     lines = ["【三条线当前该走到哪一步（按全书进度，不许原地踏步）】"]
     for key, rungs in ladders.items():
         cur, nxt = ladder_rung(rungs, n), ladder_next(rungs, n)

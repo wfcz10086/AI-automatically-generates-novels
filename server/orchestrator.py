@@ -1068,6 +1068,21 @@ class Novelist:
         return [str(x).strip() for x in (self.p.meta.get("hard_rules") or [])
                 if str(x).strip()][:12]
 
+    def extra_ladders(self) -> List[Dict[str, str]]:
+        """本书额外的成长线。
+
+        题材包的 power 槽常把两件事塞在一起（同人包写的是「战力与身份」），
+        模型只会挑一半去排阶梯 —— 实测某书 8 级里 5 级是商业地位，
+        武功排到第 3 级就停，而武功恰恰是这本书点名要兑现的线。
+        点名的线要能独立成槽，不跟别人挤。
+        """
+        out = []
+        for x in (self.p.meta.get("extra_ladders") or [])[:3]:
+            if isinstance(x, dict) and x.get("key") and x.get("label"):
+                out.append({"key": str(x["key"])[:16], "label": str(x["label"])[:12],
+                            "hint": str(x.get("hint") or "")[:160]})
+        return out
+
     def dials(self) -> Dict[str, int]:
         """本书的两个旋钮：本书设置优先于全局默认。"""
         return dl.normalize({**(self.cfg.get("dials") or {}),
@@ -1147,6 +1162,7 @@ class Novelist:
         total = int(self.p.meta.get("target_chapters") or 0) or 100
         got = sc.build_ladders(outline=outline, total_chapters=total,
                                title=self.p.meta.get("title", ""), genre=self.genre,
+                               extra_kinds=self.extra_ladders(),
                                ask=self._ask_planner)
         if got:
             self.p.write("ladders.json", json.dumps(got, ensure_ascii=False, indent=2))
@@ -2236,8 +2252,13 @@ class Novelist:
                 f"{i+1}. （第{f['planted']}章埋）{f['text'][:50]}"
                 for i, f in enumerate(cands)))
         if proms:
-            blocks.append("【总纲承诺清单】\n" + "\n".join(
-                f"P{p['id']}. [{p.get('kind','')}] {p['text'][:60]}" for p in proms))
+            blocks.append("【总纲承诺清单（带兑现判据的，要分清「推进」与「兑现」）】\n"
+                          + "\n".join(
+                f"P{p['id']}. [{p.get('kind','')}] {p['text'][:60]}"
+                + (f"｜兑现判据：{p['done_when'][:60]}"
+                   f"{'（已兑现于第%d章）' % p['done_at'] if p.get('done_at') else ''}"
+                   if p.get("done_when") else "")
+                for p in proms))
         if tens:
             blocks.append("【关系张力】\n" + "\n".join(
                 f"T{i+1}. {' ↔ '.join(x['between'])}：{x['about'][:50]}"
@@ -2260,12 +2281,15 @@ class Novelist:
             + "\n\n".join(blocks) +
             "\n\n请判断四件事，只输出 JSON，不要代码围栏：\n"
             '{"plant":[{"ch":163,"text":"某处埋下的悬念，一句话"}],'
-            '"resolve":[2,5],"advanced":[1,4],"touched":[1],"ladder":["power"],"modes":["outwit"],"setbacks":[{"ch":88,"what":"押错了船期，赔掉半年脚费"}],"threads":[{"id":1,"how":"一句话说清这条线这次是怎么露的面：""在什么场合、由谁带出、发生了什么事"}]}\n'
+            '"resolve":[2,5],"advanced":[1,4],"fulfilled":[{"id":3,"ch":88}],"touched":[1],"ladder":["power"],"modes":["outwit"],"setbacks":[{"ch":88,"what":"押错了船期，赔掉半年脚费"}],"threads":[{"id":1,"how":"一句话说清这条线这次是怎么露的面：""在什么场合、由谁带出、发生了什么事"}]}\n'
             "- plant：本批**新埋下**的悬念/伏笔（最多 6 条，写清是哪一章埋的）\n"
             "- resolve：本批**明确兑现或解开**的伏笔编号。只是提到、只是继续铺垫、"
             "只是相关，都不算\n"
             "- advanced：本批**实质推进**了的承诺编号（P 后面的数字）。"
             "只是提了一嘴不算，要真往前走了一步\n"
+            "- fulfilled：本批里**兑现判据真的发生了**的承诺，给 {id, ch}。"
+            "推进≠兑现：判据写「必须开枪」，那点验一百次弹单也不算兑现，"
+            "只有真开了那一枪才算。没有就给空数组\n"
             "- touched：本批**正面碰到**的张力编号（T 后面的数字）。"
             "双方同框、或一方为此付出代价、或明写了它的进展\n"
             "- ladder：本批**实质推进**了的线（power／pleasure／persona）。"
@@ -2323,6 +2347,18 @@ class Novelist:
             self.p.mem.resolve_foreshadow(c["id"], end)
             got["resolve"] += 1
         by_id = {p["id"]: p for p in proms}
+        got["fulfilled"] = 0
+        for f in (data.get("fulfilled") or [])[:6]:
+            if not isinstance(f, dict):
+                continue
+            try:
+                pr = by_id.get(int(f.get("id")))
+                ch = int(f.get("ch") or end)
+            except (TypeError, ValueError):
+                continue
+            if pr and not pr.get("done_at"):
+                pr["done_at"] = max(start, min(end, ch))
+                got["fulfilled"] += 1
         for i in (data.get("advanced") or [])[:10]:
             try:
                 pr = by_id.get(int(i))
@@ -2398,7 +2434,8 @@ class Novelist:
         self._log(f"细纲巡检 {start}-{end}：埋伏笔 {got['plant']}／回收 {got['resolve']}"
                   f"／推进承诺 {got['advanced']}／触及张力 {got['touched']}"
                   f"／推进阶梯 {got['ladder']}／推进支线 {got['threads']}"
-                  f"／赢法 {got.get('modes', 0)}／挫败 {got.get('setbacks', 0)}")
+                  f"／赢法 {got.get('modes', 0)}／挫败 {got.get('setbacks', 0)}"
+                  f"／兑现 {got.get('fulfilled', 0)}")
         return got
 
     _DECLARE = re.compile(r"^\s*新角色\s*[:：]\s*(.+)$", re.M)
@@ -2815,7 +2852,7 @@ class Novelist:
             cons.append("【下面这些支线已经超过自己的节奏没露面，本批必须让它们各推进一步】\n"
                         + "\n".join(f"- {x}" for x in due))
         lad = self.ladders()
-        lb = sc.ladder_brief(lad, start)
+        lb = sc.ladder_brief(lad, start, self.extra_ladders())
         if lb:
             cons.append(lb)
         stalled = sc.ladder_stalled(lad, start)
