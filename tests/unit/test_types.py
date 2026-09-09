@@ -458,7 +458,8 @@ def test_outline_field_contract_is_single_source():
     from server.prompt_compiler import (OUTLINE_FIELDS, OUTLINE_REQUIRED,
                                         outline_format_block,
                                         compile_outline_prompt)
-    assert OUTLINE_REQUIRED == ["承接", "出场角色", "剧情1", "重场", "爽点", "章末钩子"]
+    assert OUTLINE_REQUIRED == ["承接", "出场角色", "剧情1", "重场", "爽点",
+                                "章末钩子", "一句话"]
 
     block = outline_format_block(6)
     for f in OUTLINE_REQUIRED:
@@ -476,7 +477,8 @@ def test_incomplete_chapter_is_rejected():
     import re
     from server.prompt_compiler import OUTLINE_REQUIRED
     good = ("第1章 甲\n承接：接住上一章\n出场角色：A、B、C\n剧情1：出事了\n"
-            "重场：剧情1\n爽点：翻盘\n章末钩子：有人来报")
+            "重场：剧情1\n爽点：翻盘\n章末钩子：有人来报\n"
+            "一句话：主角当堂翻案，县尉的花押被当众念出")
     bad = "第1章 甲\n承接：接住上一章\n出场角色：A、B\n剧情1：出事了\n剧情6：钩子：有人来报"
 
     def lack(body):
@@ -484,7 +486,7 @@ def test_incomplete_chapter_is_rejected():
                 if not re.search(rf"^\s*{f}\s*[:：]\s*\S", body, re.M)]
 
     assert lack(good) == []
-    assert set(lack(bad)) == {"重场", "爽点", "章末钩子"}
+    assert set(lack(bad)) == {"重场", "爽点", "章末钩子", "一句话"}
 
 
 def test_dials_are_orthogonal_and_drive_mechanisms():
@@ -585,3 +587,30 @@ def test_character_card_gap_detection():
     assert nv._card_gaps(full) == []
     gaps = nv._card_gaps(cut)
     assert gaps and "乙" in gaps[0]
+
+
+def test_one_liner_prefers_model_written():
+    """一句话优先用模型自己写的，不靠机械抽取。
+
+    从细纲里抠「重场那一拍」当摘要，依赖重场标得准；标错了摘要就抓错重点，
+    而且会一直错下去（下一批看到的就是那句话）。让模型边写边压更靠谱 ——
+    它比抽取更清楚这一章的重点，代价是同一次调用多输出四十来字。
+    """
+    import json as _j, tempfile, pathlib as _p, re
+    from server.orchestrator import Novelist, Project
+    d = _p.Path(tempfile.mkdtemp()) / "p"
+    (d / "chapters").mkdir(parents=True)
+    (d / "project.json").write_text(_j.dumps(
+        {"title": "T", "type_id": "novel", "genre_id": "", "style_id": "",
+         "target_chapters": 10, "target_words": 30000, "fields": {}},
+        ensure_ascii=False), encoding="utf-8")
+    (d / "state.json").write_text('{"done": [], "current": 0}', encoding="utf-8")
+    withline = ("第1章 甲\n承接：x\n出场角色：A\n剧情1：机械抽取会抓到这句\n"
+                "重场：剧情1\n爽点：x\n章末钩子：x\n一句话：模型自己写的那句才是重点")
+    without = ("第2章 乙\n承接：x\n出场角色：A\n剧情1：只能回退到抽取这句\n"
+               "重场：剧情1\n爽点：x\n章末钩子：x")
+    (d / "chapter_outlines.json").write_text(
+        _j.dumps({"1": withline, "2": without}, ensure_ascii=False), encoding="utf-8")
+    out = Novelist(Project(str(d))).outline_digest(3)
+    assert "模型自己写的那句才是重点" in out
+    assert "只能回退到抽取这句" in out          # 老章节仍要有代表，不能丢

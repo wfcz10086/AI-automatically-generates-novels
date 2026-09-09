@@ -2810,10 +2810,19 @@ class Novelist:
             return ""
 
         def one_line(k: int) -> str:
-            """一章一句话：章名 + 重场那一拍（重场是本章分量最重的一拍）。"""
+            """一章一句话。
+
+            **优先用模型自己写的那句**（细纲的「一句话」字段）——
+            边写边压，它比机械抽取更清楚这一章的重点在哪，
+            也不依赖「重场」标得准不准。
+            没有那一栏的（这条字段之前排的章）才回退到抽取。
+            """
             s = str(co[str(k)])
             head = (re.search(r"第\d+章\s*(.+)", s.splitlines()[0])
                     or [None, ""])[1].strip()[:14]
+            mo = re.search(r"^\s*一句话\s*[:：]\s*(.+)$", s, re.M)
+            if mo and len(mo.group(1).strip()) >= 8:
+                return f"{k}.{head}｜{mo.group(1).strip()[:56]}"
             core = ""
             mb = re.search(r"重场\s*[:：]\s*剧情\s*(\d)", s)
             if mb:
