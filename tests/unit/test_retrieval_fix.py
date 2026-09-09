@@ -104,3 +104,21 @@ def test_search_strips_syntax_at_the_choke_point():
     # 正常检索式不能被改坏
     keep = "宋代 仵作 检验不实 杖 徒"
     assert BaseSearch.plain(keep) == keep
+
+
+def test_existing_topics_picked_by_relevance():
+    """已查主题按相关性挑, 不是按时间取尾巴。
+
+    踩过: 攒到 769 个主题时只给最后 40 个, 而「阳谷县隶属哪个州」是前
+    60 章查的, 早滑出窗口 —— 又查了第四遍, 同一件事存成 14 个主题名。
+    """
+    from server.retrieval import Retriever
+    rt = Retriever.__new__(Retriever)
+    seen = {}
+    rt.plan = lambda q: seen.setdefault("p", q) or "地理|某某"
+    rt.era, rt.shared, rt.topics = "北宋", {}, {}
+    old = {"阳谷县行政隶属": {"card": "属东平府"}}
+    noise = {f"无关主题{i}": {"card": "x"} for i in range(60)}
+    rt.facts = {**old, **noise}
+    rt.plan_queries(stage="chapter", context="西门庆在阳谷县衙打点行政隶属" * 30, k=3)
+    assert "阳谷县行政隶属" in seen["p"], "老主题因为不在尾部就被漏掉了"

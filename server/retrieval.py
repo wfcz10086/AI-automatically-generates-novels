@@ -376,8 +376,15 @@ class Retriever:
         # 却是两件事, 合错了更糟), 交给模型判断: 它看得懂哪些是同一件事。
         have = [k for k, v in self.facts.items()
                 if isinstance(v, dict) and v.get("card")]
+        # 按**相关性**挑, 不是按时间取尾巴。实测本书攒到 769 个主题时,
+        # 只给最后 40 个 —— 而「阳谷县隶属哪个州」是前 60 章查的, 早滑出
+        # 窗口, 于是又查了第四遍, 同一件事已经存成 14 个不同主题名
+        # (阳谷东平东京地理 / 阳谷县行政归属 / 北宋阳谷县行政隶属 / 行政隶属…)。
+        # 用字符重合度粗排就够: 主题名短, 同一件事必然共享关键字。
+        ctx = set(str(context)[:3500])
+        have.sort(key=lambda k: -len(set(k) & ctx))
         have_line = ("\n【已经查过、卡片就在手边的主题 —— 同一件事不要再查】\n"
-                     + "、".join(have[-40:])) if have else ""
+                     + "、".join(have[:40])) if have else ""
         stage_desc = {"world": "构建世界观/时代背景", "cast": "设计人物与关系表",
                       "plot": "设计章节剧情", "chapter": "写本章正文",
                       "drive": "找能推动剧情的真实素材"}.get(stage, stage)
