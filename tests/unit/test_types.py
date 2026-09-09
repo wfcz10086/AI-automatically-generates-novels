@@ -458,8 +458,11 @@ def test_outline_field_contract_is_single_source():
     from server.prompt_compiler import (OUTLINE_FIELDS, OUTLINE_REQUIRED,
                                         outline_format_block,
                                         compile_outline_prompt)
-    assert OUTLINE_REQUIRED == ["承接", "出场角色", "剧情1", "重场", "爽点",
-                                "章末钩子", "一句话"]
+    # 「一句话」放在最前：它是最后一栏时模型写着写着就漏（实测 16 章只写了 10 章，
+    # 6 章因缺这一栏被整章丢弃）。前置还有个好处 —— 先定一句话再铺六条剧情，
+    # 本身就是「先立意后铺陈」。
+    assert OUTLINE_REQUIRED == ["一句话", "承接", "出场角色", "剧情1", "重场",
+                                "爽点", "章末钩子"]
 
     block = outline_format_block(6)
     for f in OUTLINE_REQUIRED:

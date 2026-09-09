@@ -3296,6 +3296,24 @@ class Novelist:
         if self.prompt_override("chapter_outline_extra"):
             cons.append(self.prompt_override("chapter_outline_extra"))
         cons.append(self.genre_rules()[:800])
+        # 这一批要写的章号**不一定连续**：前面批次有章被完整性守卫丢掉，
+        # 就留下了洞。而前情里的「每章一句话」清单是按现有章号排的，
+        # 洞在清单里看不出来（66 直接跳到 69），模型以为那两章早写过了，
+        # 于是从最大章号往下接，洞永远补不上 —— 实测缺口从 2 个滚到 8 个。
+        # 所以要把「哪几号是洞」明明白白列出来。
+        co_now = self.p._load("chapter_outlines.json", {}) or {}
+        want = [n for n in range(start, start + count)
+                if len(str(co_now.get(str(n), ""))) < 200]
+        holes = [n for n in want if n < max((int(k) for k in co_now), default=0)]
+        if holes:
+            cons.append(f"⚠ 本批**必须补上这几章**：第 {'、'.join(map(str, holes))} 章。"
+                        f"它们是前面批次漏掉的洞 —— 前情的一句话清单里没有它们，"
+                        f"不是因为不用写，是因为还没写。"
+                        f"补的时候要接住它们前后两章（第 {holes[0]-1} 章与第 {holes[-1]+1} 章）。")
+        if want and want != list(range(start, start + count)):
+            cons.append(f"本批要写的章号是：{'、'.join(map(str, want))}"
+                        f"（不是连续的，按这个号写，别自己顺着往下编）")
+
         vol = self.volume_of(start)
         if not vol:
             self.step_volumes()
@@ -3408,7 +3426,7 @@ class Novelist:
         self.p.write("chapter_outlines.json", json.dumps(outlines, ensure_ascii=False, indent=2))
         note = ""
         if truncated:
-            note += f"，丢弃残缺 {len(truncated)} 章（{truncated[:4]}）"
+            note += f"，丢弃残缺 {len(truncated)} 章（{truncated[:12]}）"
         if out_of_range:
             note += f"，丢弃越界 {len(out_of_range)} 章（{out_of_range[:4]}）"
         if drift and not note:
