@@ -122,3 +122,25 @@ def test_existing_topics_picked_by_relevance():
     rt.facts = {**old, **noise}
     rt.plan_queries(stage="chapter", context="西门庆在阳谷县衙打点行政隶属" * 30, k=3)
     assert "阳谷县行政隶属" in seen["p"], "老主题因为不在尾部就被漏掉了"
+
+
+def test_cover_hit_uses_bigrams_not_fixed_chunks():
+    """按卡片内容找同一件事, 中文要用二字组。
+
+    第一版用 `[\\u4e00-\\u9fff]{2,4}` 切词, 把「北宋阳谷县到东京」切成
+    「北宋阳谷」「县到东京」这种不存在的词, 覆盖率永远是 0。
+    """
+    from server.retrieval import Retriever
+    rt = Retriever.__new__(Retriever)
+    rt.facts = {
+        "宋代仵作验尸流程与洗冤集录": {
+            "card": "宋代验尸有报检初检复检免检等程序，验尸格目源于淳熙元年，"
+                    "仵作行人常有欺伪舞弊，检验不实致罪出入者一等科罪。"},
+        "金国骑兵编制": {"card": "拐子马为两翼骑兵，铁浮屠重甲。"},
+    }
+    hit = rt._cover_hit("仵作检验格目", "宋代仵作检验格目 初验复验 验尸程序 舞弊")
+    assert hit == "宋代仵作验尸流程与洗冤集录", hit
+    # 不相干的主题不许被并进来
+    assert rt._cover_hit("宋代盐引制度", "宋代盐引 钞引 榷盐 转运 商人") == ""
+    # 关键词太少不判, 免得瞎并
+    assert rt._cover_hit("验尸", "验尸") == ""

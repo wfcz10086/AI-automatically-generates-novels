@@ -237,6 +237,41 @@ class Retriever:
         q = q.strip().strip("「」\"'` ")[:80]
         return q if q and q not in tried and len(q) > 3 else ""
 
+    #: 二字组覆盖率的复用门槛。**取值偏保守是故意的**: 拿错卡片会让某一章
+    #: 的考据整个跑偏, 比多查一次贵得多。在本书 611 条真实检索上量过 ——
+    #:   仵作验尸(真重复)      0.44 / 0.39 / 0.39
+    #:   阳谷东京里程(真重复)  0.24
+    #:   金国骑兵(全新主题)    0.19
+    #: 0.24 和 0.19 挨得太近, 没法安全地一刀切; 0.38 能稳稳收掉最大的那一桶
+    #: (仵作验尸一项就占全部检索的 11%), 剩下的宁可多查。
+    COVER = 0.38
+
+    @staticmethod
+    def _bigrams(s: str) -> set:
+        s = re.sub(r"[^\u4e00-\u9fff]", "", s or "")
+        STOP = {"宋代", "北宋", "南宋", "制度", "具体", "案例", "历史"}
+        return {s[i:i + 2] for i in range(len(s) - 1)} - STOP
+
+    def _cover_hit(self, topic: str, query: str) -> str:
+        """已有卡片里有没有一张**内容上已经答过这个问题**的。
+
+        主题名匹配挡不住模型每次换措辞, 这里改看卡片正文覆盖了多少二字组。
+        中文不能按固定长度切词: 「北宋阳谷县到东京」切成「北宋阳谷」「县到东京」
+        这种不存在的词, 覆盖率永远是 0 —— 第一版就栽在这儿。
+        """
+        want = self._bigrams(f"{topic}{query}")
+        if len(want) < 8:
+            return ""
+        best, bestr = "", 0.0
+        for k, v in self.facts.items():
+            card = (v or {}).get("card") if isinstance(v, dict) else None
+            if not card or k == topic:
+                continue
+            r = len(want & self._bigrams(k + str(card)[:900])) / len(want)
+            if r > bestr:
+                best, bestr = k, r
+        return best if bestr >= self.COVER else ""
+
     def fact_for(self, need: Dict[str, str], rounds: int = 3) -> Optional[Dict[str, Any]]:
         """一个知识点: 内部先查, 联网重试, 逐条过滤, 抓正文再摘, 落盘复用。"""
         topic = need["topic"]
@@ -259,6 +294,19 @@ class Retriever:
                 self.mem.add("fact", f"fact-{topic}", f"考据·{topic}", rec["card"])
             except Exception:
                 pass
+            return rec
+        # 按**卡片内容**再找一遍。上面两道都是按主题名匹配, 可主题名是模型
+        # 每次现起的 —— 实测「阳谷县到东京多少里」被问了 7 次, 每次换个说法:
+        #   阳谷东平东京地理 / 阳谷县行政归属 / 北宋阳谷县行政隶属 / …
+        # 按主题归类数, 5 个高频主题(仵作验尸 66 次、里程 30 次、路引 30 次、
+        # 蔡京高俅 30 次、丧期 7 次)占了 611 次付费检索的 27%。
+        # 早先按「查询串相似度」量只有 2.2%, 是量错了: 这些查询每次换措辞,
+        # 字符串比对根本抓不到。
+        twin2 = self._cover_hit(topic, need.get("query") or "")
+        if twin2:
+            rec = dict(self.facts[twin2], topic=topic, alias_of=twin2)
+            self.facts[topic] = rec
+            self._save()
             return rec
         if not (self.enable_web and self.sx and self.sx.available()):
             return None
