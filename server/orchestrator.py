@@ -1180,8 +1180,11 @@ class Novelist:
         return out
 
     #: 决定全书走向的输入。这些一变，下游的总纲/骨架/支线/阶梯/细纲全都过期。
+    # model 也算种子: 换了写手, 前面那批资产就不是这个写手的东西了。
+    # 实测同一条提示词, 换个模型出来的文风、密度、常识差距比改旋钮还大
+    # (有的模型甚至一句正文都不返回), 混着往下长等于两个人合写一本书。
     _SEED_KEYS = ("hard_rules", "fields", "dials", "extra_ladders",
-                  "pack_overrides", "target_chapters", "target_words")
+                  "pack_overrides", "target_chapters", "target_words", "model")
     #: 依赖这些输入的下游资产，按生成顺序排列。
     #: 世界观与角色档案同样是从 premise 长出来的 —— 漏了它们，
     #: premise 改了却还拿旧世界观去写新总纲，等于只改了一半。
