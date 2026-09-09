@@ -9,10 +9,17 @@ LOG=reports/outline.log
 LOCK=".outline.$(echo -n "$TITLE" | md5sum | cut -c1-8).lock"
 PIDFILE=".outline.pid"
 
+# 自建进程组: 后面 cleanup 用 kill -- -$$ 收自己这一组, 不会波及父 shell
+set -m 2>/dev/null || true
 exec 9>"$LOCK"
 flock -n 9 || { echo "已有排纲在跑（$LOCK）"; exit 1; }
 echo $$ > "$PIDFILE"
-trap 'rm -f "$PIDFILE"' EXIT
+# 退出时**连子进程一起带走**。守护自己被 kill 掉、python 子进程却活着的话,
+# 它继承了 fd 9 仍然攥着 flock —— 于是新守护起不来, 报「已有排纲在跑」,
+# 要人手 fuser -k 才解得开。踩过两次。
+# kill 0 打的是整个进程组, 所以必须先自建进程组, 别误伤调用方。
+cleanup() { trap - EXIT INT TERM; rm -f "$PIDFILE"; kill -- -$$ 2>/dev/null; }
+trap cleanup EXIT INT TERM
 
 mkdir -p reports
 echo "=== 排纲守护启动 $(date '+%F %T')  《$TITLE》 ===" | tee -a "$LOG"
