@@ -208,8 +208,14 @@ def settings_api():
 @app.get("/api/projects")
 def list_projects():
     out = []
+    show_archived = request.args.get("archived") == "1"
     for d in sorted(PROJECTS.iterdir()) if PROJECTS.exists() else []:
         if not (d / "project.json").exists():
+            continue
+        # 归档的默认不列。归档是「从界面上收起来」，可它们照样有 project.json，
+        # 于是照样出现在列表里 —— 实测点「大宋奸商西门庆」点进的是同名的归档本，
+        # 追踪页一直显示 0 条，查了半天才发现点错了书。
+        if d.name.startswith("_archive_") and not show_archived:
             continue
         p = Project(d.name)
         out.append({"slug": d.name, **p.meta,
@@ -542,6 +548,39 @@ def project_dials(slug: str):
                         **(p.meta.get("dials") or {})})
     return jsonify({"dials": cur, "derived": dl.derived(cur),
                     "spec": dl.DIALS, "own": bool(p.meta.get("dials"))})
+
+
+@app.get("/api/projects/<slug>/trace")
+def project_trace(slug: str):
+    """最近的模型调用：实际发出去的提示词与回复。
+
+    列表只给元信息（不带正文），详情带 seq 参数取全文 —— 单条提示词可达
+    五万字符，列表里全带上会让页面卡死。
+    """
+    d = Project(slug).dir / "trace"
+    if not d.exists():
+        return jsonify({"calls": [], "note": "还没有调用记录"})
+    seq = request.args.get("seq")
+    files = sorted(d.glob("*.json"), reverse=True)
+    if seq:
+        for f in files:
+            try:
+                rec = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if str(rec.get("seq")) == str(seq):
+                return jsonify(rec)
+        return jsonify({"error": "没有这一条"}), 404
+    out = []
+    for f in files[:int(request.args.get("limit", 60))]:
+        try:
+            rec = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        rec.pop("prompt", None)
+        rec["output"] = str(rec.get("output") or "")[:160]
+        out.append(rec)
+    return jsonify({"calls": out, "total": len(files)})
 
 
 @app.route("/api/projects/<slug>/structure")

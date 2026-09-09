@@ -270,6 +270,55 @@ def _record(profile: str, prompt_chars: int, res: "GenResult") -> None:
                  "estimated": not (u.get("prompt") or u.get("completion"))}
 
 
+# ---------------------------------------------------------------- 调用追踪
+
+#: 当前项目的追踪目录。Novelist 初始化时绑定 —— call() 是模块级函数，
+#: 没有项目上下文，而追踪必须落到具体的书下面。
+_TRACE_DIR: Optional[Path] = None
+#: 追踪保留多少条。一本书跑完几千次调用，全留会撑爆磁盘（单条可达 50KB）。
+TRACE_KEEP = 400
+_trace_seq = [0]
+
+
+def bind_trace(d: Optional[Path]) -> None:
+    global _TRACE_DIR
+    _TRACE_DIR = d
+    if d:
+        d.mkdir(parents=True, exist_ok=True)
+
+
+def _trace(profile: str, prompt: str, kw: Dict[str, Any], out: str,
+           rsn: str, elapsed: float, usage: Dict[str, Any]) -> None:
+    """把**实际发出去的**提示词与回复原样落盘。
+
+    原来只有写正文那一步存 audit/NNN.prompt.txt，排纲、巡检、审阅、评审、
+    英文修复……全都不留痕。出了问题只能靠猜「当时到底发了什么过去」——
+    这一轮排查「巡检全零」「提示词自相矛盾」「替换静默失败」，
+    每一次都得临时插桩重跑一遍才看得到。
+    """
+    if not _TRACE_DIR:
+        return
+    try:
+        _trace_seq[0] += 1
+        i = _trace_seq[0]
+        rec = {
+            "seq": i, "at": time.strftime("%F %T"), "profile": profile,
+            "model": kw.get("model"), "thinking": kw.get("thinking"),
+            "max_tokens": kw.get("max_tokens"), "elapsed": round(elapsed, 1),
+            "prompt_chars": len(prompt), "out_chars": len(out),
+            "reasoning_chars": len(rsn), "usage": usage,
+            "prompt": prompt, "output": out,
+        }
+        f = _TRACE_DIR / f"{i:05d}_{profile}.json"
+        f.write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding="utf-8")
+        # 滚动清理：只留最近 TRACE_KEEP 条
+        old = sorted(_TRACE_DIR.glob("*.json"))
+        for x in old[:-TRACE_KEEP]:
+            x.unlink(missing_ok=True)
+    except Exception:
+        pass                                    # 追踪绝不能影响正常生成
+
+
 #: 开着思考时输出上限放大的倍数。推理与答案共用同一个 max_tokens，
 #: 不放大的话小预算的判定任务永远只吐出思考、答案被截在门外。
 THINK_BUDGET_X = 3
@@ -326,6 +375,7 @@ def call(profile: str, prompt: str, on_delta: Optional[Callable[[str], None]] = 
               f"预算、耗时 {time.time() - t0:.0f}s），关思考重试 —— "
               f"这一次等于白跑，考虑把该档位的 thinking 关掉", flush=True)
         return call(profile, prompt, on_delta, system, max_tokens, _retry=False)
+    _trace(profile, prompt, kw, out, rsn, time.time() - t0, dict(raw_usage))
     res = GenResult(text=out, reasoning=rsn, elapsed=time.time() - t0,
                     chars=len(out), usage=dict(raw_usage))
     _record(profile, sum(len(m["content"]) for m in msgs), res)
@@ -438,6 +488,7 @@ class Novelist:
         # 实测同人包写着「打赢原作人物就是崩人设」「靠武力赢原作强者是第一大雷」，
         # 这对绝大多数同人是对的，可这一本要的恰恰是「打服武松」。
         # 没有覆盖口子的话，只能改包（伤别的书）或跟包对着写（模型两头听、写歪）。
+        bind_trace(project.dir / "trace")
         self.genre = self._with_overrides(
             registry.genres.get(m.get("genre_id")) or {}, "genre")
         self.style = self._with_overrides(

@@ -136,8 +136,8 @@ function newProjectModal() {
 /* ─────────────────────────── 项目详情 ─────────────────────────── */
 const TABS = [['overview','概览'],['setup','设定'],['outline','大纲'],
               ['structure','结构'],['chapters','章节'],['prompts','提示词'],
-              ['quality','质检'],['memory','记忆'],['teardown','拆书'],
-              ['export','导出']];
+              ['trace','调用追踪'],['quality','质检'],['memory','记忆'],
+              ['teardown','拆书'],['export','导出']];
 
 const ProjectView = {
   title: () => S.cur ? S.cur.meta.title : '项目',
@@ -290,6 +290,17 @@ const TabRender = {
           <button class="btn btn-sm" id="st-build">生成骨架</button>
           <button class="btn btn-sm" id="st-reload">刷新</button></div>
       </div><div id="st-body"><div class="card-sub">读取中…</div></div></div>`;
+  },
+  trace(p) {
+    return `<div class="card"><div class="card-head">
+        <div class="card-title">调用追踪</div>
+        <div class="card-sub" id="tr-sub">每一次发给模型的提示词与回复，最近 400 条</div>
+        <div class="card-actions"><button class="btn btn-sm" id="tr-reload">刷新</button></div>
+      </div><div id="tr-body"><div class="card-sub">读取中…</div></div></div>
+      <div class="card" id="tr-detail-card" style="display:none">
+        <div class="card-head"><div class="card-title" id="tr-detail-title">调用详情</div>
+          <div class="card-actions"><button class="btn btn-sm" id="tr-close">收起</button></div></div>
+        <div id="tr-detail"></div></div>`;
   },
   chapters(p) {
     const done = (p.state.done||[]).slice().sort((a,b)=>a-b);
@@ -687,6 +698,54 @@ const TabMount = {
         } catch (e) { toast('生成失败：' + e.message, 'err'); }
         b.disabled = false; b.textContent = '生成骨架';
       };
+      load();
+    }
+  },
+  trace() {
+    const slug = encodeURIComponent(S.cur.slug);
+    const show = async (seq) => {
+      const r = await API.get(`/api/projects/${slug}/trace?seq=${seq}`);
+      $('#tr-detail-card').style.display = '';
+      $('#tr-detail-title').textContent =
+        `#${r.seq}　${r.profile}　${r.model||''}　${r.elapsed}s　`
+        + `提示词 ${fmtNum(r.prompt_chars)} 字符 → 输出 ${fmtNum(r.out_chars)} 字符`;
+      $('#tr-detail').innerHTML = `
+        <div class="field"><label>实际发出去的提示词</label>
+          <textarea class="ta" readonly style="min-height:420px;font-size:12px;
+            font-family:var(--mono)">${esc(r.prompt||'')}</textarea></div>
+        <div class="field"><label>模型回复</label>
+          <textarea class="ta" readonly style="min-height:220px;font-size:12px;
+            font-family:var(--mono)">${esc(r.output||'')}</textarea></div>`;
+      $('#tr-detail-card').scrollIntoView({behavior:'smooth', block:'start'});
+    };
+    const load = async () => {
+      let d;
+      try { d = await API.get(`/api/projects/${slug}/trace`); }
+      catch (e) { $('#tr-body').innerHTML = `<div class="empty">读取失败：${esc(e.message)}</div>`; return; }
+      const cs = d.calls || [];
+      $('#tr-sub').textContent = `共 ${d.total||cs.length} 条（保留最近 400 条），点行看全文`;
+      if (!cs.length) { $('#tr-body').innerHTML = `<div class="empty">${esc(d.note||'还没有调用记录')}</div>`; return; }
+      $('#tr-body').innerHTML = `<table class="tbl" style="table-layout:fixed">
+        <colgroup><col style="width:56px"><col style="width:150px"><col style="width:96px">
+          <col style="width:72px"><col style="width:110px"><col style="width:auto"></colgroup>
+        <thead><tr><th>#</th><th>时间</th><th>档位</th><th>耗时</th><th>提示词/输出</th>
+          <th>回复开头</th></tr></thead><tbody>` + cs.map(c => `
+        <tr class="tr-row" data-seq="${c.seq}" style="cursor:pointer">
+          <td style="font-family:var(--mono)">${c.seq}</td>
+          <td class="card-sub">${esc(c.at||'')}</td>
+          <td><span class="badge badge-neutral">${esc(c.profile||'')}</span>
+            ${c.thinking?'<span class="badge badge-warn">思考</span>':''}</td>
+          <td style="font-family:var(--mono)">${c.elapsed}s</td>
+          <td style="font-family:var(--mono);font-size:12px">
+            ${fmtNum(c.prompt_chars)} → ${fmtNum(c.out_chars)}</td>
+          <td class="card-sub" style="white-space:normal;word-break:break-word">
+            ${esc(String(c.output||'').slice(0,90))}</td></tr>`).join('')
+        + `</tbody></table>`;
+      $$('.tr-row').forEach(el => el.onclick = () => show(el.dataset.seq));
+    };
+    if ($('#tr-body')) {
+      $('#tr-reload').onclick = load;
+      $('#tr-close').onclick = () => { $('#tr-detail-card').style.display = 'none'; };
       load();
     }
   },
