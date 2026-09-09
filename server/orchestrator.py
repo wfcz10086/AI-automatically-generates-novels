@@ -2238,14 +2238,20 @@ class Novelist:
                 # **先剥前缀再筛长度**, 顺序反了会把整半句丢掉:
                 # 「当场打死一个人」7 字先被长度筛掉, 剥完只剩「开第一枪」,
                 # 于是「有没有死人」这半个指标根本没在查。
+                # 取**动作核心**, 不是整句。踩过两次:
+                #   「开第一枪」原样去搜, 而正文写的是「拔枪…扣动扳机」, 搜不到;
+                #   「当场打死一个仗势欺人的泼皮」11 字超长被丢掉,
+                #     于是「有没有死人」这半个指标根本没在查。
+                # 剥掉序数与量词再取前两字, 就落到「开枪」「打死」这种能搜到的核。
                 kws = []
                 for w in re.split(r"[、，,和及]|并且|然后", need):
-                    w = re.sub(r"^(?:当场|立刻|马上|真的|亲手)", "", w.strip())
-                    w = re.sub(r"(?:一个人|一次|一回)$", "", w)
+                    w = re.sub(r"^(?:当场|立刻|马上|真的|亲手|而且|要)", "", w.strip())
                     w = re.sub(r"[（）()「」【】、，,。]", "", w)
-                    if 2 <= len(w) <= 8:
-                        kws.append(w)
-                kws = kws[:4]
+                    w = re.sub(r"第[一二三四五六七八九十]|一个人|一个|一次|一回", "", w)
+                    w = w.strip()
+                    if len(w) >= 2:
+                        kws.append(w if len(w) <= 4 else w[:2])
+                kws = [w for w in dict.fromkeys(kws) if len(w) >= 2][:4]
                 if due and kws:
                     out.append((due, need, kws))
         return out[:3]
@@ -2370,14 +2376,21 @@ class Novelist:
             span = [n for n in ks if n <= due]
             if len(span) < min(due, 3):
                 continue               # 还没排到那儿, 不算违约
-            hit = [n for n in span
-                   if any(k in str(co[str(n)]) for k in kws)]
-            if not hit:
+            # **逐条报缺**, 不是一刀切。实测第 1 章确实「拔枪…扣动扳机」了,
+            # 只是没打死人 —— 报成「一次都没出现」会让人以为整条没做,
+            # 而真正缺的只有「打死」那半个。
+            body = "".join(str(co[str(n)]) for n in span)
+            miss = [k for k in kws if k not in body]
+            if miss and len(miss) == len(kws):
                 out.append(
-                    f"⚠ 铁律硬指标**到期未兑现**：「{need}」—— "
-                    f"第 1-{due} 章里一次都没出现（找的是：{'、'.join(kws)}）。"
-                    f"这是开篇最贵的一条：读者按前几章决定追不追。"
-                    f"接下来这一批必须把它补上，不许再往后拖")
+                    f"⚠ 铁律硬指标**到期完全未兑现**：「{need}」—— "
+                    f"第 1-{due} 章一次都没出现。这是开篇最贵的一条："
+                    f"读者按前几章决定追不追。接下来这一批必须补上")
+            elif miss:
+                out.append(
+                    f"⚠ 铁律硬指标**只做了一半**：「{need}」—— "
+                    f"第 1-{due} 章里缺的是「{'、'.join(miss)}」。"
+                    f"做了的那半不用重做，缺的这半接下来这一批补上")
         # 关键物件被写死了(报废/销毁/送走/沉河), 后面又拿出来用。
         # 实测: 第161章「枪身锈蚀、扳机卡死、彻底成了一根废铁」, 第173章
         # 「武松验看后确认报废, 将枪投入河中」, 第176章却「深夜从地窖取枪」,

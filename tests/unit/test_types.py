@@ -1000,3 +1000,20 @@ def test_hard_rules_reach_worldbuilding_and_cast():
     import server.orchestrator as orc
     for key in ("world_bible", "characters"):
         assert "${hard_rules}" in orc.BUILTIN_PROMPTS[key], key
+
+
+def test_deadline_keywords_take_action_core():
+    """截止指标取动作核心, 并逐条报缺。
+
+    踩过两次: 「开第一枪」原样去搜, 而正文写的是「拔枪…扣动扳机」, 搜不到;
+    「当场打死一个仗势欺人的泼皮」11 字超长被丢掉, 「有没有死人」这半个
+    指标根本没在查。而且做了一半时报成「一次都没出现」是误导。
+    """
+    from server.orchestrator import Novelist
+    nv = Novelist.__new__(Novelist)
+    nv.hard_rules = lambda: [
+        "前 3 章之内必须开第一枪、当场打死一个仗势欺人的（泼皮、恶奴、打手）"]
+    due, need, kws = nv._rule_deadlines()[0]
+    assert due == 3
+    assert "开枪" in kws and "打死" in kws, kws
+    assert "开第一枪" not in kws, "整句去搜是搜不到的"
