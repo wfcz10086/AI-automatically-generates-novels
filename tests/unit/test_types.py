@@ -847,3 +847,21 @@ def test_repair_demand_retargets_to_next_batch():
     got = retarget(d)
     assert "接下来这一批里给他" in got
     assert "这几章里" not in got
+
+
+def test_duplicate_chapter_is_rejected():
+    """整段重复的章要被丢掉重排。
+
+    踩过: 第 114-117 章被整段复制成第 122-125 章(偏移正好 8, 两对一字
+    不差), 字段齐全、长度正常, 完整性守卫放行 —— 读者读到同一段演两遍。
+    """
+    from server.orchestrator import Novelist
+    old = {"114": "第114章 甲\n一句话：西门庆在童贯与蔡京的夹缝中设局让高衙内当众出丑。\n"}
+    same = "第122章 乙\n一句话：西门庆在童贯与蔡京的夹缝中设局让高衙内当众出丑。\n"
+    diff = "第122章 乙\n一句话：武松在十字坡揭穿孙二娘的蒙汗药，两人当场翻脸。\n"
+    assert Novelist._dup_of(same, old, 122) == 114
+    assert Novelist._dup_of(diff, old, 122) == 0
+    # 自己不算撞自己
+    assert Novelist._dup_of(old["114"], old, 114) == 0
+    # 太短的一句话不判
+    assert Novelist._dup_of("第122章 乙\n一句话：短\n", old, 122) == 0

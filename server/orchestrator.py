@@ -3126,6 +3126,30 @@ class Novelist:
                 f"（开篇 {window} 章是 {sum(first)//len(first)} 字）—— "
                 f"细纲发胖，写正文会退化成扩写"]
 
+    @staticmethod
+    def _dup_of(body: str, outlines: Dict[str, Any], idx: int,
+                thr: float = 0.82) -> int:
+        """这一章的「一句话」是不是和某个已排章节撞了 —— 撞了返回那一章的章号。
+
+        实测第 114-117 章被整段复制成第 122-125 章, 字段齐全、长度正常,
+        完整性守卫放行。重复剧情不报错, 只会让读者读到同一段演两遍。
+        """
+        import difflib
+        m = re.search(r"^\s*一句话\s*[:：]\s*(.+)$", body, re.M)
+        one = (m.group(1).strip() if m else "")[:120]
+        if len(one) < 16:
+            return 0
+        for k, v in outlines.items():
+            if not str(k).isdigit() or int(k) == idx:
+                continue
+            m2 = re.search(r"^\s*一句话\s*[:：]\s*(.+)$", str(v), re.M)
+            if not m2:
+                continue
+            if difflib.SequenceMatcher(
+                    None, one, m2.group(1).strip()[:120]).ratio() >= thr:
+                return int(k)
+        return 0
+
     def outline_batch(self, want: int = 0) -> int:
         """一批排多少章细纲 —— 按输出上限算，不是拍一个 10。
 
@@ -3510,7 +3534,7 @@ class Novelist:
         # 它排出的是「第75章…第87章」, 而 str(start+i) 把这些内容存成了
         # 第 37-50 章 —— 键和内容对不上, 写正文时按第 37 章取到的是第 75 章的剧情。
         end = start + count - 1
-        kept, drift, out_of_range, truncated = 0, [], [], []
+        kept, drift, out_of_range, truncated, dupes = 0, [], [], [], []
         for i, part in enumerate(parts):
             m = re.search(r"第\s*(\d{1,4})\s*章", part[:60])
             idx = int(m.group(1)) if m else start + i
@@ -3531,6 +3555,14 @@ class Novelist:
             if lack:
                 truncated.append(idx)
                 continue
+            # 与已排章节撞车的丢掉。实测第 114-117 章被**整段复制**成了
+            # 第 122-125 章(偏移正好 8, 其中两对一字不差), 而所有字段都齐,
+            # 完整性守卫放行, 日志一切正常 —— 读者读到的是同一段剧情演两遍。
+            # 比对「一句话」就够: 它是整章的压缩, 换个说法也压不出同样的句子。
+            twin = self._dup_of(body, outlines, idx)
+            if twin:
+                dupes.append((idx, twin))
+                continue
             outlines[str(idx)] = body
             kept += 1
         self.register_new_cast(parts)
@@ -3549,6 +3581,9 @@ class Novelist:
         note = ""
         if truncated:
             note += f"，丢弃残缺 {len(truncated)} 章（{truncated[:12]}）"
+        if dupes:
+            note += ("，丢弃与旧章重复 " + str(len(dupes)) + " 章（"
+                     + "、".join(f"{a}≈{b}" for a, b in dupes[:6]) + "）")
         if out_of_range:
             note += f"，丢弃越界 {len(out_of_range)} 章（{out_of_range[:4]}）"
         if drift and not note:
