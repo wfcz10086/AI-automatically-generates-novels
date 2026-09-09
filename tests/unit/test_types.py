@@ -1015,5 +1015,31 @@ def test_deadline_keywords_take_action_core():
         "前 3 章之内必须开第一枪、当场打死一个仗势欺人的（泼皮、恶奴、打手）"]
     due, need, kws = nv._rule_deadlines()[0]
     assert due == 3
-    assert "开枪" in kws and "打死" in kws, kws
-    assert "开第一枪" not in kws, "整句去搜是搜不到的"
+    flat = [k for g in kws for k in g]
+    assert "开枪" in flat and "打死" in flat, kws
+    assert "开第一枪" not in flat, "整句去搜是搜不到的"
+    # 括号里是「满足其一即可」, 不是三个都要
+    assert ("泼皮", "恶奴", "打手") in kws, kws
+
+
+def test_deadline_stops_nagging_once_done_late():
+    """截止指标补上了就别再念。
+
+    窗口(第1-3章)固定, 过期后哪怕补做了也会每批报一次, 永远占着纠偏名额
+    —— 实测第 29 章已经「一枪毙命」, 检测器还在说「第1-3章缺打死」。
+    指标的目的是让事情发生, 发生了就该闭嘴。
+    """
+    from server.orchestrator import Novelist
+
+    def mk(n, body):
+        return (f"第{n}章 标题\n一句话：{body}\n承接：上一章\n出场角色：甲、乙、丙\n"
+                f"剧情1：{body}\n重场：剧情1\n爽点：甲交出账册\n章末钩子：门开了")
+
+    nv = Novelist.__new__(Novelist)
+    nv.hard_rules = lambda: ["前 3 章之内必须开枪、打死一个恶奴"]
+    co = {str(i): mk(i, "他在算账") for i in range(1, 9)}
+    co["1"] = mk(1, "他拔枪对着地上开枪")
+    nv.p = type("P", (), {"_load": lambda self, f, d: co})()
+    assert [x for x in nv.outline_patterns(1, 8) if "硬指标" in x], "缺打死时该报"
+    co["7"] = mk(7, "他一枪毙命，那恶奴当场断气")   # 迟到、且用的是同义写法
+    assert not [x for x in nv.outline_patterns(1, 8) if "硬指标" in x], "补上了就不该再报"

@@ -2219,6 +2219,23 @@ class Novelist:
         ("局翻", r"翻|反|倒|变了|不见了|空的|换了|没了|死了|走水|塌"),
     ]
 
+    #: 硬指标判定用的同义写法。**词法匹配认不出同义词**是它的根本局限:
+    #: 铁律写「打死」, 正文写「一枪毙命」, 严格比对就永远报缺, 而这条警告
+    #: 会每一批都占一个纠偏名额。这张表不求全, 只覆盖铁律里最常出现的几类
+    #: 动作(杀、开枪、露底牌), 覆盖不到的宁可漏报也别误报。
+    _SYN = {
+        "打死": ("打死", "毙命", "击杀", "杀死", "杀了", "毙了", "当场死",
+                 "一枪撂倒", "断气"),
+        "开枪": ("开枪", "扣动扳机", "扣扳机", "拔枪", "枪响", "一枪"),
+        "见血": ("见血", "血", "伤口", "尸"),
+    }
+
+    def _said(self, kw: str, text: str) -> bool:
+        for forms in self._SYN.values():
+            if kw in forms:
+                return any(f in text for f in forms)
+        return kw in text
+
     def _rule_deadlines(self) -> List[tuple]:
         """铁律里「前 N 章之内必须 X」这类**带截止的硬指标**。
 
@@ -2238,20 +2255,34 @@ class Novelist:
                 # **先剥前缀再筛长度**, 顺序反了会把整半句丢掉:
                 # 「当场打死一个人」7 字先被长度筛掉, 剥完只剩「开第一枪」,
                 # 于是「有没有死人」这半个指标根本没在查。
-                # 取**动作核心**, 不是整句。踩过两次:
-                #   「开第一枪」原样去搜, 而正文写的是「拔枪…扣动扳机」, 搜不到;
-                #   「当场打死一个仗势欺人的泼皮」11 字超长被丢掉,
-                #     于是「有没有死人」这半个指标根本没在查。
-                # 剥掉序数与量词再取前两字, 就落到「开枪」「打死」这种能搜到的核。
+                # 取**动作核心**, 不是整句。踩过三次:
+                #   「开第一枪」原样去搜, 正文写的是「拔枪…扣动扳机」, 搜不到;
+                #   「当场打死一个仗势欺人的泼皮」11 字超长被丢掉;
+                #   「（泼皮、恶奴、打手）」是括号里的**可选项**——打死其中
+                #     任一种就算数, 我却当成三个都必须, 于是永远缺两个。
+                alts = re.findall(r"[（(]([^）)]{2,40})[）)]", need)
+                bare = re.sub(r"[（(][^）)]*[）)]", "", need)
                 kws = []
-                for w in re.split(r"[、，,和及]|并且|然后", need):
-                    w = re.sub(r"^(?:当场|立刻|马上|真的|亲手|而且|要)", "", w.strip())
-                    w = re.sub(r"[（）()「」【】、，,。]", "", w)
-                    w = re.sub(r"第[一二三四五六七八九十]|一个人|一个|一次|一回", "", w)
+                for w in re.split(r"[、，,和及]|并且|然后", bare):
+                    # 前缀要**循环剥**: 「而且要当着一条街的人打」只剥一层
+                    # 剩「要当着…」, 取前两字就成了「要当」这种垃圾词。
                     w = w.strip()
+                    while True:
+                        w2 = re.sub(r"^(?:当场|立刻|马上|真的|亲手|而且|"
+                                    r"并且|还要|要|须|必须|应)", "", w)
+                        if w2 == w:
+                            break
+                        w = w2
+                    w = re.sub(r"第[一二三四五六七八九十]|一个人|一个|一次|一回", "", w)
+                    w = re.sub(r"[「」【】。]", "", w).strip()
                     if len(w) >= 2:
-                        kws.append(w if len(w) <= 4 else w[:2])
-                kws = [w for w in dict.fromkeys(kws) if len(w) >= 2][:4]
+                        kws.append((w,) if len(w) == 2 else (w[:2],))
+                for grp in alts:      # 括号内是「满足其一即可」
+                    opts = tuple(x.strip() for x in re.split(r"[、，,或]", grp)
+                                 if 2 <= len(x.strip()) <= 6)
+                    if opts:
+                        kws.append(opts)
+                kws = [g for g in dict.fromkeys(kws) if g][:4]
                 if due and kws:
                     out.append((due, need, kws))
         return out[:3]
@@ -2380,7 +2411,17 @@ class Novelist:
             # 只是没打死人 —— 报成「一次都没出现」会让人以为整条没做,
             # 而真正缺的只有「打死」那半个。
             body = "".join(str(co[str(n)]) for n in span)
-            miss = [k for k in kws if k not in body]
+            miss = [g for g in kws
+                    if not any(self._said(k, body) for k in g)]
+            # **补上了就别再念**。窗口(第1-3章)是固定的, 过期之后哪怕后面
+            # 补做了, 这条也会每一批都报一次, 永远占着纠偏名额 ——
+            # 实测第 29 章已经「一枪毙命」, 检测器还在说「第1-3章缺打死」。
+            # 指标的目的是让事情发生, 发生了就该闭嘴。
+            if miss:
+                later = "".join(str(v) for k, v in co.items()
+                                if str(k).isdigit() and int(k) > due)
+                miss = [g for g in miss
+                        if not any(self._said(k, later) for k in g)]
             if miss and len(miss) == len(kws):
                 out.append(
                     f"⚠ 铁律硬指标**到期完全未兑现**：「{need}」—— "
@@ -2389,7 +2430,7 @@ class Novelist:
             elif miss:
                 out.append(
                     f"⚠ 铁律硬指标**只做了一半**：「{need}」—— "
-                    f"第 1-{due} 章里缺的是「{'、'.join(miss)}」。"
+                    f"第 1-{due} 章里缺的是「{'、'.join('/'.join(g) for g in miss)}」。"
                     f"做了的那半不用重做，缺的这半接下来这一批补上")
         # 关键物件被写死了(报废/销毁/送走/沉河), 后面又拿出来用。
         # 实测: 第161章「枪身锈蚀、扳机卡死、彻底成了一根废铁」, 第173章
