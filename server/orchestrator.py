@@ -2195,6 +2195,37 @@ class Novelist:
         ("局翻", r"翻|反|倒|变了|不见了|空的|换了|没了|死了|走水|塌"),
     ]
 
+    def _rule_deadlines(self) -> List[tuple]:
+        """铁律里「前 N 章之内必须 X」这类**带截止的硬指标**。
+
+        返回 (截止章号, 原文要求, 用来判定兑现的关键词)。判定用词法:
+        从要求里挑动词性的短词, 只要这些词在窗口内一次都没出现, 就基本可以
+        断定没兑现 —— 宁可漏报, 不要误报把真账挤掉。
+        """
+        out = []
+        try:
+            rules = self.hard_rules()
+        except Exception:
+            return []          # 读不到铁律就不查, 别把套路扫描拖下水
+        for r in rules:
+            for m in re.finditer(r"前\s*(\d{1,3})\s*章(?:之内|以内|内)?[^。；]{0,4}"
+                                 r"(必须|一定要|务必)([^。；]{4,60})", r):
+                due, need = int(m.group(1)), m.group(3).strip()
+                # **先剥前缀再筛长度**, 顺序反了会把整半句丢掉:
+                # 「当场打死一个人」7 字先被长度筛掉, 剥完只剩「开第一枪」,
+                # 于是「有没有死人」这半个指标根本没在查。
+                kws = []
+                for w in re.split(r"[、，,和及]|并且|然后", need):
+                    w = re.sub(r"^(?:当场|立刻|马上|真的|亲手)", "", w.strip())
+                    w = re.sub(r"(?:一个人|一次|一回)$", "", w)
+                    w = re.sub(r"[（）()「」【】、，,。]", "", w)
+                    if 2 <= len(w) <= 8:
+                        kws.append(w)
+                kws = kws[:4]
+                if due and kws:
+                    out.append((due, need, kws))
+        return out[:3]
+
     def _finite_carriers(self) -> List[str]:
         """铁律里点了名、又声明不可再生的**物件本身**(枪、丹炉、疫苗…)。
 
@@ -2303,6 +2334,26 @@ class Novelist:
             b, c = beats.most_common(1)[0]
             if c / len(ks) >= 0.5:
                 out.append(f"重场有 {c}/{len(ks)} 章落在「{b}」—— 轻重节奏成了固定套路")
+        # 铁律里的**截止指标**有没有兑现。这是今晚同一个病的又一次:
+        # 铁律白纸黑字写着「前 15 章之内必须开第一枪、当场打死一个人」,
+        # 实际前 20 章一个人没死, 第一次真开枪在第 38 章还只打伤 ——
+        # 规则进了提示词, 没有任何东西验证它。
+        # 开篇不炸就没有后面: 平台按前三章的留存给推荐, 而这条恰恰是
+        # 全书最贵的一条硬指标。
+        for due, need, kws in self._rule_deadlines():
+            if start > due:            # 已经扫过的窗口不重复报
+                continue
+            span = [n for n in ks if n <= due]
+            if len(span) < min(due, 3):
+                continue               # 还没排到那儿, 不算违约
+            hit = [n for n in span
+                   if any(k in str(co[str(n)]) for k in kws)]
+            if not hit:
+                out.append(
+                    f"⚠ 铁律硬指标**到期未兑现**：「{need}」—— "
+                    f"第 1-{due} 章里一次都没出现（找的是：{'、'.join(kws)}）。"
+                    f"这是开篇最贵的一条：读者按前几章决定追不追。"
+                    f"接下来这一批必须把它补上，不许再往后拖")
         # 关键物件被写死了(报废/销毁/送走/沉河), 后面又拿出来用。
         # 实测: 第161章「枪身锈蚀、扳机卡死、彻底成了一根废铁」, 第173章
         # 「武松验看后确认报废, 将枪投入河中」, 第176章却「深夜从地窖取枪」,
@@ -3536,6 +3587,10 @@ class Novelist:
             cons.append("【上一批排出来的毛病，本批必须纠正】\n"
                         + "\n".join(f"- {x}" for x in guide))
         cons.append(dl.brief(self.dials()))
+        # 开篇硬指标 —— 只在排最前面几章时注入, 强度跟着爽度走。
+        _open = dl.opening_spec(self.dials(), start)
+        if _open:
+            cons.append(_open)
         st_ = self.p.state
         mb = sc.mode_brief(st_.get("resolution_modes") or [], start)
         if mb:

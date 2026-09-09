@@ -152,3 +152,37 @@ def derived(values: Any) -> Dict[str, int]:
     else:
         beat = 12
     return {"setback_quota": setback, "pleasure_interval": beat}
+
+
+def opening_spec(values: dict, start: int, hook_chapters: int = 3) -> str:
+    """开篇硬指标 —— 只在排到最前面几章时注入。
+
+    平台按前几章的留存给推荐, 推荐决定后面的一切: 写到第三百章的好东西,
+    读者在第二章就走了的话一个字也看不到。可「开篇要炸」这件事没有任何
+    机制在管 —— 实测一本爽度拧到 100 的书, 前三章是「灭口、诱骗、收买」
+    三章布局, 一个爽点没有, 金手指到第 38 章才真用。
+
+    强度跟着爽度走: 爽度低的书(正剧、群像)不该被逼着开局就炸。
+    """
+    if start > hook_chapters:
+        return ""
+    g = normalize(values)["gratify"]
+    if g < 40:
+        return ""
+    hard = g >= 80
+    lines = [f"🔥【开篇 {hook_chapters} 章是生死线】"
+             f"读者按这几章决定追不追，平台按这几章给推荐。"
+             f"后面三百章写得再好，这里塌了就没人看得见。"]
+    lines.append(f"- 第 1 章之内：主角的**底牌／金手指必须亮相**，"
+                 f"不许只做铺垫、只交代身份、只回忆前情")
+    lines.append(f"- 第 {min(2, hook_chapters)} 章之内：**第一次用它，当众用，"
+                 f"有人当场吃瘪**")
+    lines.append(f"- 第 {hook_chapters} 章之内：**第一次实打实的胜利**——"
+                 f"拿到钱、拿到权、或者让一个仗势欺人的当众栽跟头")
+    if hard:
+        lines.append("- 爽度已拧到高档：这几章里**必须见血或见真章**，"
+                     "不许用「他心中冷笑」「他知道机会来了」这种内心戏顶替。"
+                     "写不出实打实发生的事，就是没写")
+    lines.append("- 这几章禁止的写法：通篇布局、通篇观察、通篇试探、"
+                 "通篇回忆原著剧情、主角躲着不露面")
+    return "\n".join(lines)
