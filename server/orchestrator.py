@@ -1061,8 +1061,11 @@ class Novelist:
     _SEED_KEYS = ("hard_rules", "fields", "dials", "extra_ladders",
                   "pack_overrides", "target_chapters", "target_words")
     #: 依赖这些输入的下游资产，按生成顺序排列。
-    _DERIVED = ("outline.md", "volumes.json", "stages.json", "threads.json",
-                "ladders.json", "chapter_outlines.json")
+    #: 世界观与角色档案同样是从 premise 长出来的 —— 漏了它们，
+    #: premise 改了却还拿旧世界观去写新总纲，等于只改了一半。
+    _DERIVED = ("world_bible.md", "characters.md", "roster.json", "era_card.md",
+                "basis.md", "outline.md", "volumes.json", "stages.json",
+                "threads.json", "ladders.json", "chapter_outlines.json")
 
     def seed_stamp(self) -> str:
         import hashlib
