@@ -884,14 +884,16 @@ def test_finite_resource_numbers_must_not_grow():
     nv.hard_rules = lambda: ["一百二十发只减不增，宋朝造不出也补不了"]
     assert nv._finite_units() == ["发"]
 
-    co = {"1": mk(1, "还剩118发"), "2": mk(2, "还剩117发"), "3": mk(3, "还剩119发")}
+    # outline_patterns 少于 6 章不扫, 造够
+    co = {str(i): mk(i, f"还剩{120-i}发") for i in range(1, 7)}
+    co["6"] = mk(6, "还剩119发")                      # 涨回去
     nv.p = type("P", (), {"_load": lambda self, f, d: co})()
-    hit = [x for x in nv.outline_patterns(1, 3) if "不可再生" in x]
+    hit = [x for x in nv.outline_patterns(1, 6) if "不可再生" in x]
     assert hit and "119发" in hit[0], hit
 
-    ok = {"1": mk(1, "还剩118发"), "2": mk(2, "还剩117发"), "3": mk(3, "还剩116发")}
+    ok = {str(i): mk(i, f"还剩{120-i}发") for i in range(1, 7)}
     nv.p = type("P", (), {"_load": lambda self, f, d: ok})()
-    assert not [x for x in nv.outline_patterns(1, 3) if "不可再生" in x]
+    assert not [x for x in nv.outline_patterns(1, 6) if "不可再生" in x]
 
     # 铁律没声明的单位不查 —— 钱粮本来就该涨
     nv.hard_rules = lambda: ["主角有一百二十贯本钱"]

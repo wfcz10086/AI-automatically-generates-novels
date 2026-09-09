@@ -2203,7 +2203,11 @@ class Novelist:
         """
         units, pat = [], re.compile(r"(\d+|[一二三四五六七八九十百千万]+)\s*"
                                     r"([发枚颗粒支张片瓶]|块|把)")
-        for r in self.hard_rules():
+        try:
+            rules = self.hard_rules()
+        except Exception:
+            return []          # 读不到铁律就不查, 别把整个套路扫描拖下水
+        for r in rules:
             if not re.search(r"只减不增|不可再生|用一.{0,2}少一|补不了|造不出", r):
                 continue
             for m in pat.finditer(r):
