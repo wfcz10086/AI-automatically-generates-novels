@@ -2396,6 +2396,11 @@ class Novelist:
         if not co:
             return []
         out: List[str] = []
+        # 结构化结果留给 _ledger_jobs 用。**不许再让它回读拼好的消息串**:
+        # 消息里为了不刷屏只列几条, 回读就只看得到那几条 —— 实测消息取的是
+        # 最早四条(145/197/200/249), 新冒出来的第257章排不进去, 于是既没进
+        # 纠偏也没派工单, 悄悄错着。
+        self._finite_bad: List[Dict[str, Any]] = []
         # 铁律里点名「只减不增」的资源, 数字涨回去就是穿帮。
         # 实测子弹账走成 118→117→116→**119**→1→119→116→1, 还写出过
         # 「第 121 发」(总共才 120 发)。铁律白纸黑字要求「每次开枪当场记账」,
@@ -2449,7 +2454,7 @@ class Novelist:
                     # 十几章(含第1、22、38、67章), 全被越界丢弃, 白烧 token。
                     where = ("；".join(f"第{n}章写「第{o}{unit}、剩{r}{unit}」"
                                       f"（该是第{c}{unit}）"
-                                      for n, o, r, c in mism[:4]) + "。"
+                                      for n, o, r, c in mism[-4:]) + "。"
                              ) if name_chapters else ""
                     out.append(
                         f"「第几{unit}」和「还剩几{unit}」对不上账（共 {total}{unit}）："
@@ -2477,7 +2482,11 @@ class Novelist:
                 ok = [(n, v) for n, v in seen if n < first_bad]
                 anchor = (f"第{ok[-1][0]}章的 {ok[-1][1]}{unit}" if ok
                           else f"开篇的总数")
-                where = ("；".join(f"第{n}章写成 {v}{unit}" for n, v in bad[:4])
+                for n, v in bad:
+                    self._finite_bad.append({"ch": n, "v": v, "unit": unit,
+                                             "ok_n": ok[-1][0] if ok else 0,
+                                             "ok_v": ok[-1][1] if ok else 0})
+                where = ("；".join(f"第{n}章写成 {v}{unit}" for n, v in bad[-4:])
                          + "。") if name_chapters else ""
                 out.append(
                     f"「{unit}」这类不可再生的东西数字涨回去了："
@@ -2773,28 +2782,22 @@ class Novelist:
         所以落成工单交给 replan.py。
         """
         jobs: List[Dict[str, Any]] = []
-        for hit in self.outline_finite_check():
-            # **每一处都要出工单**。这里回读 outline_finite_check 拼好的消息串,
-            # 用 re.search 只取得到第一处 —— 实测四章对不上(145/197/200/249)
-            # 却只派了一张单子, 其余三章没人管。
-            anchor = re.search(r"最后一个对的数是第(\d+)章的 (\d+)(\S+?)[ ，。—]",
-                               hit)
-            if not anchor:
+        # **读结构化结果, 不回读消息串**。消息为了不刷屏只列最近几条, 回读就
+        # 只看得到那几条 —— 实测消息取最早四条(145/197/200/249), 新冒出来的
+        # 第257章排不进去, 于是既没进纠偏也没派工单, 悄悄错着。
+        self.outline_finite_check()          # 只为算出 _finite_bad
+        for b in getattr(self, "_finite_bad", [])[:12]:
+            unit, ok_n, ok_v = b["unit"], b["ok_n"], b["ok_v"]
+            if not ok_n:
                 continue
-            ok_n, ok_v, unit = (int(anchor.group(1)), int(anchor.group(2)),
-                                anchor.group(3))
-            for m in re.finditer(r"第(\d+)章写成 (\d+)", hit):
-                bad_n, bad_v = int(m.group(1)), int(m.group(2))
-                if bad_n == ok_n:
-                    continue
-                jobs.append({
-                    "kind": "台账对不上", "chapters": [bad_n],
-                    "demand": f"这一章把「{unit}」的存量写成了 {bad_v}{unit}，"
-                              f"可第 {ok_n} 章就只剩 {ok_v}{unit} 了 —— "
-                              f"只减不增，这一章的数**必须不大于 {ok_v}**。"
-                              f"重排时**剧情一律不动**，只把这个数改对：按这一章"
-                              f"和第 {ok_n} 章之间实际开过几枪往下减，"
-                              f"并写清「这是第几{unit}、还剩多少{unit}」"})
+            jobs.append({
+                "kind": "台账对不上", "chapters": [b["ch"]],
+                "demand": f"这一章把「{unit}」的存量写成了 {b['v']}{unit}，"
+                          f"可第 {ok_n} 章就只剩 {ok_v}{unit} 了 —— "
+                          f"只减不增，这一章的数**必须不大于 {ok_v}**。"
+                          f"重排时**剧情一律不动**，只把这个数改对：按这一章"
+                          f"和第 {ok_n} 章之间实际开过几枪往下减，"
+                          f"并写清「这是第几{unit}、还剩多少{unit}」"})
         return jobs
 
     def outline_repairs(self, upto: int = 0) -> List[Dict[str, Any]]:

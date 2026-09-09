@@ -1212,3 +1212,31 @@ def test_finite_check_compares_against_running_minimum():
     jobs = nv._ledger_jobs()
     assert sorted(j["chapters"][0] for j in jobs) == [145, 195, 249], \
         "每一处都要出工单, 不能只派第一张"
+
+
+def test_newest_violations_are_not_crowded_out_by_old_ones():
+    """消息里的条数上限要留给**最近**的违规, 工单要覆盖全部。
+
+    上限原本取最早四条, 而旧账(145/197/200/249)把名额占满, 新冒出来的
+    第257章(第17发剩102发: 17+102=119≠120, 且 102 高过第254章的 101)
+    既没进纠偏也没派工单, 悄悄错着。工单更不能回读拼好的消息串 —— 那样
+    只看得到消息里列出的那几条。
+    """
+    from server.orchestrator import Novelist
+
+    nv = Novelist.__new__(Novelist)
+    nv.hard_rules = lambda: [
+        "【沙漠之鹰】主角带着一把沙漠之鹰、一百二十发子弹",
+        "子弹只减不增，造不出也补不了，每次开枪当场记账",
+    ]
+    co = {"104": "剩105发"}
+    for i, v in enumerate((119, 118, 117, 116, 115), start=1):   # 五处旧违规
+        co[str(140 + i)] = f"剩{v}发"
+    co["300"] = "剩114发"                                        # 最新一处
+    nv.p = type("P", (), {"_load": lambda self, *a: co})()
+    nv._log = lambda *a: None
+
+    hit = next(h for h in nv.outline_finite_check() if "涨回去" in h)
+    assert "第300章" in hit, "最近的违规必须出现在消息里"
+    assert sorted(j["chapters"][0] for j in nv._ledger_jobs())[-1] == 300, \
+        "工单要覆盖到最新那一处, 不能只有最早几条"
