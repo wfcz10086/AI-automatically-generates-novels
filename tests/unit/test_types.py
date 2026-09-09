@@ -887,11 +887,13 @@ def test_finite_resource_numbers_must_not_grow():
     # outline_patterns 少于 6 章不扫, 造够
     co = {str(i): mk(i, f"还剩{120-i}发") for i in range(1, 7)}
     co["6"] = mk(6, "还剩119发")                      # 涨回去
+    # 分项与序数不算存量: 这一章的账是对的, 不许误报
+    co["5"] = mk(5, "还剩116发，其中1发已暴露原理，115发是最后的威慑，这是第121发")
     nv.p = type("P", (), {"_load": lambda self, f, d: co})()
     hit = [x for x in nv.outline_patterns(1, 6) if "不可再生" in x]
     assert hit and "119发" in hit[0], hit
 
-    ok = {str(i): mk(i, f"还剩{120-i}发") for i in range(1, 7)}
+    ok = {str(i): mk(i, f"还剩{120-i}发，其中1发试枪，{119-i}发备用") for i in range(1, 7)}
     nv.p = type("P", (), {"_load": lambda self, f, d: ok})()
     assert not [x for x in nv.outline_patterns(1, 6) if "不可再生" in x]
 

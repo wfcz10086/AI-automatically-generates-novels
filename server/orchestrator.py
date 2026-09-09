@@ -2285,9 +2285,17 @@ class Novelist:
         # 可没有任何东西在核对这个数 —— 台账管的是事件, 不管数量。
         # 只查铁律自己声明了不可再生的单位, 别去管钱粮那类本来就该涨的。
         for unit in self._finite_units():
+            # **只认存量, 不认分项和序数**。裸抓「N发」会把
+            #   「子弹剩余115发，其中1发已暴露原理，114发是最后的威慑」
+            # 读成 115→1→114 而报「涨回去了」, 也会把「第121发」这种序数
+            # 当成存量。噪声大的检测器比没有更糟 —— 一条假账挤掉一条真账。
+            # 一章里只取第一个存量数, 后面的分项一律不看。
+            stock = re.compile(rf"(?:剩余|还剩|仅剩|尚有|只剩|剩下|剩)\s*"
+                               rf"(\d{{1,4}})\s*{unit}")
             seen = []
             for n in sorted(int(x) for x in co if str(x).isdigit()):
-                for mm in re.finditer(rf"(\d{{1,4}})\s*{unit}", str(co[str(n)])):
+                mm = stock.search(str(co[str(n)]))
+                if mm:
                     seen.append((n, int(mm.group(1))))
             bad = [(n, v) for (pn, pv), (n, v) in zip(seen, seen[1:]) if v > pv]
             if bad:
