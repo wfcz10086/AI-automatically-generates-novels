@@ -914,3 +914,35 @@ def test_tension_demand_offers_remote_forms():
     seg = src[i:i + 900]
     assert "书信" in seg and "传到耳朵里" in seg
     assert "不是非得让人到场" in seg
+
+
+def test_destroyed_item_must_not_revive_silently():
+    """写死的关键物件不许悄悄复活。
+
+    踩过: 第161章「枪身锈蚀、扳机卡死、彻底成了一根废铁」, 第173章
+    「武松验看后确认报废, 将枪投入河中」, 第176章却「深夜从地窖取枪」,
+    第178章还「试射一发」。这种复活不报错, 读者一眼看得出来。
+    """
+    from server.orchestrator import Novelist
+
+    def mk(n, body):
+        return (f"第{n}章 标题\n一句话：{body}\n承接：上一章\n出场角色：甲、乙、丙\n"
+                f"剧情1：{body}\n重场：剧情1\n爽点：甲交出账册\n章末钩子：门开了")
+
+    nv = Novelist.__new__(Novelist)
+    nv.hard_rules = lambda: ["【沙漠之鹰·底气】主角带着一把沙漠之鹰",
+                             "一百二十发只减不增，宋朝造不出也补不了"]
+    assert nv._finite_carriers() == ["沙漠之鹰"]
+
+    co = {str(i): mk(i, "他在算账") for i in range(1, 7)}
+    co["3"] = mk(3, "沙漠之鹰锈蚀，彻底成了一根废铁")
+    co["5"] = mk(5, "他从地窖取出沙漠之鹰，擦拭枪身")
+    nv.p = type("P", (), {"_load": lambda self, f, d: co})()
+    hit = [x for x in nv.outline_patterns(1, 6) if "写死" in x]
+    assert hit and "第5" in hit[0], hit
+
+    # 明写了怎么回来的就不报
+    co2 = dict(co)
+    co2["4"] = mk(4, "郓哥下水把沙漠之鹰捞了回来，找铁匠修好")
+    nv.p = type("P", (), {"_load": lambda self, f, d: co2})()
+    assert not [x for x in nv.outline_patterns(1, 6) if "写死" in x]

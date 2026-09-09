@@ -2195,6 +2195,30 @@ class Novelist:
         ("局翻", r"翻|反|倒|变了|不见了|空的|换了|没了|死了|走水|塌"),
     ]
 
+    def _finite_carriers(self) -> List[str]:
+        """铁律里点了名、又声明不可再生的**物件本身**(枪、丹炉、疫苗…)。
+
+        与 _finite_units 一组: 那个查数量, 这个查这东西还在不在。
+        """
+        # 物件名和「不可再生」这句话**常常不在同一条铁律里**: 实测
+        # 【沙漠之鹰·全书最大的底气】是第一条, 「一百二十发只减不增」是
+        # 第二条。要求同条出现就一个也提不到。分开判断: 只要有任一条声明了
+        # 不可再生, 就把所有铁律标题里的物件名收进来。
+        try:
+            rules = self.hard_rules()
+        except Exception:
+            return []
+        if not any(re.search(r"只减不增|不可再生|补不了|造不出|独一无二", r)
+                   for r in rules):
+            return []
+        names = []
+        for r in rules:
+            for m in re.finditer(r"【([^】·]{2,10})", r):
+                nm = m.group(1).strip()
+                if nm and nm not in names:
+                    names.append(nm)
+        return names[:2]
+
     def _finite_units(self) -> List[str]:
         """铁律里声明了「只减不增／不可再生」的计量单位。
 
@@ -2279,6 +2303,36 @@ class Novelist:
             b, c = beats.most_common(1)[0]
             if c / len(ks) >= 0.5:
                 out.append(f"重场有 {c}/{len(ks)} 章落在「{b}」—— 轻重节奏成了固定套路")
+        # 关键物件被写死了(报废/销毁/送走/沉河), 后面又拿出来用。
+        # 实测: 第161章「枪身锈蚀、扳机卡死、彻底成了一根废铁」, 第173章
+        # 「武松验看后确认报废, 将枪投入河中」, 第176章却「深夜从地窖取枪」,
+        # 第178章还「试射一发」。这种复活不报错, 读者却一眼看得出来。
+        GONE = re.compile(r"报废|废铁|成了一根废|扔进|投入河|沉入|销毁|毁了|"
+                          r"再也(?:开|用)不了|彻底不能用")
+        BACK = re.compile(r"捞|取回|寻回|修好|复得|换了一把|另一把|备用")
+        USE = re.compile(r"取出|掏出|开枪|试射|装填|擦拭|按在.{0,4}枪")
+        for item in self._finite_carriers():
+            gone = back = 0
+            revived = []
+            for n in sorted(int(x) for x in co if str(x).isdigit()):
+                body = str(co[str(n)])
+                near = [body[max(0, m.start() - 40):m.start() + 40]
+                        for m in re.finditer(item, body)]
+                if not near:
+                    continue
+                seg = "".join(near)
+                if GONE.search(seg):
+                    gone = n
+                if BACK.search(seg):
+                    back = n
+                if gone and n > gone and back < gone and USE.search(seg):
+                    revived.append(n)
+            if revived:
+                out.append(
+                    f"「{item}」在第{gone}章已经写死（报废／送走／沉了），"
+                    f"第 {'、'.join(map(str, revived[:4]))} 章却又拿出来用 —— "
+                    f"要么把它彻底当没有，要么在复活的那一章明写它是怎么回来的"
+                    f"（谁捞的、谁修的、哪来的备用），不许悄悄复活")
         # 铁律里点名「只减不增」的资源, 数字涨回去就是穿帮。
         # 实测子弹账走成 118→117→116→**119**→1→119→116→1, 还写出过
         # 「第 121 发」(总共才 120 发)。铁律白纸黑字要求「每次开枪当场记账」,
