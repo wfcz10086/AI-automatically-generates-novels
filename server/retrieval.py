@@ -431,11 +431,20 @@ class Retriever:
         # 只给最后 40 个 —— 而「阳谷县隶属哪个州」是前 60 章查的, 早滑出
         # 窗口, 于是又查了第四遍, 同一件事已经存成 14 个不同主题名
         # (阳谷东平东京地理 / 阳谷县行政归属 / 北宋阳谷县行政隶属 / 行政隶属…)。
-        # 用字符重合度粗排就够: 主题名短, 同一件事必然共享关键字。
-        ctx = set(str(context)[:3500])
-        have.sort(key=lambda k: -len(set(k) & ctx))
+        # 排序**必须按二字组、且按主题名长度归一化**。第一版拿单字重合度排,
+        # 而中文长上下文几乎覆盖所有常用字 —— 于是分数只跟主题名有多长有关,
+        # 变成了「按名字长度排序」: 实测本书 1003 张卡时前 40 名平均 18 字、
+        # 全库平均 9.4 字, 而「阳谷至东京里程脚程」排到第 411 名, 永远进不了
+        # 窗口。结果同一件事被查了 26 次(里程)、33 次(仵作验尸)。
+        ctx = self._bigrams(str(context)[:3500])
+        def _rel(k: str) -> float:
+            b = self._bigrams(k)
+            return len(b & ctx) / len(b) if b else 0.0
+        have.sort(key=_rel, reverse=True)
+        # 40 太窄: 主题名平均 9 字, 120 条也才多花 ~1.8k token, 而这一步省下的
+        # 是整轮联网检索(一次 5-12 条付费查询)。
         have_line = ("\n【已经查过、卡片就在手边的主题 —— 同一件事不要再查】\n"
-                     + "、".join(have[:40])) if have else ""
+                     + "、".join(have[:120])) if have else ""
         stage_desc = {"world": "构建世界观/时代背景", "cast": "设计人物与关系表",
                       "plot": "设计章节剧情", "chapter": "写本章正文",
                       "drive": "找能推动剧情的真实素材"}.get(stage, stage)

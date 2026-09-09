@@ -186,3 +186,41 @@ def test_cover_hit_survives_concurrent_mutation():
                      for i in range(5)})
     # 不许抛 RuntimeError
     rt._cover_hit("仵作检验", "宋代仵作检验格目 初检 复检 程序 验尸")
+
+
+def test_have_list_ranks_by_relevance_not_name_length():
+    """已查主题的排序不能被主题名长度带跑。
+
+    第一版用**单字**重合度排序, 而中文长上下文几乎覆盖所有常用字, 于是
+    长名字必然得高分 —— 实测 1003 张卡时前 40 名平均 18 字、全库平均 9.4 字,
+    「阳谷至东京里程脚程」排第 411 名进不了窗口, 同一件事查了 26 次。
+    """
+    from server.retrieval import Retriever
+
+    # 偏置只在**真实规模**的上下文下才现形: 短句里长名字反而重合得少。
+    # 这里拼一段覆盖面接近 3500 字正文的文本(常用字基本都出现过)。
+    # 内容只谈这一趟行程, 但字面覆盖面要广(长上下文的真实特征):
+    # 常用字基本都出现过, 而二字组仍集中在行程这一件事上。
+    text = ("西门庆天不亮从阳谷县动身去东平府, 走陆路车马同行, 沿途要过"
+            "三处税关, 押的是生药与绸缎两样货, 路上遇雨则耽搁, 快则四五日,"
+            "慢则七八日才到得州城。随行的伙计问几时能回, 他只说看府里那位"
+            "大人几时肯见。这一路经过的村镇渡口驿铺, 都是他早年跑熟了的, "
+            "哪家店钱贵、哪段道难行、哪个关口的吏人好说话, 心里有数。" * 12)
+    ctx_bi = Retriever._bigrams(text)
+    ctx_ch = set(text)
+
+    short_relevant = "阳谷东平府路程"
+    long_irrelevant = "完颜宗翰西路军金军后勤粮草真实供应方式与运输损耗"
+
+    def rel(k):
+        b = Retriever._bigrams(k)
+        return len(b & ctx_bi) / len(b) if b else 0.0
+
+    # 修好之后: 短而相关的排在长而不相关的前面
+    assert rel(short_relevant) > rel(long_irrelevant)
+    # 真正要守的性质: 分数必须与主题名长度无关。老写法数的是**绝对重合个数**,
+    # 名字越长分越高, 所以把一个不相关的主题名接得更长就能挤进窗口。
+    padded = long_irrelevant + "及燕云十六州归附女真部族酋长盟誓誓书"
+    assert rel(padded) <= rel(long_irrelevant) + 1e-9, "加长名字不该抬高相关性"
+    assert len(set(padded) & ctx_ch) > len(set(long_irrelevant) & ctx_ch), (
+        "老写法(未归一化的单字重合)会因为名字变长而给出更高的分")
