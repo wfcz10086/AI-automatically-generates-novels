@@ -946,3 +946,17 @@ def test_destroyed_item_must_not_revive_silently():
     co2["4"] = mk(4, "郓哥下水把沙漠之鹰捞了回来，找铁匠修好")
     nv.p = type("P", (), {"_load": lambda self, f, d: co2})()
     assert not [x for x in nv.outline_patterns(1, 6) if "写死" in x]
+
+
+def test_selfcheck_forbids_rework_of_written_chapters():
+    """自审只能指导下一批, 不许要求返工已排好的章。
+
+    踩过: 三条纠偏里有一条是「已排好的章名需立即返工第171-185中至少8章」
+    —— 排纲回路不会重排已落盘的章, 指令白写, 还占掉一个名额(清单只并前三条)。
+    """
+    import pathlib
+    src = pathlib.Path("server/orchestrator.py").read_text(encoding="utf-8")
+    i = src.index("只针对扫出来的模式")
+    seg = src[i:i + 700]
+    assert "不许要求返工" in seg and "执行不了" in seg
+    assert "别把名额都压在同一个模式上" in seg
