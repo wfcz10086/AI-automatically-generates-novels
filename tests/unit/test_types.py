@@ -746,3 +746,32 @@ def test_pleasure_field_demands_event_not_commentary():
     assert "发生了什么" in blk and "不是点评" in blk
     assert "正例" in blk and "反例" in blk
     assert "虚惊一场" in blk, "没把实际收到的坏样本列进反例"
+
+
+def test_patterns_flags_commentary_pleasure():
+    """爽点写成评语要被查出来。
+
+    提示词层面压不住: 字段说明已写「不是点评这一章的写法」并给了正反例,
+    实测 20 章仍然 20 章全是评语, 连点名禁掉的「虚惊一场」都原样写回来
+    (提示词三万多字, 字段说明被读丢)。词法毛病用词法查。
+    """
+    from server.orchestrator import Novelist
+
+    def mk(n, shuang):
+        return (f"第{n}章 标题\n一句话：某事\n承接：上一章\n出场角色：甲、乙、丙\n"
+                f"剧情1：动作\n重场：剧情1\n爽点：{shuang}\n章末钩子：某人说了句话")
+
+    nv = Novelist.__new__(Novelist)
+    bad = ["展现了主角的冷静", "爽点在于智斗升级带来的压迫感", "虚惊一场，危机加深",
+           "既避免了硬刚又具象化了杀气", "环环相扣，层层递进", "为后续埋下伏笔"]
+    co = {str(i + 1): mk(i + 1, bad[i]) for i in range(6)}
+    nv.p = type("P", (), {"_load": lambda self, f, d: co})()
+    hits = [x for x in nv.outline_patterns(1, 6) if "点评" in x]
+    assert hits, "全是评语却没报警"
+
+    good = ["王婆当着满茶坊的人被自己收的银子噎住", "县令当堂把状纸摔回武松脸上",
+            "主角拿到蔡京府的空白手谕", "郓哥把银子推回去说不走",
+            "何九叔交出藏了七日的骨殖", "武松的刀被自己人按住"]
+    co2 = {str(i + 1): mk(i + 1, good[i]) for i in range(6)}
+    nv.p = type("P", (), {"_load": lambda self, f, d: co2})()
+    assert not [x for x in nv.outline_patterns(1, 6) if "点评" in x], "写的是事件却误报"
