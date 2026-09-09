@@ -639,3 +639,32 @@ def test_split_outline_callable_on_instance():
     s = "第1章 甲\n钩子：h\n###fenge\n第2章 乙\n钩子：h"
     assert len(Novelist.split_outline(s, 2)) == 2        # 按类调
     assert len(Novelist(Project(str(d))).split_outline(s, 2)) == 2   # 按实例调
+
+
+def test_pack_fields_accept_str_or_list():
+    """包字段写成一整句时不许被逐字拆开。
+
+    实测同人二创包 corePleasure 是字符串, 旧代码 join 出
+    「熟；悉；感； ；×」—— 题材规范整段变噪声, 而且不报错。
+    """
+    from server.orchestrator import Novelist
+    it = Novelist._items
+    assert it("熟悉感 × 意外感：读者认得每个人") == ["熟悉感 × 意外感：读者认得每个人"]
+    assert it(["a", "b"]) == ["a", "b"]
+    assert it(None) == [] and it("") == [] and it([]) == []
+    assert it({"x": "a", "y": "b"}) == ["a", "b"]
+    assert it(["a", " ", "b"]) == ["a", "b"]
+    assert it(["a", "b", "c"], 2) == ["a", "b"]
+
+
+def test_genre_rules_no_char_splitting():
+    """走完整 genre_rules, 保证字符串字段不出现逐字分隔。"""
+    from server.orchestrator import Novelist
+    nv = Novelist.__new__(Novelist)
+    nv.genre = {"name": "同人二创",
+                "corePleasure": "熟悉感 × 意外感",
+                "cast": "原作核心角色 4-6 位",
+                "pitfalls": ["崩人设"]}
+    out = nv.genre_rules()
+    assert "核心爽点：熟悉感 × 意外感" in out
+    assert "熟；悉" not in out and "原；作" not in out

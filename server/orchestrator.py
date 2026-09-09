@@ -557,6 +557,23 @@ class Novelist:
         return max(lo, min(hi, usable))
 
     # ---------- 规则文本 ----------
+    @staticmethod
+    def _items(v, cap: int = 6) -> list:
+        """包字段既可能写成列表也可能写成一整句, 统一成列表再拼。
+
+        直接 join 一个字符串会**逐字拆开**: 「熟悉感 × 意外感」变成
+        「熟；悉；感； ；×」, 提示词里的题材规范整段成了乱码, 模型收到的是噪声。
+        实测同人二创包的 corePleasure/cast 都是字符串, 已经这么喂了很久。
+        字符串本身就是一条, 不切分 —— 按标点乱切会把一句话腰斩得更难读。
+        """
+        if not v:
+            return []
+        if isinstance(v, str):
+            return [v.strip()]
+        if isinstance(v, dict):
+            v = list(v.values())
+        return [str(x).strip() for x in list(v)[:cap] if str(x).strip()]
+
     def genre_rules(self, full: bool = False) -> str:
         g = self.genre
         if not g:
@@ -564,16 +581,19 @@ class Novelist:
         if full:
             return g.get("raw", "")[:6000]
         parts = [f"题材：{g.get('name')}"]
-        if g.get("corePleasure"):
-            parts.append("核心爽点：" + "；".join(g["corePleasure"][:6]))
+        for label, key, sep, cap in (("核心爽点：", "corePleasure", "；", 6),
+                                     ("人物配置：", "cast", "；", 6)):
+            got = self._items(g.get(key), cap)
+            if got:
+                parts.append(label + sep.join(got))
         if g.get("pacing"):
-            parts.append("节奏要求：\n" + g["pacing"][:600])
-        if g.get("cast"):
-            parts.append("人物配置：" + "；".join(g["cast"][:6]))
-        if g.get("pitfalls"):
-            parts.append("必须避开的坑：\n- " + "\n- ".join(g["pitfalls"][:8]))
-        if g.get("benchmarks"):
-            parts.append("对标作品：" + g["benchmarks"])
+            parts.append("节奏要求：\n" + str(g["pacing"])[:600])
+        pit = self._items(g.get("pitfalls"), 8)
+        if pit:
+            parts.append("必须避开的坑：\n- " + "\n- ".join(pit))
+        bm = self._items(g.get("benchmarks"), 6)
+        if bm:
+            parts.append("对标作品：" + "；".join(bm))
         return "\n".join(parts)
 
     def style_rules(self) -> str:
@@ -581,9 +601,10 @@ class Novelist:
         if not s:
             return ""
         out = [f"平台文风：{s.get('name')}（{s.get('platform','')}）"]
-        out += ["- " + r for r in s.get("rules", [])]
-        if s.get("banned"):
-            out.append("禁止：" + "、".join(s["banned"]))
+        out += ["- " + r for r in self._items(s.get("rules"), 40)]
+        ban = self._items(s.get("banned"), 60)
+        if ban:
+            out.append("禁止：" + "、".join(ban))
         sd = self.cfg.get("style_defaults", {})
         pref = [f"叙事视角：{sd.get('narration')}" if sd.get("narration") else "",
                 f"时态：{sd.get('tense')}" if sd.get("tense") else "",
