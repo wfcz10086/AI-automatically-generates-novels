@@ -368,6 +368,16 @@ class Retriever:
                    if v.get("good_query") and k.startswith(self._key(self.era) + "|")]
         ex_line = ("\n【同类题材查成过的检索式，照这个路数写】\n"
                    + "\n".join(f"- {q}" for q in samples[-6:])) if samples else ""
+        # 已经查过的主题也要给它看。考据库按**模型自己起的主题名**做键,
+        # 而这个名字每次都不一样 —— 实测「阳谷县归哪个州」被存成 15 张卡
+        # (阳谷东平东京地理 / 宋代郓州济州行政隶属 / 宋代 汴京 阳谷县 …),
+        # `topic in facts` 永远 miss, 同一件事反复付费重查。
+        # 不做自动合并(「牙人身份法律」和「生药铺商户身份法律」共享三个词
+        # 却是两件事, 合错了更糟), 交给模型判断: 它看得懂哪些是同一件事。
+        have = [k for k, v in self.facts.items()
+                if isinstance(v, dict) and v.get("card")]
+        have_line = ("\n【已经查过、卡片就在手边的主题 —— 同一件事不要再查】\n"
+                     + "、".join(have[-40:])) if have else ""
         stage_desc = {"world": "构建世界观/时代背景", "cast": "设计人物与关系表",
                       "plot": "设计章节剧情", "chapter": "写本章正文",
                       "drive": "找能推动剧情的真实素材"}.get(stage, stage)
@@ -389,7 +399,7 @@ class Retriever:
         prompt = (
             f"你在帮一位网文作者做资料准备。当前任务：{stage_desc}。\n\n"
             f"下面是已有的设定与内容：\n{context[:3500]}\n\n"
-            f"{hint_line}{ex_line}\n\n"
+            f"{hint_line}{ex_line}{have_line}\n\n"
             f"{ask_line}"
             f"输出最多 {k} 条，每行一条，严格格式：\n"
             f"主题|检索式\n"

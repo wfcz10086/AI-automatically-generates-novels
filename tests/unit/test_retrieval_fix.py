@@ -67,3 +67,25 @@ def test_plan_queries_strips_boolean_syntax():
     q = got[0]["query"]
     assert '"' not in q and "或" not in q.split(), q
     assert "通判" in q and "侵越" in q
+
+
+def test_plan_queries_shows_existing_topics():
+    """已有卡片的主题要摆给规划模型看, 免得同一件事换个名字反复重查。
+
+    实测「阳谷县归哪个州」被存成 15 张卡(阳谷东平东京地理 / 宋代郓州济州
+    行政隶属 / 宋代 汴京 阳谷县 …), 考据库按模型自起的主题名做键,
+    名字每次不同, `topic in facts` 永远 miss。
+    """
+    from server.retrieval import Retriever
+    rt = Retriever.__new__(Retriever)
+    seen = {}
+    rt.plan = lambda q: seen.setdefault("p", q) or "地理|宋代 东平府 位置"
+    rt.era, rt.shared, rt.topics = "北宋", {}, {}
+    rt.facts = {"阳谷东平东京地理": {"card": "北宋东京为开封府…"},
+                "宋代郓州济州行政隶属": {"card": "郓州济州均属京东西路…"},
+                "没卡片的主题": {}}
+    rt.plan_queries(stage="chapter", context="正文" * 20, k=3)
+    p_ = seen["p"]
+    assert "已经查过" in p_ and "阳谷东平东京地理" in p_
+    assert "宋代郓州济州行政隶属" in p_
+    assert "没卡片的主题" not in p_, "没卡片的不该算已查过"
