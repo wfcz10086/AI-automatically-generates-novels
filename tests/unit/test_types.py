@@ -1149,3 +1149,33 @@ def test_ledger_mismatch_becomes_a_replan_job():
     assert jobs[0]["chapters"] == [145], "要指向写错的那一章, 不是下一批"
     assert "不大于 105" in jobs[0]["demand"], "要给出上限"
     assert "剧情一律不动" in jobs[0]["demand"], "只改数字, 别把整章重写了"
+
+
+def test_finite_check_does_not_name_past_chapters_in_the_guide():
+    """进纠偏的版本不许点名已排好的章, 点名只留给重排工单。
+
+    代码里早有明文: 已落盘的章在这条回路里不会重排, 写了也执行不了, 还会
+    挤掉一条能执行的。实测纠偏里点名第29/32/38章之后, 连着两批各多吐十几章
+    (含第1、22、38、67章), 全被越界丢弃 —— 模型真的跑去重写它们了。
+    """
+    from server.orchestrator import Novelist
+
+    nv = Novelist.__new__(Novelist)
+    nv.hard_rules = lambda: [
+        "【沙漠之鹰】主角带着一把沙漠之鹰、一百二十发子弹",
+        "子弹只减不增，造不出也补不了，每次开枪当场记账",
+    ]
+    nv.p = type("P", (), {"_load": lambda self, *a: {
+        "30": "开枪（第30发，剩117发）",     # 章号漏进序号栏
+        "104": "剩105发",
+        "145": "剩119发",                    # 涨回去了
+    }})()
+
+    guide = "\n".join(nv.outline_finite_check(name_chapters=False))
+    assert "第30章" not in guide, "纠偏里不许点名要返工的旧章"
+    assert "第145章" not in guide
+    # 基准点是「从哪儿接着往下减」, 不是返工要求, 必须留着
+    assert "第104章的 105发" in guide
+
+    named = "\n".join(nv.outline_finite_check(name_chapters=True))
+    assert "第30章" in named and "第145章" in named, "重排工单那一路照旧点名"

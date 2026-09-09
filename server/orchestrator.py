@@ -2380,7 +2380,7 @@ class Novelist:
                     units.append(m.group(2))
         return units[:3]
 
-    def outline_finite_check(self) -> List[str]:
+    def outline_finite_check(self, name_chapters: bool = True) -> List[str]:
         """有限资源台账的**硬矛盾**检查（零模型调用, 每批都跑）。
 
         原本这段长在 outline_patterns 里, 而 outline_patterns 只有每 25 章的
@@ -2443,12 +2443,18 @@ class Novelist:
                         if o + rem != total:
                             mism.append((n, o, rem, total - rem))
                 if mism:
+                    # 点名旧章号**只能给重排工单看**。并进纠偏会让模型跑去重写
+                    # 那几章 —— 代码里早有明文: 已落盘的章在这条回路里不会重排,
+                    # 写了也执行不了。实测点名第29/32/38章之后, 连着两批各多吐
+                    # 十几章(含第1、22、38、67章), 全被越界丢弃, 白烧 token。
+                    where = ("；".join(f"第{n}章写「第{o}{unit}、剩{r}{unit}」"
+                                      f"（该是第{c}{unit}）"
+                                      for n, o, r, c in mism[:4]) + "。"
+                             ) if name_chapters else ""
                     out.append(
                         f"「第几{unit}」和「还剩几{unit}」对不上账（共 {total}{unit}）："
-                        + "；".join(f"第{n}章写「第{o}{unit}、剩{r}{unit}」"
-                                    f"（该是第{c}{unit}）"
-                                    for n, o, r, c in mism[:4])
-                        + f"。序号是**已经用掉的第几{unit}**，"
+                        + where
+                        + f"序号是**已经用掉的第几{unit}**，"
                           f"不是章号也不是剩余数：第几{unit} + 还剩几{unit} = {total}")
             bad = [(n, v) for (pn, pv), (n, v) in zip(seen, seen[1:]) if v > pv]
             if bad:
@@ -2461,10 +2467,12 @@ class Novelist:
                 ok = [(n, v) for n, v in seen if n < first_bad]
                 anchor = (f"第{ok[-1][0]}章的 {ok[-1][1]}{unit}" if ok
                           else f"开篇的总数")
+                where = ("；".join(f"第{n}章写成 {v}{unit}" for n, v in bad[:4])
+                         + "。") if name_chapters else ""
                 out.append(
                     f"「{unit}」这类不可再生的东西数字涨回去了："
-                    + "；".join(f"第{n}章写成 {v}{unit}" for n, v in bad[:4])
-                    + f"。最后一个对的数是{anchor} —— "
+                    + where
+                    + f"最后一个对的数是{anchor} —— "
                       f"接下来这一批必须从这个数接着往下减，不许重新起数。"
                       f"而且**必须写确切数字**：「一百多{unit}」「几十{unit}」"
                       f"「所剩无几」都不算记账，铁律要的是「这是第几{unit}、"
@@ -4047,7 +4055,7 @@ class Novelist:
             # 每 25 章才走一次、还要先经模型改写成 ≤4 条 —— 实测「126-150：3 个
             # 模式 → 3 条纠偏」出来的全是钩子和章名, 弹药那两条一条没进。
             try:
-                hard = self.outline_finite_check()[:2]
+                hard = self.outline_finite_check(name_chapters=False)[:2]
             except Exception as e:
                 hard = []
                 self._log(f"台账核对跳过: {e}")
