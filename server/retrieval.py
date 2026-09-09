@@ -490,6 +490,15 @@ class Retriever:
             q = re.sub(r"\s+", " ", q).strip()
             topic, q = topic[:20], q[:80]
             if topic and q and len(q) > 3:
+                # **同一轮里先自己去一次重**。实测一次规划吐出四条全是榷场:
+                #   榷场 禁约 私贩 越界 / 宋金 榷场 燕京 贸易 /
+                #   榷场 禁榷 管理 制度 / 宋金 榷场 地点 分布
+                # 跨批去重管不到这个 —— 它们是同一次调用里生成的。
+                # 同一轮同一上下文, 判重可以比跨批激进些: 撞了就是真撞了。
+                qb = self._bigrams(q)
+                if any(qb and len(qb & self._bigrams(o["query"])) / len(qb) >= 0.6
+                       for o in out):
+                    continue
                 out.append({"topic": topic, "hint": topic, "query": q})
             if len(out) >= k:
                 break

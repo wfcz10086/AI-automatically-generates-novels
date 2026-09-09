@@ -144,3 +144,23 @@ def test_cover_hit_uses_bigrams_not_fixed_chunks():
     assert rt._cover_hit("宋代盐引制度", "宋代盐引 钞引 榷盐 转运 商人") == ""
     # 关键词太少不判, 免得瞎并
     assert rt._cover_hit("验尸", "验尸") == ""
+
+
+def test_plan_queries_dedupes_within_one_round():
+    """同一轮规划里的重复检索式要去掉。
+
+    实测一次吐出四条全是榷场: 禁约私贩越界 / 燕京贸易 / 禁榷管理制度 /
+    地点分布。跨批去重管不到 —— 它们出自同一次调用。
+    """
+    from server.retrieval import Retriever
+    rt = Retriever.__new__(Retriever)
+    rt.plan = lambda q: ("边贸|宋代 榷场 禁约 私贩 越界\n"
+                         "边贸|宋代 榷场 私贩 越界 禁约\n"
+                         "地点|宋金 榷场 地点 分布\n"
+                         "药材|宋代 生药铺 药材 进货 渠道")
+    rt.era, rt.facts, rt.topics, rt.shared = "北宋", {}, {}, {}
+    got = [g["query"] for g in rt.plan_queries(stage="chapter",
+                                               context="正文" * 30, k=6)]
+    assert len(got) == 3, got          # 第二条被去掉
+    assert "宋代 榷场 私贩 越界 禁约" not in got
+    assert "宋金 榷场 地点 分布" in got  # 不同侧面要留着
