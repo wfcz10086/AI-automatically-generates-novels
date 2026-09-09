@@ -4,6 +4,9 @@
 config/providers.local.yaml
 
 # 运行产物
+.*.pid
+.*.lock
+.outline.*
 projects/
 .cache/
 reports/
