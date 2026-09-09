@@ -70,8 +70,13 @@ def to_plan(project) -> str:
     L.append("")
 
     def block(title, body):
+        # 嵌进来的文档自带 markdown 标题（世界观圣经里就有一串 ##），
+        # 原样拼进去会把方案本身的层级冲乱 —— 目录里「朝代设定」「禁用词表」
+        # 会跟「阶段骨架」平级。统一降两档再嵌。
         if body and str(body).strip():
-            L.extend([f"## {title}", "", str(body).strip(), ""])
+            body = re.sub(r"^(#{1,4})\s", lambda m: "#" * min(6, len(m.group(1)) + 2) + " ",
+                          str(body).strip(), flags=re.M)
+            L.extend([f"## {title}", "", body, ""])
 
     for lbl in ("premise", "background", "relationships"):
         block({"premise": "一句话故事", "background": "背景",
