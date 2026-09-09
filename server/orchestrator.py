@@ -2033,6 +2033,17 @@ class Novelist:
         ctx["characters"] = self.p.read("characters.md")
         ov = self.prompt_override("outline")
         prompt = render(ov or lvl["prompt"], ctx)
+        # 总纲用的是**类型包里的模板**, 不在 BUILTIN_PROMPTS 里 —— 于是铁律和
+        # 开篇硬指标都进不来。实测: 铁律要求「第1章亮枪、前3章当街打死一个人」,
+        # 总纲把卷一写成《死局》, 情感曲线「恐惧→算计→侥幸」, 全文没有一处
+        # 「第一枪/打死/当街」。总纲定的是分卷骨架, 它不炸, 细纲再努力也白搭。
+        # 不改类型包(那会影响所有书), 在这一步补。
+        extra = [x for x in (
+            "\n\n【本书铁律 —— 分卷与开篇必须与之一致，冲突时以铁律为准】\n"
+            + "\n".join(f"- {r_}" for r_ in self.hard_rules()) if self.hard_rules() else "",
+            "\n\n" + dl.opening_spec(self.dials(), 1),
+        ) if x and str(x).strip()]
+        prompt += "".join(extra)
         r = call("planning", prompt, on_delta, max_tokens=int(self.g.get("max_tokens_outline") or 8000))
         ol = self.fix_scale(clean(r.text))
         self.p.write("outline.md", ol)
