@@ -164,3 +164,25 @@ def test_plan_queries_dedupes_within_one_round():
     assert len(got) == 3, got          # 第二条被去掉
     assert "宋代 榷场 私贩 越界 禁约" not in got
     assert "宋金 榷场 地点 分布" in got  # 不同侧面要留着
+
+
+def test_cover_hit_survives_concurrent_mutation():
+    """遍历 facts 必须先拍快照 —— 并发抓取会同时改它。
+
+    实测日志: [retrieval]「运河浮尸牵连」查失败: dictionary changed size
+    during iteration。4 个 worker 同时改 self.facts, 而 _cover_hit 直接
+    遍历, 整条检索白花。
+    """
+    from server.retrieval import Retriever
+    rt = Retriever.__new__(Retriever)
+
+    class Racy(dict):
+        def items(self):                     # 模拟遍历途中被改
+            out = super().items()
+            self[f"新主题{len(self)}"] = {"card": "x"}
+            return out
+
+    rt.facts = Racy({f"主题{i}": {"card": "宋代验尸格目初检复检程序"}
+                     for i in range(5)})
+    # 不许抛 RuntimeError
+    rt._cover_hit("仵作检验", "宋代仵作检验格目 初检 复检 程序 验尸")

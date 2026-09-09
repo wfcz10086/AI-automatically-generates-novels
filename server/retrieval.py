@@ -263,7 +263,10 @@ class Retriever:
         if len(want) < 8:
             return ""
         best, bestr = "", 0.0
-        for k, v in self.facts.items():
+        # **必须先拍快照**: 并发抓取有 4 个 worker 在同时改 self.facts,
+        # 直接遍历会撞上「dictionary changed size during iteration」——
+        # 实测「运河浮尸牵连」那一条就是这么整条查失败的, 钱花了东西没拿到。
+        for k, v in list(self.facts.items()):
             card = (v or {}).get("card") if isinstance(v, dict) else None
             if not card or k == topic:
                 continue
@@ -422,7 +425,7 @@ class Retriever:
         # `topic in facts` 永远 miss, 同一件事反复付费重查。
         # 不做自动合并(「牙人身份法律」和「生药铺商户身份法律」共享三个词
         # 却是两件事, 合错了更糟), 交给模型判断: 它看得懂哪些是同一件事。
-        have = [k for k, v in self.facts.items()
+        have = [k for k, v in list(self.facts.items())
                 if isinstance(v, dict) and v.get("card")]
         # 按**相关性**挑, 不是按时间取尾巴。实测本书攒到 769 个主题时,
         # 只给最后 40 个 —— 而「阳谷县隶属哪个州」是前 60 章查的, 早滑出
