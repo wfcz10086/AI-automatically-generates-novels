@@ -67,11 +67,39 @@ def cast_block(roster: List[Dict[str, str]], chapter_outline: str,
     return "\n".join(lines)
 
 
+def voice_block(roster, chapter_outline: str, protagonist: str = "") -> str:
+    """本章出场角色的**声音卡** —— 只给出场的人，且给全。
+
+    压成一行的人物摘要（_digest）足够交代「他是谁」，交代不了「他怎么说话」。
+    分章独立生成时没有可引用的语感锚，所有人都会说同一种腔调的金句 ——
+    实测某书读到一百多章，玳安、老书吏、何九叔的话换个名字看不出差别。
+    自称与口头禅是锚，原声样本是可模仿的样，禁用词是负向约束。
+    """
+    out = []
+    for c in roster or []:
+        name, card = c.get("name", ""), c.get("card", "")
+        if not name:
+            continue
+        if not (name in (chapter_outline or "") or name == protagonist):
+            continue
+        got = []
+        for key, _hint in VOICE_FIELDS:
+            m = re.search(rf"\*?\*?{key}\*?\*?\s*[:：]\s*([^\n]+)", card)
+            if m and m.group(1).strip():
+                got.append(f"{key}：{m.group(1).strip()[:90]}")
+        if got:
+            out.append(f"【{name}】" + "　".join(got))
+    if not out:
+        return ""
+    return ("#本章人物的说话方式（照着原声样本的腔调写，别让谁都说同一种话）\n"
+            + "\n".join(out))
+
+
 def _digest(card: str, limit: int = 150) -> str:
     """把多行角色卡压成一行 —— 真实提示词里人物卡都是一行一个。"""
     parts = []
     for key in ("身份", "年龄", "性格三词", "核心动机", "与主角关系",
-                "专属口头禅或说话习惯"):
+                "口头禅", "专属口头禅或说话习惯"):
         m = re.search(rf"\*?\*?{key}\*?\*?\s*[:：]\s*([^\n]+)", card)
         if m:
             parts.append(m.group(1).strip().rstrip("。"))
@@ -171,6 +199,9 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
     cb = cast_block(roster, chapter_outline, protagonist)
     if cb:
         seg.append(f"\n#人物资料卡（标注[本章未出现]的角色本章不得登场）\n{cb}")
+    vb = voice_block(roster, chapter_outline, protagonist)
+    if vb:
+        seg.append("\n" + vb)
     if relations:
         seg.append(f"\n#感情与关系线索\n{relations.strip()}")
     if mainline:
@@ -198,12 +229,27 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
 #: 另有一批模型把钩子塞进「剧情6：钩子：」、爽点整批丢掉，而守卫只松松地
 #: 查了「钩子」二字，照样放行。格式与检查必须同源。
 #: (字段名, 是否必需, 提示词里的说明)
+#: 人物声音卡的字段。角色档案原来只有一段散文描述，人物只有动作没有语感 ——
+#: 分章独立生成时说话会趋同：谁都在说「这账，平是不平」。
+#: 自称与口头禅是可引用的锚，三句原声样本是可模仿的样本，禁用词是负向约束。
+VOICE_FIELDS = [
+    ("自称", "他管自己叫什么（武二／老夫／老娘／小的／我）"),
+    ("口头禅", "他反复说的一两句话或口癖，不超过 8 字"),
+    ("语感", "一句话说清他说话的样子：长短句、粗细、绕不绕弯、爱不爱反问"),
+    ("原声样本", "三句他会说的话，用｜分隔。要能一眼认出是他，不是别人"),
+    ("禁用词", "他绝不会用的词，用、分隔（比如粗人不说文绉绉的词）"),
+]
+
+
 OUTLINE_FIELDS = [
     ("承接", True,
      "（用一句话写清这一章从上一章的什么地方接上来 —— 上一章的钩子怎么落地、"
      "谁在等什么、时间过了多久）"),
     ("出场角色", True, "（从可用角色里挑，至少 3 人，主角之外要有 2 个配角有戏）"),
     ("剧情1", True, "（一个具体动作或事件，一句话）"),
+    ("重场", True,
+     "（这一章哪一条剧情是**重头戏**，写「剧情N」。重场那一拍要占本章一半篇幅，"
+     "其余是过场 —— 不标的话六条剧情等重，正文会平均用力，全章一个调门）"),
     ("爽点", True, "（这一章读者爽在哪，一句话）"),
     ("章末钩子", True, "（具体的钩子：新威胁／反常细节／未接的消息，不许写万金油）"),
 ]

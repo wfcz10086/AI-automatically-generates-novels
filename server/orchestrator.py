@@ -377,7 +377,15 @@ BUILTIN_PROMPTS = {
         "输出 10-14 个角色，格式严格如下（每人一节，标题行必须是「### N. 姓名：某某」）：\n"
         "### 1. 姓名：某某\n"
         "**身份**：…\n**年龄**：…\n**外貌一句话**：…\n**性格三词**：…\n"
-        "**核心动机**：…\n**与主角关系**：…\n**专属口头禅或说话习惯**：…\n**结局走向**：…\n\n"
+        "**核心动机**：…\n**与主角关系**：…\n"
+        # 声音卡：原来只有一行「专属口头禅」，人物只有动作没有语感 ——
+        # 分章独立生成时说话必然趋同，谁都在说同一种腔调的金句。
+        "**自称**：（他管自己叫什么：武二／老夫／老娘／小的／洒家）\n"
+        "**口头禅**：（反复说的一两句话或口癖，不超过 8 字）\n"
+        "**语感**：（一句话说清他说话的样子：长短句、粗细、绕不绕弯、爱不爱反问）\n"
+        "**原声样本**：（三句他会说的话，用 ｜ 分隔。要能一眼认出是他，不是别人）\n"
+        "**禁用词**：（他绝不会用的词，用、分隔）\n"
+        "**结局走向**：…\n\n"
         "【硬性约束】\n"
         "1. 必须有 4 位以上**戏份仅次于主角的核心配角**，各自有独立目标与故事线，"
         "不是主角的应声筒\n"
@@ -1230,9 +1238,13 @@ class Novelist:
             orgs = st.setdefault("orgs", {})
             for x in got:
                 if x.get("org"):
+                    # 形状必须与 _extract 写的一致：{at, state}。
+                    # 两个生产者各写各的形状，消费方一取 v['at'] 就 KeyError ——
+                    # 而这条路径在**写正文**时才走到，排纲全程不报错，
+                    # 等于埋到动笔那天才炸。
                     orgs.setdefault(x["org"], {
-                        "name": x["org"], "thread": x["name"],
-                        "span": x["span"], "state": "在册"})
+                        "at": int(x["span"][0]), "state": f"（支线「{x['name']}」）在册",
+                        "thread": x["name"], "span": x["span"]})
             self.p.save()
             self._log(f"支线 {len(got)} 条：" + "、".join(x["name"] for x in got))
         return got
@@ -1511,9 +1523,13 @@ class Novelist:
         if orgs:
             # 变量名别用 recent —— 本函数上面的 recent 是「最近章节原文」,
             # 覆盖掉会让记忆装配拿到势力元组而不是字符串（这类遮蔽栽过两次）
-            hot_orgs = sorted(orgs.items(), key=lambda kv: -kv[1].get("at", 0))[:8]
+            hot_orgs = sorted((kv for kv in orgs.items() if isinstance(kv[1], dict)),
+                              key=lambda kv: -int(kv[1].get("at") or 0))[:8]
+            # 台账条目是模型抽出来的，字段随时可能缺 —— 用 .get 兜住，
+            # 缺一个字段不该让整章写作崩掉
             cons.append("【势力现状·不得与此冲突】" + "；".join(
-                f"{nm}（第{v['at']}章）{v['state']}" for nm, v in hot_orgs))
+                f"{nm}（第{v.get('at', '?')}章）{v.get('state', '')}"
+                for nm, v in hot_orgs))
         if lr.get("must_appear"):
             cons.append("【断线角色必须回归】" + "、".join(lr["must_appear"][:5])
                         + " —— 接下来几章内安排他们出场并有实质戏份。")

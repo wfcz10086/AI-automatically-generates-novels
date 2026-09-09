@@ -467,7 +467,7 @@ def test_outline_field_contract_is_single_source():
     from server.prompt_compiler import (OUTLINE_FIELDS, OUTLINE_REQUIRED,
                                         outline_format_block,
                                         compile_outline_prompt)
-    assert OUTLINE_REQUIRED == ["承接", "出场角色", "剧情1", "爽点", "章末钩子"]
+    assert OUTLINE_REQUIRED == ["承接", "出场角色", "剧情1", "重场", "爽点", "章末钩子"]
 
     block = outline_format_block(6)
     for f in OUTLINE_REQUIRED:
@@ -485,7 +485,7 @@ def test_incomplete_chapter_is_rejected():
     import re
     from server.prompt_compiler import OUTLINE_REQUIRED
     good = ("第1章 甲\n承接：接住上一章\n出场角色：A、B、C\n剧情1：出事了\n"
-            "爽点：翻盘\n章末钩子：有人来报")
+            "重场：剧情1\n爽点：翻盘\n章末钩子：有人来报")
     bad = "第1章 甲\n承接：接住上一章\n出场角色：A、B\n剧情1：出事了\n剧情6：钩子：有人来报"
 
     def lack(body):
@@ -493,7 +493,7 @@ def test_incomplete_chapter_is_rejected():
                 if not re.search(rf"^\s*{f}\s*[:：]\s*\S", body, re.M)]
 
     assert lack(good) == []
-    assert set(lack(bad)) == {"爽点", "章末钩子"}
+    assert set(lack(bad)) == {"重场", "爽点", "章末钩子"}
 
 
 def test_dials_are_orthogonal_and_drive_mechanisms():
