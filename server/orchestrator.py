@@ -2311,21 +2311,70 @@ class Novelist:
                     names.append(nm)
         return names[:2]
 
+    def _finite_total(self, unit: str) -> int:
+        """铁律里声明的这个单位一共有多少个（「一百二十发」→ 120）。
+
+        用来给序号对账: 第几发 + 还剩几发 = 总数。读不出来就返回 0 不查,
+        宁可不报也别拿错的总数报一片假账。
+        """
+        CN = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+              "六": 6, "七": 7, "八": 8, "九": 9}
+
+        def cn2int(t: str) -> int:
+            if t.isdigit():
+                return int(t)
+            n, cur = 0, 0
+            for ch in t:
+                if ch in CN:
+                    cur = CN[ch]
+                elif ch == "十":
+                    cur = (cur or 1) * 10
+                    n, cur = n + cur, 0
+                elif ch == "百":
+                    cur = (cur or 1) * 100
+                    n, cur = n + cur, 0
+                elif ch == "千":
+                    cur = (cur or 1) * 1000
+                    n, cur = n + cur, 0
+            return n + cur
+
+        try:
+            rules = self.hard_rules()
+        except Exception:
+            return 0
+        best = 0
+        pat = re.compile(rf"(\d{{1,4}}|[零一二两三四五六七八九十百千]+)\s*{unit}")
+        for r in rules:
+            for m in pat.finditer(r):
+                v = cn2int(m.group(1))
+                # 取最大的那个: 铁律里既会写总数也会写「第一发」「一把」,
+                # 总数必然是其中最大的。
+                if 1 < v <= 100000:
+                    best = max(best, v)
+        return best
+
     def _finite_units(self) -> List[str]:
         """铁律里声明了「只减不增／不可再生」的计量单位。
 
         从铁律原文里读, 不写死 —— 换一本书可能是丹药、箭矢、灵石、疫苗。
         没声明的单位不查: 钱粮兵马本来就该涨, 拿同一把尺子量会误报一片。
         """
-        units, pat = [], re.compile(r"(\d+|[一二三四五六七八九十百千万]+)\s*"
+        units, pat = [], re.compile(r"(\d+|[一二三四五六七八九十百千万几多]+)\s*"
                                     r"([发枚颗粒支张片瓶]|块|把)")
         try:
             rules = self.hard_rules()
         except Exception:
             return []          # 读不到铁律就不查, 别把整个套路扫描拖下水
+        # 数量和「不可再生」这句话**常常不在同一条铁律里** —— _finite_carriers
+        # 早就踩过并修了这个坑, 这里当初漏了, 于是本书整条弹药账从来没被查过:
+        #   第2条【沙漠之鹰·开局就砸场】…一百二十发子弹…      有「发」无「只减不增」
+        #   第3条 子弹只减不增…（这是第几发、还剩多少）        有「只减不增」无数字
+        # 要求同条出现就一个单位也提不到, 实测 _finite_units() 返回空,
+        # 于是子弹从第104章的105发跳回第145章的119发, 一声没吭。
+        if not any(re.search(r"只减不增|不可再生|用一.{0,2}少一|补不了|造不出", r)
+                   for r in rules):
+            return []
         for r in rules:
-            if not re.search(r"只减不增|不可再生|用一.{0,2}少一|补不了|造不出", r):
-                continue
             for m in pat.finditer(r):
                 if m.group(2) not in units:
                     units.append(m.group(2))
@@ -2493,6 +2542,29 @@ class Novelist:
                     f"（第 {'、'.join(map(str, lasts[:6]))} 章）—— "
                     f"每次危机都是最后一{unit}, 等于永远用不完。"
                     f"要么写清具体还剩几{unit}, 要么就别再说「最后一{unit}」")
+            # 序数那一栏也要对账: 「第N发」+「剩M发」必须等于总数。
+            # 存量单调不代表账对 —— 实测存量 119→117→…→105 一路单调,
+            # 序号却写成「第47发, 剩112发」(第47章)、「第50发, 剩111发」
+            # (第50章): **章号漏进了序号栏**; 还有「第108发, 剩108发」
+            # (第68章): 剩余数漏进了序号栏。读者一眼就看出来。
+            total = self._finite_total(unit)
+            if total:
+                PAIR = re.compile(rf"第\s*(\d{{1,4}})\s*{unit}[^)）]{{0,12}}?"
+                                  rf"剩\s*(?:余\s*)?(\d{{1,4}})\s*{unit}")
+                mism = []
+                for n in sorted(int(x) for x in co if str(x).isdigit()):
+                    for m in PAIR.finditer(str(co[str(n)])):
+                        o, rem = int(m.group(1)), int(m.group(2))
+                        if o + rem != total:
+                            mism.append((n, o, rem, total - rem))
+                if mism:
+                    out.append(
+                        f"「第几{unit}」和「还剩几{unit}」对不上账（共 {total}{unit}）："
+                        + "；".join(f"第{n}章写「第{o}{unit}、剩{r}{unit}」"
+                                    f"（该是第{c}{unit}）"
+                                    for n, o, r, c in mism[:4])
+                        + f"。序号是**已经用掉的第几{unit}**，"
+                          f"不是章号也不是剩余数：第几{unit} + 还剩几{unit} = {total}")
             bad = [(n, v) for (pn, pv), (n, v) in zip(seen, seen[1:]) if v > pv]
             if bad:
                 out.append(

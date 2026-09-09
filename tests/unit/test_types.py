@@ -1043,3 +1043,28 @@ def test_deadline_stops_nagging_once_done_late():
     assert [x for x in nv.outline_patterns(1, 8) if "硬指标" in x], "缺打死时该报"
     co["7"] = mk(7, "他一枪毙命，那恶奴当场断气")   # 迟到、且用的是同义写法
     assert not [x for x in nv.outline_patterns(1, 8) if "硬指标" in x], "补上了就不该再报"
+
+
+def test_finite_units_reads_across_rules():
+    """数量和「不可再生」这句话不在同一条铁律里, 也要认出来。
+
+    _finite_carriers 早就踩过这个坑并修了, _finite_units 当初漏了 —— 于是
+    本书整条弹药账**从来没被查过**:
+      第2条【沙漠之鹰·开局就砸场】…一百二十发子弹…   有「发」无「只减不增」
+      第3条 子弹只减不增…（这是第几发、还剩多少）     有「只减不增」无数字
+    要求同条出现就一个单位也提不到, 结果子弹从第104章的105发跳回第145章的
+    119发, 一声没吭。
+    """
+    from server.orchestrator import Novelist
+
+    nv = Novelist.__new__(Novelist)
+    nv.hard_rules = lambda: [
+        "【沙漠之鹰·开局就砸场】主角带着一把沙漠之鹰、一百二十发子弹",
+        "子弹只减不增，宋朝造不出也补不了，每次开枪当场记账（这是第几发、还剩多少）",
+    ]
+    assert "发" in nv._finite_units(), "跨条铁律也要认出「发」"
+    assert nv._finite_total("发") == 120, "总数要从中文数字读出来"
+
+    # 没有任何一条声明不可再生, 就一个也不查 —— 钱粮兵马本来就该涨
+    nv.hard_rules = lambda: ["主角开局有一百二十发子弹，随时能掏"]
+    assert nv._finite_units() == []
