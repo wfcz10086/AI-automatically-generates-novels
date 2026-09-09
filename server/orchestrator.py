@@ -2934,6 +2934,7 @@ class Novelist:
                        + "\n\n".join(full))
         return "\n\n".join(out)
 
+    @staticmethod
     def split_outline(text: str, want: int = 0) -> List[str]:
         """把一批细纲切成单章 —— 分隔符靠不住，得有兜底。
 

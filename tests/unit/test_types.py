@@ -614,3 +614,25 @@ def test_one_liner_prefers_model_written():
     out = Novelist(Project(str(d))).outline_digest(3)
     assert "模型自己写的那句才是重点" in out
     assert "只能回退到抽取这句" in out          # 老章节仍要有代表，不能丢
+
+
+def test_split_outline_callable_on_instance():
+    """split_outline 必须能从实例上调用。
+
+    实测踩过：一次正则改代码把 @staticmethod 装饰器吃掉了，
+    单测全绿（测试是按类调用的），可实际路径 self.split_outline(text, count)
+    直接 TypeError —— 守护每 10 秒重试一次，每次都先花五分钟完整生成
+    一万两千字的细纲、再崩在解析上，白烧了五十分钟。
+    """
+    import json as _j, tempfile, pathlib as _p
+    from server.orchestrator import Novelist, Project
+    d = _p.Path(tempfile.mkdtemp()) / "p"
+    (d / "chapters").mkdir(parents=True)
+    (d / "project.json").write_text(_j.dumps(
+        {"title": "T", "type_id": "novel", "genre_id": "", "style_id": "",
+         "target_chapters": 10, "target_words": 30000, "fields": {}},
+        ensure_ascii=False), encoding="utf-8")
+    (d / "state.json").write_text('{"done": [], "current": 0}', encoding="utf-8")
+    s = "第1章 甲\n钩子：h\n###fenge\n第2章 乙\n钩子：h"
+    assert len(Novelist.split_outline(s, 2)) == 2        # 按类调
+    assert len(Novelist(Project(str(d))).split_outline(s, 2)) == 2   # 按实例调
