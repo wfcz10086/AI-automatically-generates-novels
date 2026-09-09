@@ -50,3 +50,20 @@ def test_plan_queries_strips_column_labels():
     assert qs[0] == "宋刑统 告事不实 反坐", qs
     assert got[1]["topic"] == "制度", got
     assert qs[2] == "宋代 东平府 建制"
+
+
+def test_plan_queries_strips_boolean_syntax():
+    """模型写成搜索引擎高级语法时要剥成朴素关键词。
+
+    实测发出去过: 通判" "知县" "侵越" 或 "通判" "县事" "不得
+    —— 博查不吃布尔语法, 引号和「或」全是噪声词, 80 字截断还会把它
+    腰斩成半个引号。
+    """
+    from server.retrieval import Retriever
+    rt = Retriever.__new__(Retriever)
+    rt.plan = lambda q: '职权|"通判" "知县" "侵越" 或 "通判" "县事"'
+    rt.era, rt.facts, rt.topics, rt.shared = "北宋", {}, {}, {}
+    got = rt.plan_queries(stage="chapter", context="正文" * 20, k=3)
+    q = got[0]["query"]
+    assert '"' not in q and "或" not in q.split(), q
+    assert "通判" in q and "侵越" in q

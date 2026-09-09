@@ -415,6 +415,14 @@ class Retriever:
             # 实测 161 次检索里出现过一次。剥掉行首的列名标签。
             topic = re.sub(r"^\s*(?:主题|topic)\s*[:：]\s*", "", topic.strip())
             q = re.sub(r"^\s*(?:检索式|查询|query|搜索词)\s*[:：]\s*", "", q.strip())
+            # 模型偶尔写成搜索引擎的高级语法:
+            #   通判" "知县" "侵越" 或 "通判" "县事" "不得
+            # 博查这类接口不吃布尔语法, 引号和「或/OR/AND」全成了噪声词,
+            # 而 80 字截断还会把它腰斩成半个引号。剥成朴素关键词串。
+            q = re.sub("[\"\u201c\u201d\u2018\u2019']", " ", q)
+            q = re.sub(r"(?<=\s)(?:或|OR|AND|与)(?=\s)", " ", q)
+            q = re.sub(r"[+\-~^*]", " ", q)
+            q = re.sub(r"\s+", " ", q).strip()
             topic, q = topic[:20], q[:80]
             if topic and q and len(q) > 3:
                 out.append({"topic": topic, "hint": topic, "query": q})
