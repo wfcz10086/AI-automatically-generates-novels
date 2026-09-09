@@ -2797,8 +2797,13 @@ class Novelist:
         cap = int(self.g.get("max_tokens_outline")
                   or self.g.get("max_tokens_draft", 8192))
         fit = max(4, int(cap * 0.8 / (per * 0.75)))   # 留两成余量
+        # 上限不只受输出预算约束，还要夹一个硬上限：把输出预算提到 2 万之后，
+        # 反推出来的批量涨到 46 章，单批要跑八分钟 —— 一次失败整批重来，
+        # 而且批内后半段的章离「前面各章」已经隔了四十多章，质量掉。
+        # 输出余量该留给**不截断**（call() 的自动续写），不是拿去一次塞更多章。
+        hard = int(self.g.get("outline_batch_max") or 25)
         cfg = int(self.g.get("outline_batch") or 0)
-        return max(4, min(want or cfg or fit, fit))
+        return max(4, min(want or cfg or fit, fit, hard))
 
     def step_outline_review(self, on_delta=None) -> Dict[str, Any]:
         """细纲审阅 —— 全书细纲排完之后、动笔之前的一道关。
