@@ -550,6 +550,35 @@ def project_dials(slug: str):
                     "spec": dl.DIALS, "own": bool(p.meta.get("dials"))})
 
 
+@app.get("/api/projects/<slug>/recap")
+def project_recap(slug: str):
+    """剧情概要（累计）+ 逐章一句话。
+
+    人要看清「这本书讲到哪了」，原来只能翻 346 章细纲。这两样本来就是
+    喂给模型的前情，同一份东西给人看一遍，不额外生成。
+    """
+    p = Project(slug)
+    co = p._load("chapter_outlines.json", {}) or {}
+    st = p.state
+    rows = []
+    for k in sorted(co, key=lambda x: int(x)):
+        s0 = str(co[k])
+        head = (re.search(r"第\d+章\s*(.+)", s0.splitlines()[0]) or [None, ""])[1]
+        mo = re.search(r"^\s*一句话\s*[:：]\s*(.+)$", s0, re.M)
+        mb = re.search(r"^\s*重场\s*[:：]\s*(.+)$", s0, re.M)
+        mh = re.search(r"^\s*章末钩子\s*[:：]\s*(.+)$", s0, re.M)
+        rows.append({"n": int(k), "title": head.strip()[:24],
+                     "one": (mo.group(1).strip()[:80] if mo else ""),
+                     "beat": (mb.group(1).strip()[:8] if mb else ""),
+                     "hook": (mh.group(1).strip()[:60] if mh else "")})
+    vols = [{"name": v.get("name", ""), "start": v.get("start"), "end": v.get("end")}
+            for v in (p._load("volumes.json", []) or [])]
+    return jsonify({"recap": st.get("outline_recap") or "",
+                    "recap_at": st.get("recap_at") or 0,
+                    "chapters": rows, "volumes": vols,
+                    "with_one": sum(1 for r in rows if r["one"])})
+
+
 @app.get("/api/projects/<slug>/trace")
 def project_trace(slug: str):
     """最近的模型调用：实际发出去的提示词与回复。

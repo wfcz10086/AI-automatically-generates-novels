@@ -268,7 +268,12 @@ const TabRender = {
   outline(p) {
     const co = p.chapter_outlines || {};
     const keys = Object.keys(co).sort((a,b)=>a-b);
-    return `${editableDoc('outline','总纲', p.outline,
+    return `<div class="card"><div class="card-head">
+        <div class="card-title">剧情概要</div>
+        <div class="card-sub" id="rc-sub">读取中…</div>
+        <div class="card-actions"><button class="btn btn-sm" id="rc-reload">刷新</button></div>
+      </div><div id="rc-body"><div class="card-sub">读取中…</div></div></div>
+      ${editableDoc('outline','总纲', p.outline,
         '<button class="btn btn-sm" id="o-gen">重新生成</button>')}
       <div class="card"><div class="card-head"><div class="card-title">分章细纲</div>
         <div class="card-sub">${keys.length} 章 · 每章可独立编辑保存</div>
@@ -553,6 +558,45 @@ const TabMount = {
     };
   },
   outline() {
+    (async () => {
+      const slug = encodeURIComponent(S.cur.slug);
+      if (!$('#rc-body')) return;
+      const load = async () => {
+        let d;
+        try { d = await API.get(`/api/projects/${slug}/recap`); }
+        catch (e) { $('#rc-body').innerHTML = `<div class="empty">读取失败：${esc(e.message)}</div>`; return; }
+        const rows = d.chapters || [];
+        $('#rc-sub').textContent =
+          `全书概要写到第 ${d.recap_at||0} 章 ｜ 逐章一句话 ${d.with_one}/${rows.length} 章`;
+        const vol = n => (d.volumes||[]).find(v => n >= v.start && n <= v.end);
+        let cur = null, body = '';
+        rows.forEach(r => {
+          const v = vol(r.n);
+          const key = v ? v.name : '其余';
+          if (key !== cur) {
+            cur = key;
+            body += `<tr><td colspan="4" style="background:var(--bg-2);font-weight:600;
+              padding:7px 6px">${esc(key)}${v?`　<span class="card-sub">第${v.start}-${v.end}章</span>`:''}</td></tr>`;
+          }
+          body += `<tr><td style="font-family:var(--mono)">${r.n}</td>
+            <td>${esc(r.title)}</td>
+            <td style="white-space:normal;word-break:break-word">${esc(r.one||'—')}</td>
+            <td class="card-sub" style="white-space:normal;word-break:break-word">${esc(r.hook||'')}</td></tr>`;
+        });
+        $('#rc-body').innerHTML =
+          (d.recap ? `<div class="field"><label>到第 ${d.recap_at} 章为止（每批重写，从逐章一句话重新生成）</label>
+             <textarea class="ta" readonly style="min-height:200px">${esc(d.recap)}</textarea></div>` : '')
+          + (rows.length ? `<div class="scroll-y" style="max-height:520px">
+             <table class="tbl" style="table-layout:fixed">
+               <colgroup><col style="width:52px"><col style="width:150px">
+                 <col style="width:auto"><col style="width:30%"></colgroup>
+               <thead><tr><th>#</th><th>章名</th><th>一句话</th><th>章末钩子</th></tr></thead>
+               <tbody>${body}</tbody></table></div>`
+            : '<div class="empty">还没有细纲</div>');
+      };
+      $('#rc-reload').onclick = load;
+      load();
+    })();
     bindDocSaves();
     bindMenus();
     $$('.co-save').forEach(b => b.onclick = async () => {
