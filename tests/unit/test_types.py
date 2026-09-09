@@ -828,3 +828,22 @@ def test_patterns_flags_name_length_runs():
     hit = [x for x in nv.outline_patterns(1, 12) if "章名" in x]
     assert hit and "连续" in hit[0], hit
     assert "交替" in hit[0]
+
+
+def test_repair_demand_retargets_to_next_batch():
+    """重排单并进纠偏时要把指向改成「接下来这一批」。
+
+    踩过: demand 里的「这几章」指的是检测器标记的旧章号(已经排完),
+    模型读到「第 1-57 章里要怎样」会正确地判断与本批无关而忽略 ——
+    重排单进了提示词两批, 王婆/赵若锦一次没出现。
+    """
+    import re
+
+    def retarget(s):
+        s = re.sub(r"这几章里", "接下来这一批里", s)
+        return re.sub(r"这几章", "接下来这一批", s)
+
+    d = "「王婆」已出场 17 章（第 1-57 章）…这几章里给他一件不同类的戏"
+    got = retarget(d)
+    assert "接下来这一批里给他" in got
+    assert "这几章里" not in got

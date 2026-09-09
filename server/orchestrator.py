@@ -3592,7 +3592,17 @@ class Novelist:
             except Exception as e:
                 jobs = []
                 self._log(f"重排单跳过: {e}")
-            fresh = [f"{j['kind']}：{j['demand']}" for j in jobs
+            # demand 里的「这几章」指的是**检测器标记的旧章号**(那批已经排完),
+            # 直接并进纠偏, 模型读到「第 1-57 章里要怎样」会正确地判断与本批
+            # 无关而忽略 —— 实测重排单进了提示词两批, 王婆/赵若锦一次没出现。
+            # 并进来时要把指向改成「接下来这一批」。
+            def _retarget(s: str) -> str:
+                s = re.sub(r"这几章里", "接下来这一批里", s)
+                s = re.sub(r"这几章", "接下来这一批", s)
+                return s
+
+            fresh = [f"{j['kind']}（**在接下来这一批里解决**）："
+                     f"{_retarget(j['demand'])}" for j in jobs
                      if j.get("demand")][:3]
             if fresh:
                 st0 = self.p.state
