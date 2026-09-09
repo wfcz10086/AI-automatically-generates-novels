@@ -1240,3 +1240,33 @@ def test_newest_violations_are_not_crowded_out_by_old_ones():
     assert "第300章" in hit, "最近的违规必须出现在消息里"
     assert sorted(j["chapters"][0] for j in nv._ledger_jobs())[-1] == 300, \
         "工单要覆盖到最新那一处, 不能只有最早几条"
+
+
+def test_threshold_told_to_model_equals_the_one_actually_checked():
+    """告诉模型的门槛必须就是判据用的那个数。
+
+    早先消息写「最后一个对的数是第104章的 105发」, 而判据用的是**历史最小值**
+    (第254章的 101) —— 第266章写「第18发、剩102发」(18+102=120 完全正确, 也
+    小于 105)照样被判违规。模型照着 105 改, 永远改不对。
+    """
+    from server.orchestrator import Novelist
+
+    nv = Novelist.__new__(Novelist)
+    nv.hard_rules = lambda: [
+        "【沙漠之鹰】主角带着一把沙漠之鹰、一百二十发子弹",
+        "子弹只减不增，造不出也补不了，每次开枪当场记账",
+    ]
+    nv.p = type("P", (), {"_load": lambda self, *a: {
+        "104": "剩105发",
+        "145": "剩119发",     # 违规, 当时地板 105
+        "254": "剩101发",     # 合规, 地板降到 101
+        "266": "剩102发",     # 违规, 当时地板 101
+    }})()
+    nv._log = lambda *a: None
+
+    jobs = {j["chapters"][0]: j["demand"] for j in nv._ledger_jobs()}
+    assert "不大于 105" in jobs[145], "145 那时的地板是 105"
+    assert "不大于 101" in jobs[266], "266 那时的地板已经降到 101, 不能还说 105"
+    # 纠偏消息里的锚点也要是最新的地板
+    hit = next(h for h in nv.outline_finite_check() if "涨回去" in h)
+    assert "第254章的 101发" in hit

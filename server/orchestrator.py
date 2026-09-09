@@ -2466,10 +2466,15 @@ class Novelist:
             # 之后所有数都以那个错值为基准: 实测 105(第104章) → 119(第145章)
             # 报了, 可后面 119→118→118→107 每一步都在减, 于是第249章的 107
             # 一路放过, 而它比第104章的 105 还高, 台账照样对不上。
+            # 记下**违规当时的地板**。给模型的门槛必须就是实际判据用的那个数,
+            # 否则两边说的不是一回事: 早先消息写「最后一个对的数是第104章的
+            # 105发」, 而判据用的是历史最小值(第254章的 101) —— 第266章写
+            # 「第18发、剩102发」(18+102=120 完全正确, 也小于 105)照样被判违规,
+            # 模型照着 105 改永远改不对。
             bad, floor = [], None
             for n, v in seen:
                 if floor is not None and v > floor:
-                    bad.append((n, v))
+                    bad.append((n, v, floor))
                 else:
                     floor = v if floor is None else min(floor, v)
             if bad:
@@ -2478,15 +2483,16 @@ class Novelist:
                 # 却写成「只剩一百多发」: 知道该提, 不敢给准数, 用模糊量词绕开。
                 # 一并堵掉「一百多／几十／若干」这类写法, 否则检测器抓不到它
                 # (只匹配确切数字), 下一批照样蒙混。
-                first_bad = bad[0][0]
-                ok = [(n, v) for n, v in seen if n < first_bad]
-                anchor = (f"第{ok[-1][0]}章的 {ok[-1][1]}{unit}" if ok
-                          else f"开篇的总数")
-                for n, v in bad:
+                # 门槛取**最后一处违规当时的地板** —— 那就是接下来必须接上的数。
+                low = bad[-1][2]
+                low_n = next((n for n, v in seen if v == low), 0)
+                anchor = (f"第{low_n}章的 {low}{unit}" if low_n
+                          else f"{low}{unit}")
+                for n, v, fl in bad:
+                    fn = next((m for m, x in seen if x == fl), 0)
                     self._finite_bad.append({"ch": n, "v": v, "unit": unit,
-                                             "ok_n": ok[-1][0] if ok else 0,
-                                             "ok_v": ok[-1][1] if ok else 0})
-                where = ("；".join(f"第{n}章写成 {v}{unit}" for n, v in bad[-4:])
+                                             "ok_n": fn, "ok_v": fl})
+                where = ("；".join(f"第{n}章写成 {v}{unit}" for n, v, _ in bad[-4:])
                          + "。") if name_chapters else ""
                 out.append(
                     f"「{unit}」这类不可再生的东西数字涨回去了："
