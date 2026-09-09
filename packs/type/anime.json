@@ -82,6 +82,7 @@
     ]
   },
   "exporters": [
+    "plan",
     "txt",
     "md",
     "srt",

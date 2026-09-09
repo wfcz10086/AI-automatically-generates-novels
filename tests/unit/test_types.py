@@ -524,3 +524,30 @@ def test_dials_normalize_and_brief():
     assert dl.normalize("坏输入") == dl.defaults()
     b = dl.brief({"gratify": 95, "wild": 95})
     assert "剧情上" in b and "文风上" in b and "掀翻" in b
+
+
+def test_seed_change_invalidates_downstream(tmp_path, monkeypatch):
+    """种子变了，下游资产必须被判为过期。
+
+    实测踩过：改完铁律只删了骨架、留下 outline.md 想省一次生成 ——
+    总纲还是旧设定、阶梯是新的，细纲照着总纲写，改动等于没改，
+    「打服武松」和那把枪在 128 章里一次没出现。这不该靠人记性。
+    """
+    import json as _j
+    from server.orchestrator import Novelist, Project
+    d = tmp_path / "proj"
+    (d / "chapters").mkdir(parents=True)
+    (d / "project.json").write_text(_j.dumps(
+        {"title": "T", "type_id": "novel", "genre_id": "", "style_id": "",
+         "target_chapters": 10, "target_words": 30000, "fields": {},
+         "hard_rules": ["甲"]}, ensure_ascii=False), encoding="utf-8")
+    (d / "state.json").write_text('{"done": [], "current": 0}', encoding="utf-8")
+    (d / "outline.md").write_text("旧总纲", encoding="utf-8")
+
+    nv = Novelist(Project(str(d)))
+    assert "outline.md" in nv.stale_assets()      # 从没记过指纹 → 全过期
+    nv.mark_seed()
+    assert nv.stale_assets() == []                 # 记过之后不再报
+
+    nv.p.meta["hard_rules"] = ["甲", "乙"]         # 铁律一变
+    assert "outline.md" in nv.stale_assets()       # 下游立刻过期

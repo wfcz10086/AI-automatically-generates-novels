@@ -41,13 +41,116 @@ def to_md(project) -> str:
 
 
 def to_outline(project) -> str:
-    """只导大纲: 总纲 + 全部章节细纲."""
+    """只导大纲: 总纲 + 全部章节细纲（纯文本，给人读）。"""
     parts = [f"《{project.meta.get('title','')}》大纲\n\n{project.read('outline.md')}\n\n"
              "———— 分章细纲 ————\n"]
     ol = project._load("chapter_outlines.json", {})
     for k in sorted(ol, key=lambda x: int(x)):
         parts.append(f"\n{ol[k]}\n")
     return "".join(parts)
+
+
+def to_plan(project) -> str:
+    """完整创作方案（Markdown）—— 一份能直接交给人的「故事圣经」。
+
+    比 to_outline 多的是**结构资产**：阶段骨架、支线、三条阶梯、关系张力、
+    总纲承诺、旋钮与铁律。这些原来只躺在 json 里给机器看，人要核对
+    「这本书到底是怎么设计的」只能挨个开文件。
+    """
+    m = project.meta
+    st = project.state
+    L = [f"# 《{m.get('title','')}》创作方案", ""]
+    L.append(f"- 目标：{m.get('target_chapters','?')} 章 / "
+             f"{int(m.get('target_words') or 0):,} 字")
+    L.append(f"- 题材：{m.get('genre_id','')}　文风：{m.get('style_id','')}"
+             f"　基底：{m.get('history_mode','')}")
+    d = m.get("dials") or {}
+    if d:
+        L.append(f"- 旋钮：爽度 {d.get('gratify','?')} / 狂野度 {d.get('wild','?')}")
+    L.append("")
+
+    def block(title, body):
+        if body and str(body).strip():
+            L.extend([f"## {title}", "", str(body).strip(), ""])
+
+    for lbl in ("premise", "background", "relationships"):
+        block({"premise": "一句话故事", "background": "背景",
+               "relationships": "人物关系"}[lbl], (m.get("fields") or {}).get(lbl, ""))
+    if m.get("hard_rules"):
+        L.extend(["## 本书铁律", ""])
+        L += [f"{i+1}. {r}" for i, r in enumerate(m["hard_rules"])] + [""]
+    block("世界观圣经", project.read("world_bible.md"))
+    block("世界基底卡", project.read("basis.md"))
+    block("时代红线卡", project.read("era_card.md"))
+    block("角色档案", project.read("characters.md"))
+    block("总纲", project.read("outline.md"))
+
+    vol = project._load("volumes.json", [])
+    if vol:
+        L.extend(["## 分卷", ""])
+        for v in vol:
+            L.append(f"### {v.get('name','')}（第 {v.get('start')}-{v.get('end')} 章）")
+            L.extend(["", str(v.get("text", "")).strip(), ""])
+
+    sg = project._load("stages.json", [])
+    if sg:
+        L.extend(["## 阶段骨架", "",
+                  "| 阶段 | 章节 | 目标 | 必经步骤 | 功能位 | 出口状态 |",
+                  "|---|---|---|---|---|---|"])
+        for s in sg:
+            lab = s.get("labels") or {}
+            who = "；".join(f"{lab.get(k,k)}={'、'.join(v)}"
+                           for k, v in (s.get("roles") or {}).items() if v)
+            L.append(f"| {s.get('name','')} | {s.get('start')}-{s.get('end')} | "
+                     f"{s.get('goal','')} | {' → '.join(s.get('steps') or [])} | "
+                     f"{who} | {s.get('exit','')} |")
+        L.append("")
+
+    th = project._load("threads.json", [])
+    if th:
+        L.extend(["## 支线", "",
+                  "| 支线 | 类型 | 承载者 | 区间 | 节奏 | 关键节点 | 归宿 |",
+                  "|---|---|---|---|---|---|---|"])
+        for x in th:
+            L.append(f"| {x.get('name','')} | {x.get('kind','')} | "
+                     f"{'、'.join(x.get('owner') or [])}{'／' + x['org'] if x.get('org') else ''} | "
+                     f"{x.get('span',['',''])[0]}-{x.get('span',['',''])[1]} | "
+                     f"每 {x.get('cadence','')} 章 | {' → '.join(x.get('beats') or [])} | "
+                     f"{x.get('ending','')} |")
+        L.append("")
+
+    lad = project._load("ladders.json", {})
+    if lad:
+        L.extend(["## 成长阶梯", ""])
+        for k, rungs in lad.items():
+            L.append(f"**{k}**：" + " → ".join(
+                f"{r.get('stage','')}（第{r.get('by')}章）" for r in rungs))
+        L.append("")
+
+    if st.get("tensions"):
+        L.extend(["## 关系张力", "", "| 当事双方 | 状态 | 因何而起 | 压着的代价 |",
+                  "|---|---|---|---|"])
+        for x in st["tensions"]:
+            L.append(f"| {' ↔ '.join(x.get('between') or [])} | {x.get('state','')} | "
+                     f"{x.get('about','')} | {x.get('cost','')} |")
+        L.append("")
+
+    if st.get("promises"):
+        L.extend(["## 总纲承诺", "", "| 类型 | 承诺 | 兑现判据 | 已兑现 |",
+                  "|---|---|---|---|"])
+        for x in st["promises"]:
+            L.append(f"| {x.get('kind','')} | {x.get('text','')} | "
+                     f"{x.get('done_when','') or '—'} | "
+                     f"{('第%d章' % x['done_at']) if x.get('done_at') else '否'} |")
+        L.append("")
+
+    ol = project._load("chapter_outlines.json", {})
+    if ol:
+        L.extend([f"## 分章细纲（{len(ol)} 章）", ""])
+        for k in sorted(ol, key=lambda x: int(x)):
+            L.extend([f"### {str(ol[k]).splitlines()[0]}", ""])
+            L.extend(["```", str(ol[k]).strip(), "```", ""])
+    return "\n".join(L)
 
 
 def to_fountain(project) -> str:
@@ -211,12 +314,13 @@ BINARY_EXPORTERS: Dict[str, Callable[[Any], bytes]] = {
 }
 
 EXPORTERS: Dict[str, Callable[[Any], str]] = {
-    "txt": to_txt, "md": to_md, "outline": to_outline,
+    "txt": to_txt, "md": to_md, "outline": to_outline, "plan": to_plan,
     "fountain": to_fountain, "srt": to_srt,
 }
 MIME = {"txt": "text/plain", "md": "text/markdown", "outline": "text/plain",
+        "plan": "text/markdown",
         "fountain": "text/plain", "srt": "application/x-subrip",
         "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "epub": "application/epub+zip"}
-EXT = {"txt": "txt", "md": "md", "outline": "txt", "fountain": "fountain", "srt": "srt",
+EXT = {"txt": "txt", "md": "md", "outline": "txt", "plan": "md", "fountain": "fountain", "srt": "srt",
        "docx": "docx", "epub": "epub"}

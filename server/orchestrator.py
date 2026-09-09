@@ -1057,6 +1057,39 @@ class Novelist:
                 out[k] = v
         return out
 
+    #: 决定全书走向的输入。这些一变，下游的总纲/骨架/支线/阶梯/细纲全都过期。
+    _SEED_KEYS = ("hard_rules", "fields", "dials", "extra_ladders",
+                  "pack_overrides", "target_chapters", "target_words")
+    #: 依赖这些输入的下游资产，按生成顺序排列。
+    _DERIVED = ("outline.md", "volumes.json", "stages.json", "threads.json",
+                "ladders.json", "chapter_outlines.json")
+
+    def seed_stamp(self) -> str:
+        import hashlib
+        raw = json.dumps({k: self.p.meta.get(k) for k in self._SEED_KEYS},
+                         ensure_ascii=False, sort_keys=True)
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
+    def stale_assets(self) -> List[str]:
+        """种子变了、却还是旧版生成的下游资产。
+
+        实测踩过：改完铁律（武功终点、加了枪）只删了骨架/支线/阶梯，
+        **留下了 outline.md 想省一次生成** —— 总纲还是旧设定，
+        阶梯是新的，两份资产打架，细纲照着总纲写，
+        于是「打服武松」和那把枪在 128 章里一次没出现。
+        这不该靠人记性。
+        """
+        want = self.seed_stamp()
+        got = (self.p.state.get("seed_stamp") or "")
+        if got == want:
+            return []
+        return [f for f in self._DERIVED if (self.p.dir / f).exists()]
+
+    def mark_seed(self) -> None:
+        st = self.p.state
+        st["seed_stamp"] = self.seed_stamp()
+        self.p.save()
+
     def hard_rules(self) -> List[str]:
         """本书铁律 —— 每一章都必须成立的设定约束。
 

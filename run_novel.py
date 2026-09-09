@@ -70,6 +70,26 @@ def cmd_outline(a):
     """先把全书细纲排完 —— 边排边写会让前面的章看不见后面的安排。"""
     p = Project(a.title)
     nv = Novelist(p)
+    # 种子（铁律/设定/旋钮/目标章数）变了，下游资产全部作废重建。
+    # 实测踩过：改完铁律只删了骨架，留下 outline.md 想省一次生成 ——
+    # 总纲还是旧设定、阶梯是新的，细纲照着总纲写，改动等于没改。
+    stale = nv.stale_assets()
+    if stale:
+        print(f"[失效] 种子已变，作废下游资产：{'、'.join(stale)}")
+        for f in stale:
+            (p.dir / f).unlink(missing_ok=True)
+        st = p.state
+        for k in ("promises", "tensions", "orgs", "setbacks", "resolution_modes",
+                  "pending_sweeps", "summaries", "timeline", "ledger", "power",
+                  "identity", "roles", "terms"):
+            st.pop(k, None)
+        st["done"], st["current"] = [], 0
+        p.save()
+        try:
+            p.mem.db.execute("delete from foreshadow")
+        except Exception:
+            pass
+    nv.mark_seed()
     for step, fn in (("世界观", nv.step_world_bible), ("角色档案", nv.step_characters),
                      ("总纲", nv.step_outline)):
         name = {"世界观": "world_bible.md", "角色档案": "characters.md",

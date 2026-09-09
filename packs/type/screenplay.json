@@ -87,6 +87,7 @@
     ]
   },
   "exporters": [
+    "plan",
     "txt",
     "fountain",
     "fdx",

@@ -380,7 +380,9 @@ const TabRender = {
   },
   export(p) {
     const t = S.catalog.typeDetail[p.meta.type_id] || {};
-    const all = [['txt','纯文本 TXT'],['md','Markdown'],['outline','仅大纲'],
+    const all = [['txt','纯文本 TXT'],['md','Markdown'],
+                 ['plan','创作方案（骨架/支线/阶梯/张力/承诺 + 全部细纲）'],
+                 ['outline','仅大纲（总纲+细纲纯文本）'],
                  ['docx','Word DOCX'],['epub','电子书 EPUB'],
                  ['fountain','剧本 Fountain'],['srt','字幕 SRT']];
     return `<div class="card"><div class="card-head"><div class="card-title">导出</div>
