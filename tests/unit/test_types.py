@@ -960,3 +960,30 @@ def test_selfcheck_forbids_rework_of_written_chapters():
     seg = src[i:i + 700]
     assert "不许要求返工" in seg and "执行不了" in seg
     assert "别把名额都压在同一个模式上" in seg
+
+
+def test_repeated_last_one_is_flagged():
+    """「最后一发」反复出现也是账没记住。
+
+    实测第 63、65、140、176、197 章各来一次「最后一发」—— 每次危机都是
+    最后一发, 等于子弹永远打不完, 铁律要的「越来越不舍得」就架空了。
+    数字检测抓不到它: 这些章根本没写存量。
+    """
+    from server.orchestrator import Novelist
+
+    def mk(n, body):
+        return (f"第{n}章 标题\n一句话：{body}\n承接：上一章\n出场角色：甲、乙、丙\n"
+                f"剧情1：{body}\n重场：剧情1\n爽点：甲交出账册\n章末钩子：门开了")
+
+    nv = Novelist.__new__(Novelist)
+    nv.hard_rules = lambda: ["一百二十发只减不增，宋朝造不出也补不了"]
+    co = {str(i): mk(i, "他在算账") for i in range(1, 8)}
+    co["2"] = mk(2, "他用最后一发子弹打开车锁")
+    co["6"] = mk(6, "千钧一发，他动用最后一发子弹")
+    nv.p = type("P", (), {"_load": lambda self, f, d: co})()
+    hit = [x for x in nv.outline_patterns(1, 7) if "最后一" in x]
+    assert hit and "2 次" in hit[0], hit
+    # 只出现一次不报
+    co2 = dict(co); co2["6"] = mk(6, "他在算账")
+    nv.p = type("P", (), {"_load": lambda self, f, d: co2})()
+    assert not [x for x in nv.outline_patterns(1, 7) if "最后一" in x]

@@ -2351,6 +2351,19 @@ class Novelist:
                 mm = stock.search(str(co[str(n)]))
                 if mm:
                     seen.append((n, int(mm.group(1))))
+            # 「最后一发」被反复用也是账没记住 —— 数字检测抓不到它, 因为
+            # 根本没写存量。实测第 63、65、140、197 章各来了一次「最后一发」,
+            # 每次危机都是最后一发, 等于子弹永远打不完, 铁律要的
+            # 「越来越不舍得」就架空了。
+            LAST = re.compile(rf"最后(?:一|1)\s*{unit}")
+            lasts = [n for n in sorted(int(x) for x in co if str(x).isdigit())
+                     if LAST.search(str(co[str(n)]))]
+            if len(lasts) >= 2:
+                out.append(
+                    f"「最后一{unit}」出现了 {len(lasts)} 次"
+                    f"（第 {'、'.join(map(str, lasts[:6]))} 章）—— "
+                    f"每次危机都是最后一{unit}, 等于永远用不完。"
+                    f"要么写清具体还剩几{unit}, 要么就别再说「最后一{unit}」")
             bad = [(n, v) for (pn, pv), (n, v) in zip(seen, seen[1:]) if v > pv]
             if bad:
                 out.append(
