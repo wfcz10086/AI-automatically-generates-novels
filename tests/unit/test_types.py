@@ -732,3 +732,17 @@ def test_era_blank_for_fictional_world():
         assert "era" not in nv.p.meta
     finally:
         orc.call, orc.clean = real_call, real_clean
+
+
+def test_pleasure_field_demands_event_not_commentary():
+    """爽点字段必须要求写事件, 并点名禁掉分析腔。
+
+    踩过: 只说「读者爽在哪」, 模型写回「通过第三方视角间接交锋, 既避免了
+    主角正面硬刚的危险, 又通过摔杯具象化了武松的杀气」—— 这是编辑评语,
+    照着它写不出任何一场戏。还有一章把「虚惊一场」填进了爽点。
+    """
+    from server.prompt_compiler import outline_format_block
+    blk = outline_format_block(6, 600)
+    assert "发生了什么" in blk and "不是点评" in blk
+    assert "正例" in blk and "反例" in blk
+    assert "虚惊一场" in blk, "没把实际收到的坏样本列进反例"
