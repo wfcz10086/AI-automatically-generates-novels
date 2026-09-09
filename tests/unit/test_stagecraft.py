@@ -338,3 +338,21 @@ class TestFulfillment:
         p = [{"id": 1, "kind": "铁律", "text": "x",
               "done_when": "开枪", "done_at": 210}]
         assert sc.unfulfilled(p, upto=300, total=346) == []
+
+
+def test_threads_prompt_carries_anti_fade_rule():
+    """支线提示词必须带张力铁律。
+
+    踩过: 铁律只写进了张力提示词, 支线于是产出「武松转身离去, 血债以时间
+    销账」—— 张力账那边同一个人写的是「不死不休、禁止妥协」, 两份资产打架,
+    而细纲照着支线拍子写。
+    """
+    import server.stagecraft as sc
+    got = {}
+    sc.build_threads(outline="总纲正文" * 50, stages=[], total_chapters=100,
+                     title="测试", roster=["甲", "乙"],
+                     ask=lambda p: got.setdefault("p", p) or '{"threads":[]}')
+    p = got["p"]
+    assert "明写的事件" in p, "支线提示词漏了铁律"
+    for bad in ("时间冲淡", "转身离去", "不了了之"):
+        assert bad in p, f"没禁掉「{bad}」这类淡出写法"
