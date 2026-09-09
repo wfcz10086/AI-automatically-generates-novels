@@ -1205,9 +1205,11 @@ def test_finite_check_compares_against_running_minimum():
     }})()
 
     hit = next(h for h in nv.outline_finite_check() if "涨回去" in h)
+    # 只看**违规名单**那一段 —— 锚点句里会提到当前最低点所在的章, 那不是违规
+    listed = hit.split("最后一个对的数是")[0]
     for n in ("第145章", "第195章", "第249章"):
-        assert n in hit, f"{n} 高过历史最低值, 必须报"
-    assert "第300章" not in hit, "低于历史最低值的不该报"
+        assert n in listed, f"{n} 高过历史最低值, 必须报"
+    assert "第300章" not in listed, "低于历史最低值的不该报"
 
     jobs = nv._ledger_jobs()
     assert sorted(j["chapters"][0] for j in jobs) == [145, 195, 249], \
@@ -1270,3 +1272,37 @@ def test_threshold_told_to_model_equals_the_one_actually_checked():
     # 纠偏消息里的锚点也要是最新的地板
     hit = next(h for h in nv.outline_finite_check() if "涨回去" in h)
     assert "第254章的 101发" in hit
+
+
+def test_guide_anchor_is_the_current_floor_not_the_one_at_last_violation():
+    """纠偏的锚点是**全书当前的地板**, 工单的门槛才是各自违规当时的地板。
+
+    两者是两回事: 工单修第 N 章, 门槛是第 N 章之前那一刻的地板; 而纠偏说
+    的是「下一批从哪个数接着往下减」—— 必须是已经写到的最低点。
+    实测第254章违规时地板 101, 可 286-299 章已经一路正确减到 95; 若纠偏
+    还报 101, 自审就推出「本批第一次开枪锚定第20发、剩100发」, 把台账
+    **倒着写回去**。
+    """
+    from server.orchestrator import Novelist
+
+    nv = Novelist.__new__(Novelist)
+    nv.hard_rules = lambda: [
+        "【沙漠之鹰】主角带着一把沙漠之鹰、一百二十发子弹",
+        "子弹只减不增，造不出也补不了，每次开枪当场记账",
+    ]
+    nv.p = type("P", (), {"_load": lambda self, *a: {
+        "104": "剩105发",
+        "145": "剩119发",     # 违规, 当时地板 105
+        "254": "剩101发",
+        "266": "剩102发",     # 违规, 当时地板 101
+        "299": "剩95发",      # 之后一路减到 95
+    }})()
+    nv._log = lambda *a: None
+
+    hit = next(h for h in nv.outline_finite_check() if "涨回去" in h)
+    assert "第299章的 95发" in hit, "纠偏要指向当前最低点"
+    assert "第254章的 101发" not in hit
+
+    jobs = {j["chapters"][0]: j["demand"] for j in nv._ledger_jobs()}
+    assert "不大于 105" in jobs[145], "工单仍用各自违规当时的地板"
+    assert "不大于 101" in jobs[266]
