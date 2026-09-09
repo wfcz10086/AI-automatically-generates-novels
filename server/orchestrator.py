@@ -2452,11 +2452,23 @@ class Novelist:
                           f"不是章号也不是剩余数：第几{unit} + 还剩几{unit} = {total}")
             bad = [(n, v) for (pn, pv), (n, v) in zip(seen, seen[1:]) if v > pv]
             if bad:
+                # **把上一个有效存量的准数写进来**。只说「接着上一个数往下减」,
+                # 模型并不知道那个数是几 —— 实测第174章被点名后确实提了子弹,
+                # 却写成「只剩一百多发」: 知道该提, 不敢给准数, 用模糊量词绕开。
+                # 一并堵掉「一百多／几十／若干」这类写法, 否则检测器抓不到它
+                # (只匹配确切数字), 下一批照样蒙混。
+                first_bad = bad[0][0]
+                ok = [(n, v) for n, v in seen if n < first_bad]
+                anchor = (f"第{ok[-1][0]}章的 {ok[-1][1]}{unit}" if ok
+                          else f"开篇的总数")
                 out.append(
                     f"「{unit}」这类不可再生的东西数字涨回去了："
                     + "；".join(f"第{n}章写成 {v}{unit}" for n, v in bad[:4])
-                    + f"。铁律要求只减不增、每次消耗当场记账 —— "
-                      f"接下来这一批必须接着上一个数往下减，不许重新起数")
+                    + f"。最后一个对的数是{anchor} —— "
+                      f"接下来这一批必须从这个数接着往下减，不许重新起数。"
+                      f"而且**必须写确切数字**：「一百多{unit}」「几十{unit}」"
+                      f"「所剩无几」都不算记账，铁律要的是「这是第几{unit}、"
+                      f"还剩多少{unit}」")
         return out
 
     def outline_patterns(self, start: int, end: int) -> List[str]:

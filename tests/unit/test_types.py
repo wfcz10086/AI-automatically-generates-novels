@@ -1098,3 +1098,29 @@ def test_finite_check_is_its_own_per_batch_channel():
     assert any("对不上账" in h and "第30章" in h for h in hits), "序号错要报"
     # 账对得上的章不许被点名
     assert not any("第10章" in h for h in hits)
+
+
+def test_finite_check_names_the_anchor_number():
+    """存量涨回去时, 要把**上一个对的数**告诉模型, 并堵掉模糊量词。
+
+    只说「接着上一个数往下减」, 模型并不知道那个数是几 —— 实测第174章被点名
+    后确实提了子弹, 却写成「只剩一百多发」: 知道该提, 不敢给准数, 用模糊量词
+    绕开。而检测器只匹配确切数字, 抓不到「一百多发」, 下一批照样蒙混。
+    """
+    from server.orchestrator import Novelist
+
+    nv = Novelist.__new__(Novelist)
+    nv.hard_rules = lambda: [
+        "【沙漠之鹰】主角带着一把沙漠之鹰、一百二十发子弹",
+        "子弹只减不增，造不出也补不了，每次开枪当场记账",
+    ]
+    nv.p = type("P", (), {"_load": lambda self, *a: {
+        "10": "剩119发",
+        "50": "剩110发",
+        "104": "剩105发",
+        "145": "剩119发",          # 涨回去了
+    }})()
+
+    hit = next(h for h in nv.outline_finite_check() if "涨回去" in h)
+    assert "第104章的 105发" in hit, "要指名上一个对的数"
+    assert "一百多发" in hit, "要显式禁掉模糊量词"
