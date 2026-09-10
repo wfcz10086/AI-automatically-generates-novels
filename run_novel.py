@@ -179,6 +179,15 @@ def cmd_run(a):
     stamp = _code_stamp()
     batch = nv.outline_batch()      # 0 = 按输出上限自动算，见 outline_batch()
     start = (p.state.get("current") or 0) + 1
+    # current 和 chapters/ 目录是两个真相来源，回退状态时很容易只改一个 ——
+    # 实测把 done 改回 [1] 却漏了 current，于是从第 3 章接着排纲，
+    # 第 2 章整个被跳过，后面几章的细纲全长在一个洞上。
+    # 正文文件是唯一硬证据：前面缺哪一章，就从哪一章补起。
+    _have = {int(f.stem) for f in (p.dir / "chapters").glob("*.md") if f.stem.isdigit()}
+    _gap = next((i for i in range(1, start) if i not in _have), None)
+    if _gap:
+        print(f"!! 正文缺第 {_gap} 章（current={start-1}），从第 {_gap} 章补起")
+        start = _gap
     end = min(start + a.chapters - 1, p.meta["target_chapters"])
     n = start
     while n <= end:
