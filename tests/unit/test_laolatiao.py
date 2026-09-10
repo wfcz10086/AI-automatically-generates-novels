@@ -265,3 +265,67 @@ def test_误读台账脏数据不许打断写作(tmp_path, monkeypatch):
         assert "凭「」" not in out and "于是「」" not in out, "缺字段不许印成残句"
     finally:
         shutil.rmtree(f"projects/{slug}", ignore_errors=True)
+
+
+# ── 排纲的三层：事件/支线/章节名 ──────────────────────────
+
+def _outline(pack, **kw):
+    from server.prompt_compiler import compile_outline_prompt
+    base = dict(title="书", start=11, count=8, genre_line="历史", world_digest="略",
+                roster_names=["甲", "乙"], outline="总纲", prev_summary="前情",
+                constraints="", style_pack=pack)
+    base.update(kw)
+    return compile_outline_prompt(**base)
+
+
+def test_章节名规格进了排纲():
+    """排纲原来只说「不得与已用过的重复」，没有一句说标题该长什么样。"""
+    p = _outline(LLT)
+    assert "#章节名规格" in p
+    assert "点对手名字的频次必须高于点主角名字" in p
+    assert "禁止意象式偏正结构" in p
+    assert "直呼对手" in p and "剧透式" in p        # 功能类要给出来
+    assert title_spec_missing(FQ), "老包不该拿到这一块"
+
+
+def title_spec_missing(pack):
+    from server.prompt_compiler import title_spec_block
+    return title_spec_block(pack) == ""
+
+
+def test_一事多章进了排纲():
+    p = _outline(LLT)
+    assert "不要一章一个新事件" in p
+    assert "过半必须是对手或输家的眼睛" in p
+    assert "只在其中一章动账" in p
+    assert "不要一章一个新事件" not in _outline(FQ)
+
+
+def test_缺字段提示不再硬写爽点():
+    """老辣调没有「爽点」这一栏，硬写「尤其是重场、爽点与章末钩子」是错的。"""
+    p = _outline(LLT)
+    assert "**爽点**" not in p
+    for f in outline_required(LLT)[-4:]:
+        assert f"**{f}**" in p
+    assert "**爽点**" in _outline(FQ)               # 老包有这一栏，仍该提
+
+
+def test_扩写带上了调子与常驻结构件():
+    """扩写补出来的字占最终篇幅三到五成，不能是文风盲的。"""
+    import inspect
+    from server import orchestrator
+    src = inspect.getsource(orchestrator.Novelist.step_chapter)
+    assert "grow_style" in src
+    assert "补进去的文字必须是这个调子" in src
+    assert "render_item" in src
+
+
+def test_当众失态是常驻结构件():
+    """全书 520 章抽样里 56% 的章都有大人物当众丢脸——这是这个调子的体温。"""
+    names = [i["名"] for i in LLT["structuralItems"]["items"] if i.get("resident")]
+    assert "让有身份的人当众失态" in names
+    it = [i for i in LLT["structuralItems"]["items"] if i["名"] == "让有身份的人当众失态"][0]
+    assert "演出来，不许叙述" in it["做法"]
+    assert "他心里一紧" in it["关键"]               # 要给出反例
+    p = _prompt(LLT)
+    assert "▍让有身份的人当众失态" in p

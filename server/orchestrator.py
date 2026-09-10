@@ -23,6 +23,7 @@ from . import dials as dl
 from . import stagecraft as sc
 from .retrieval import Retriever
 from .prompt_compiler import (outline_required, outline_format_block, window_drift,
+                             render_item,
                              compile_chapter_prompt, compile_outline_prompt,
                                to_plot_list)
 from . import critic as critic_mod
@@ -4380,10 +4381,30 @@ class Novelist:
         # 扩到达标为止, 最多两轮。原来只扩一轮就收工, 实测第 19 章
         # 1117 → 1727 字仍差 473 字照样落盘 —— 19 章里有 8 章卡在地板下。
         # 一轮补不满是常态: 模型对「缺 1400 字」的响应通常只补一半。
+        # 扩写用的文风块：调子 + 常驻结构件 + 本章的窗口漂移。
+        # 补出来的字占最终篇幅的三到五成，不能让它是文风盲的。
+        grow_bits = []
+        if self.style.get("主调"):
+            grow_bits.append("── 补进去的文字必须是这个调子 ──\n" + self.style["主调"])
+        _si = [x for x in ((self.style.get("structuralItems") or {}).get("items") or [])
+               if x.get("resident", True)]
+        if _si:
+            grow_bits.append(
+                "── 补的时候优先补这几样（原文缺什么补什么，不要平均加水）──"
+                + "".join(render_item(x) for x in _si))
+        _wf = self.window_feedback(n)
+        if _wf:
+            grow_bits.append("── 这几章的文体漂移，扩写时顺手补上 ──\n" + _wf)
+        grow_style = ("\n" + "\n\n".join(grow_bits) + "\n\n") if grow_bits else ""
+
         for round_ in (1, 2):
             was = a["stats"]["cn"]
             if was >= floor or not text:
                 break
+            # 扩写这一步原来**一条文风要求都没有** —— 而实测每一章都写不够、
+            # 每一章都要扩 30~90%（第7章 1365→2440，56% 的字是扩写写的）。
+            # 结果是：正文那一遍精心给的结构件管住了前半截，后半截全漏，
+            # 叹号密度被稀释到原作的 1/30。扩写必须带上同一套调子。
             grow = (f"下面这一章只有 {was} 字，目标 {target} 字，缺 {target - was} 字。\n"
                     f"请在**不改变任何已有情节与结局**的前提下扩写到 {target} 字左右：\n"
                     f"- 把一笔带过的关键场景演出来（对话、动作、交锋的来回）\n"
@@ -4393,6 +4414,7 @@ class Novelist:
                     f"- 不要在正文末尾附任何状态更新、伏笔登记、字数统计\n"
                     + (f"⚠️ 这是第二轮扩写，上一轮只补到 {was} 字仍不达标（下限 {floor} 字），"
                        f"这次必须写够，把每一场戏都完整演出来。\n" if round_ == 2 else "")
+                    + grow_style
                     + f"禁用套话：{'、'.join(self.blacklist()[:40])}\n"
                     f"直接输出扩写后的完整正文，无前言。\n\n{text}")
             r3 = call("polishing", grow, on_delta, max_tokens=8192)

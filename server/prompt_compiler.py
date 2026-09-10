@@ -403,6 +403,65 @@ def outline_format_block(plots_per_chapter: int = 6, cap: int = 0,
     return "\n".join(lines)
 
 
+def title_spec_block(style_pack: Optional[Dict[str, Any]] = None) -> str:
+    """章节名的规格块。
+
+    排纲提示词原来只说「第N章 章节名」和「不得与已用过的重复」——**没有任何一句
+    说它该长什么样**，于是出来的全是「头七夜的第一声雷」「说不通的洞」这种
+    意象式偏正结构。而两本原作 2833 个标题统计下来：台词/喊话式占 42%~69%，
+    点【对手】名字的次数是点主角的 1.6~2.8 倍 —— 目录读下来是一部对手受难史。
+    """
+    tl = (style_pack or {}).get("章标题模板库")
+    if not tl:
+        return ""
+    out = ["#章节名规格（目录页是读者唯一先看见的东西，不是内容摘要）"]
+    if tl.get("说明"):
+        out.append(tl["说明"])
+    for r in (tl.get("硬规则") or [])[:8]:
+        out.append(f"- {r}")
+    fc = tl.get("功能类") or []
+    if fc:
+        out.append("\n可用的功能类（本批各章要换着用，连续 10 章不得重复同一类）：")
+        for t in fc:
+            out.append(f"  · {t.get('类','')}（约占 {t.get('占比',0):.0%}）"
+                       f"｜例：{'、'.join(t.get('例', [])[:3])}")
+    sc = tl.get("同题连章")
+    if sc:
+        out.append(f"\n同题连章：{sc.get('说明','')}"
+                   f"（上限 {sc.get('上限', 25)} 章）")
+    fm = tl.get("形制")
+    if fm:
+        out.append("\n形制：" + "；".join(f"{k}={v}" for k, v in fm.items()))
+    return "\n".join(out)
+
+
+def event_span_block(style_pack: Optional[Dict[str, Any]] = None) -> str:
+    """「一事多章·一章一眼」——大事件该占几章、每章换谁的眼睛。
+
+    这是从原作里挖出来、而现有排纲完全没有的东西：《抢救大明朝》第 852-876 章
+    连续 **25 章**全叫《什么？大清没了！》，写的是同一场战役，视角依次是
+    史可法→多铎→明军火枪连→清军巴图鲁詹岱→索尼→孝庄→鳌拜，**大半是输家的眼睛**。
+
+    而现有框架是「346 章 = 346 个不同事件」：一章一个新事件，事件编不出来就注水，
+    状态每章被推一下就漂移。改成一事多章之后，事件不用编了，状态一个事件只动一次。
+    """
+    if not (style_pack or {}).get("eventSpan"):
+        return ""
+    return (
+        "事件与视角（本批最重要的一条，先定事件再切章）：\n"
+        "- **不要一章一个新事件**。先想清楚本批要发生的是几件事，"
+        "再决定每件事占几章。参考配比：决定国运的大战役 15~25 章；"
+        "一场攻防或一次朝堂摊牌 5~8 章；一次谈判/抄家/科举 3~5 章；日常推进 1~2 章。\n"
+        "- 同一件事的连续几章，**每章换一双眼睛**：同一事件内视角不得重复，"
+        "**过半必须是对手或输家的眼睛**，主角本人的视角不超过三分之一，"
+        "至少有一章用小人物的眼睛（一个亲兵、一个画师、一个酒楼掌柜、一个仵作）。\n"
+        "- 同一件事**只在其中一章动账**，其余几章不动账。"
+        "代价也是一个事件付一次，不要每章硬安一个。\n"
+        "- 同一件事的连续几章可以用完全相同的章节名。\n"
+        "- 值几章就写几章。**不许为了凑章数把一件事掰成几个假事件**——"
+        "那是「剧情不连续」的根源。\n\n")
+
+
 def compile_outline_prompt(*, title: str, start: int, count: int,
                            genre_line: str, world_digest: str,
                            roster_names: List[str], outline: str,
@@ -440,11 +499,13 @@ def compile_outline_prompt(*, title: str, start: int, count: int,
         f"#必守约束\n{constraints}\n\n"
         f"{rules_block}"
         f"每章严格按下面格式输出，章与章之间用一行 ###fenge 分隔：\n\n"
+        f"{title_spec_block(style_pack)}\n\n"
         f"{outline_format_block(plots_per_chapter, outline_cap, style_pack)}\n"
         f"（本批第一章的「承接」要接住【前情】里给出的上一章结尾）\n"
-        f"⚠ {len(outline_required(style_pack))} 个字段一个都不能少，"
-        f"尤其是**重场**、**爽点**与**章末钩子**："
-        f"不许把钩子塞进剧情条目里，缺字段的章会被整章丢弃重排。\n\n"
+        f"⚠ {len(outline_required(style_pack))} 个字段一个都不能少："
+        f"{'、'.join('**' + x + '**' for x in outline_required(style_pack)[-4:])} "
+        f"这几栏最常被漏掉。不许把钩子塞进剧情条目里，缺字段的章会被整章丢弃重排。\n\n"
+        f"{event_span_block(style_pack)}"
         f"衔接要求（最容易塌的地方，逐条对照）：\n"
         f"- 每一章的「承接」必须真的对上上一章的「章末钩子」，"
         f"不许把钩子晾着不管、下一章另起一摊事\n"
