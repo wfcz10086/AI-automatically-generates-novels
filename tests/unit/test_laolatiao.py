@@ -378,3 +378,43 @@ def test_自转结果进排纲且排在最前():
     assert "🌍" in src
     assert 'cons.insert(0' in src
     assert "撞上" in src
+
+
+# ─────────────── 作废与换壳（五算子的纵向两条）───────────────
+
+def test_引擎层带作废与换壳配置():
+    import json as _j
+    from pathlib import Path as _P
+    core = _j.loads((_P(__file__).resolve().parents[2] /
+                     "packs/engine/core.json").read_text(encoding="utf-8"))
+    assert int((core.get("obsolete") or {}).get("afterUses") or 0) >= 2
+    assert int((core.get("reshell") or {}).get("tailChapters") or 0) >= 1
+
+
+def test_同路数模糊归并():
+    """模型即使被要求统一说法也会飘，全等匹配会让作废令永不触发。"""
+    from server.orchestrator import Novelist
+    same = Novelist._same_move
+    assert same("肉身硬抗法器", "以肉身硬接法器")
+    assert same("一拳砸断腿骨", "一拳打断腿")
+    assert not same("肉身硬抗法器", "抵押货单换船期")
+
+
+def test_作废令要写明失灵理由与禁止加强():
+    import server.stagecraft as sc
+    p = sc.obsolete_prompt("肉身硬抗法器",
+                           [{"at": 3, "solved": "挡下法器"},
+                            {"at": 7, "solved": "硬吃一符"}], 9)
+    assert "当众失灵" in p
+    assert "不许写成「遇到了更强的敌人」" in p   # 失灵理由必须内生
+    assert "更用力、更熟练、更高层次都不算" in p  # 不许靠加强同一招过关
+    assert "代价" in p
+
+
+def test_换壳令要长在但是链上且不许原地升级():
+    import server.stagecraft as sc
+    vol = {"name": "第一卷", "solves": "解决了活命", "exposes": "肉身暴露在戒律堂视线中"}
+    p = sc.reshell_prompt(vol, "苦役院扫地杂役", 4, 42)
+    assert "肉身暴露在戒律堂视线中" in p      # 收壳理由来自本卷 exposes
+    assert "性质不同" in p                    # 换赛道, 不是升一级
+    assert "看错" in p                        # 换壳本身要产生新误读

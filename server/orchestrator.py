@@ -1866,6 +1866,80 @@ class Novelist:
             self._log("势力 %d 家：%s" % (len(fs), "、".join(f["name"] for f in fs)))
         return fs
 
+    @staticmethod
+    def _same_move(a: str, b: str) -> bool:
+        """两次解法算不算同一路数 —— 字面二元组重合过半就算。
+
+        模型即使被要求「同一路数用同样的说法」也会飘（「肉身硬抗法器」→
+        「以肉身硬接法器」）。全等匹配会让作废算子永远不触发，所以做模糊归并。
+        """
+        ga = {a[i:i + 2] for i in range(len(a) - 1)}
+        gb = {b[i:i + 2] for i in range(len(b) - 1)}
+        if not ga or not gb:
+            return a == b
+        return len(ga & gb) / min(len(ga), len(gb)) >= 0.5
+
+    def stale_method(self, n: int) -> str:
+        """作废算子（纵向）: 反复奏效的那一招该过期了。
+
+        误读管「一变多」、代价管「一变二」、自转管横向，这一条管**纵向**：
+        让时间在主角身上留下痕迹，而不是能力一路叠加。频率由引擎层 obsolete 定。
+        """
+        cfg = self.style.get("obsolete") or {}
+        after = int(cfg.get("afterUses") or 0)
+        if not after:
+            return ""
+        ms = [m for m in (self.p.state.get("methods") or []) if isinstance(m, dict)]
+        if not ms:
+            return ""
+        expired = self.p.state.setdefault("expired_methods", [])
+        cooldown = int(cfg.get("cooldown") or 12)
+        # 刚下过作废令就别接着下, 否则每一批细纲都在写主角失手
+        if any(n - int(e.get("at") or 0) < cooldown for e in expired):
+            return ""
+        groups: List[List[Dict[str, Any]]] = []
+        for m in ms:
+            for g in groups:
+                if self._same_move(g[0]["method"], m.get("method", "")):
+                    g.append(m); break
+            else:
+                groups.append([m])
+        for g in sorted(groups, key=lambda g: -len(g)):
+            if len(g) < after:
+                continue
+            name = g[0]["method"]
+            if any(self._same_move(name, e.get("method", "")) for e in expired):
+                continue
+            if len(expired) >= int(cfg.get("cap") or 2) * 99:   # cap 留给单批条数
+                break
+            expired.append({"at": n, "method": name})
+            self.p.save()
+            self._log(f"作废令: 「{name}」已连奏效 {len(g)} 次, 本批细纲要让它失灵一次")
+            return sc.obsolete_prompt(name, g[-int(after):], n)
+        return ""
+
+    def reshell(self, n: int) -> str:
+        """换壳算子（重启）: 卷末收走主角借来的位置, 下一卷换赛道。"""
+        cfg = self.style.get("reshell") or {}
+        tail = int(cfg.get("tailChapters") or 0)
+        if not tail:
+            return ""
+        cur = self.volume_of(n)
+        if not cur or int(cur.get("index") or 1) < int(cfg.get("minVolume") or 1):
+            return ""
+        left = int(cur["end"]) - n + 1
+        if left > tail or left <= 0:
+            return ""
+        who = (self.alias_pair() or [None])[0] or (
+            self.roster()[0]["name"] if self.roster() else "")
+        ident = (self.p.state.get("identity") or {}).get(who) or {}
+        shell = ident.get("now") or ""
+        if not shell:
+            rl = (self.p.state.get("roles") or {}).get(who) or {}
+            shell = str(rl.get("state") or "")[:60]
+        self._log(f"换壳令: 第{cur['index']}卷还剩 {left} 章, 卷末要收走「{shell or '当前位置'}」")
+        return sc.reshell_prompt(cur, shell, left, n)
+
     def world_turn(self, n: int) -> str:
         """每隔几章让各势力各走一步 —— 完全不管主角在干什么。
 
@@ -4160,6 +4234,14 @@ class Novelist:
             cons.insert(0, "🌍【世界自转·主角不在场时各家各走了一步】\n" + wt
                         + "\n本批要让主角**撞上**其中至少一条，"
                           "而不是把它们当背景交代掉。")
+        # 作废与换壳 —— 五算子里的纵向两条。放最前面, 它们决定这一批的骨架:
+        # 主角靠什么过关这件事本身要发生变化, 而不是永远靠同一招越用越熟。
+        sm = self.stale_method(start)
+        if sm:
+            cons.insert(0, "⛔" + sm)
+        rs = self.reshell(start)
+        if rs:
+            cons.insert(0, "🔄" + rs)
 
         # 排纲必须看见**已经写出来的正文**，不是只看自己上一批排的细纲。
         # 只喂摘要接不住文风、称谓、和正文里临时长出来的东西 —— 实测第 2 章细纲
@@ -5194,7 +5276,13 @@ class Novelist:
             f"读者已经知道是错的、而人物也知道自己在猜，那不算。\n"
             f"  没有就写「无」）\n"
             f"收误读：（本章有谁**发现自己之前想错了**？写清是谁的哪个误会被戳破了，"
-            f"分号分隔。没有就写「无」）\n\n"
+            f"分号分隔。没有就写「无」）\n"
+            # 作废算子的原料: 不记下主角每章靠什么过关, 就没法知道哪一招该过期。
+            # 长篇中期原地打转的根子不是敌人不够强, 是主角的解法永远有效。
+            f"解法：（主角本章**靠什么**过的关？格式 招数|解决了什么，"
+            f"招数写成 4-12 字的路数名，同一路数每次要用**同样的说法**"
+            f"（例如一直写「肉身硬抗法器」，不要一次写「铜皮挡剑」一次写"
+            f"「硬接一击」）。主角没解决什么就写「无」）\n\n"
             f"{self.condense(text, 9000)}")
         r = call("polishing", prompt, max_tokens=600)
         out = clean(r.text)
@@ -5243,6 +5331,15 @@ class Novelist:
                 name = alias[0]
             if name and val:
                 st.setdefault("identity", {})[name] = {"at": n, "now": val}
+
+        # 解法台账 —— 作废算子的原料。
+        _m = field("解法")
+        if _m and "|" in _m:
+            _mm, _, _sv = _m.partition("|")
+            _mm = _mm.strip()[:24]
+            if _mm:
+                st.setdefault("methods", []).append(
+                    {"at": n, "method": _mm, "solved": _sv.strip()[:60]})
 
         # 误读台账 —— 一个动作 × N 个误读者 = N 条新支线, 是这类书主要的情节发生器。
         # 记的是「别人信了的假解释」, 与伏笔(藏起来的真相)互补。
