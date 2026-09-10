@@ -641,6 +641,10 @@ class Retriever:
     def recall(self, chapter_outline: str, k: int = 6) -> Dict[str, Any]:
         """返回 {items, internal, external, needs} —— 供 L4 层直接使用。"""
         internal = self.mem.search(chapter_outline, k=k)
+        # 世界书和角色档案**整本**都在常驻层(L1)里, 召回再把它们的切片捞回来
+        # 就是同一段话在提示词里出现两遍 —— 实测一条 [世界观] 召回就 2.4k 字,
+        # 一章白烧上千 token。召回只该捞常驻层装不下的东西: 章节事件、伏笔、台账。
+        internal = [h for h in internal if h.get("kind") not in ("world", "role")]
         needs = self.plan_queries(stage="chapter", context=chapter_outline, k=4)
         if not needs:
             needs = detect_fact_needs(chapter_outline, self.era)

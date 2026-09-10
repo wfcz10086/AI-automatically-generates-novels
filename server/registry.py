@@ -78,6 +78,21 @@ class Registry:
         self.types = self._load_packs(PACKS / "type")
         self.genres = self._load_packs(PACKS / "genre")
         self.styles = self._load_packs(PACKS / "style")
+        # 架构层与文风层分家: 推进机制(细纲11栏/牌市/但是链/一事多章/窗口反馈/
+        # 结构件/世界自转)对所有文风成立, 放 packs/engine/core.json 一份。
+        # 文风包只留调子/词表/爽点/标题模板这些换作者才动的东西。
+        # 铁律: 文风包不得分叉架构 —— 带了引擎键且值不同, 引擎赢并大声告警;
+        # 个别书确要改架构参数, 走 project.json 的 pack_overrides(显式书级决定)。
+        self.engine: Dict[str, Any] = self._load_packs(PACKS / "engine").get("core", {})
+        _meta = {"id", "name", "description", "note", "_说明"}
+        for sid, st in self.styles.items():
+            for k, v in self.engine.items():
+                if k in _meta:
+                    continue
+                if k in st and st[k] != v:
+                    print(f"[registry] 警告: 文风包 {sid} 携带引擎键 {k} 且值不同, "
+                          f"已用引擎层覆盖 —— 架构不许被文风包分叉")
+                st[k] = v
         common = PACKS / "common" / "novel-common.json"
         self.common: Dict[str, Any] = json.loads(common.read_text(encoding="utf-8")) if common.exists() else {}
 

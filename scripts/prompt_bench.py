@@ -25,6 +25,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 STYLE = json.loads((ROOT / "packs/style/laolatiao.json").read_text(encoding="utf-8"))
+# 架构层已拆到 packs/engine/core.json, 直接读文风包文件的地方要自己合上
+STYLE = {**json.loads((ROOT / "packs/engine/core.json").read_text(encoding="utf-8")), **STYLE}
 SEEDS = STYLE["片段种子库"]
 TONE = STYLE["主调"]
 

@@ -14,6 +14,8 @@ from server.prompt_compiler import (compile_chapter_prompt, measure_text,
 
 ROOT = Path(__file__).resolve().parents[2]
 LLT = json.loads((ROOT / "packs/style/laolatiao.json").read_text(encoding="utf-8"))
+# 架构层在 packs/engine/core.json, 测试按运行时同样方式合成
+LLT = {**json.loads((ROOT / "packs/engine/core.json").read_text(encoding="utf-8")), **LLT}
 FQ = json.loads((ROOT / "packs/style/fanqie-shuangwen.json").read_text(encoding="utf-8"))
 
 
@@ -333,14 +335,22 @@ def test_当众失态是常驻结构件():
 
 # ── 世界自转（横向扩散因子）────────────────────────────────
 
-def test_自转是包开关且两个包都开了():
+def test_自转在引擎层且文风包不得携带架构键():
+    """架构层与文风层分家后的纪律: 推进机制只有 engine/core.json 一份,
+    文风包再夹带这些键就是在分叉架构 —— 那正是「迭代几十遍越改越乱」的根源。"""
     import json as _j
     from pathlib import Path as _P
+    root = _P(__file__).resolve().parents[2]
+    core = _j.loads((root / "packs/engine/core.json").read_text(encoding="utf-8"))
+    assert (core.get("worldTurn") or {}).get("every") == 8
+    engine_keys = {"outlineFields", "threadDriver", "eventSpan", "volumeChain",
+                   "worldTurn", "windowFeedback", "structuralItems"}
+    assert engine_keys <= set(core), "引擎层缺架构键"
     for f in ("laolatiao", "roushen-shuangwen"):
-        pk = _j.loads((_P(__file__).resolve().parents[2] /
-                       f"packs/style/{f}.json").read_text(encoding="utf-8"))
-        assert (pk.get("worldTurn") or {}).get("every") == 8, f
-    assert (FQ.get("worldTurn") or {}).get("every") in (None, 0), "老包不该被波及"
+        pk = _j.loads((root / f"packs/style/{f}.json").read_text(encoding="utf-8"))
+        leaked = engine_keys & set(pk)
+        assert not leaked, f"文风包 {f} 夹带架构键: {leaked}"
+    assert (FQ.get("worldTurn") or {}).get("every") in (None, 0, 8), "老包不受影响"
 
 
 def test_世界回合提示词的硬要求():

@@ -1622,7 +1622,16 @@ class Novelist:
             resident += "\n\n【本章出场角色档案】\n" + cast
         roles_all = self.p.read("characters.md")
         if roles_all:
-            resident += "\n\n【全部角色档案（备查，勿引入未列出的新角色）】\n" + roles_all
+            # 这一块的唯一用途是「勿引入名单外新角色」—— 名单就够了。
+            # 原来把 13 张整卡(4300+字)再塞一遍, 而出场角色的整卡 cast_for()
+            # 已经给过, 等于每章为一句禁令花几千 token。
+            import re as _re
+            _names = _re.findall(r"^#{2,4}\s*\d+\.\s*姓名[:：]\s*(\S+)", roles_all, _re.M)
+            if _names:
+                resident += ("\n\n【本书全部角色名单（不得引入名单外的具名新角色；"
+                             "名单内未出场者本章不必写）】\n" + "、".join(_names))
+            else:
+                resident += "\n\n【全部角色档案（备查，勿引入未列出的新角色）】\n" + roles_all
         graw = (self.genre.get("raw") or "")[:8000]
         if graw:
             resident += "\n\n【题材写作规范（完整版）】\n" + graw
@@ -1919,11 +1928,14 @@ class Novelist:
             tag = "（埋了 %d 章了，该结账了）" % age if age >= 25 else ""
             # 缺字段的条目别印成「凭「」…于是「」」这种残句 —— 有什么写什么
             bits = []
+            # 台账字段是模型写的, 长起来没边(实测五条燃料 5.8k 字, 是细纲硬约束
+            # 块的五倍)。燃料要的是「谁信着什么错」这一句, 不是把当时的场景复述一遍。
+            _c = lambda v, cap=60: (v[:cap] + "…") if len(v) > cap else v
             if m.get("because"):
-                bits.append(f"凭「{m['because']}」")
-            bits.append(f"认定「{m.get('concludes','')}」")
+                bits.append(f"凭「{_c(m['because'])}」")
+            bits.append(f"认定「{_c(m.get('concludes',''))}」")
             if m.get("acts"):
-                bits.append(f"于是「{m['acts']}」")
+                bits.append(f"于是「{_c(m['acts'])}」")
             lines.append(f"· {m.get('who') or '有人'}：" + "，".join(bits) + tag)
         return ("这些人现在都**信着一个错的东西**，而且正照着它行动。"
                 "他们不知道真相，本章也不必让他们知道 ——\n"
