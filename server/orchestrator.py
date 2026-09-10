@@ -2113,6 +2113,21 @@ class Novelist:
         per = max(20, min(50, total // max(3, round(total / 40)) if total else 40))
         n_vol = max(2, round(total / per)) if total else 4
         anchor = self.world_anchor()
+        # 「但是链」：每卷两栏 —— 这一卷解决什么、解决之后**新长出**什么问题。
+        # 硬约束 volume[i].exposes == volume[i+1].solves。加上这条之后，
+        # 「主角越来越强」这种结构在物理上就写不出来了：每一卷必须先把上一卷的
+        # 解法作废掉。这是防止长篇写到一百章开始原地打转的唯一结构性手段。
+        chain = bool(self.style.get("volumeChain"))
+        chain_fmt = ("本卷解决：（这一卷把什么问题解决掉了，一句话）\n"
+                     "解决之后暴露：（正因为用这个办法解决了，**新长出**什么问题？"
+                     "一句话。必须是上一栏的解法本身带来的后果，不是另起炉灶的新麻烦）\n"
+                     "\n⚠ 硬约束：**第 i 卷的「解决之后暴露」必须原样成为第 i+1 卷的"
+                     "「本卷解决」**。照抄那一句，不许换说法。\n"
+                     "  这意味着每一卷的解法都要让上一卷的解法失效 —— "
+                     "不许写成能力叠加（更强的功法、更大的地盘、更多的兵）。\n"
+                     "  例：活命→没名分｜名分→没钱没地｜钱和地→得罪整个士大夫阶级｜"
+                     "府兵火器→天下三分打不动｜技术碾压→天下变大了｜"
+                     "走出去→没有意识形态撑不住\n") if chain else ""
         prompt = (
             f"为《{self.p.meta.get('title','')}》做分卷。全书 {total} 章，分 {n_vol} 卷。\n\n"
             f"#总纲\n{self.p.read('outline.md')[:4000]}\n\n"
@@ -2122,8 +2137,9 @@ class Novelist:
             + f"每卷严格按此格式，卷之间用一行 ###fenge 分隔：\n"
               f"卷名：…\n章节范围：第X章-第Y章\n本卷主线：…\n"
               f"本卷高潮：（具体事件）\n卷末钩子：…\n主要出场：（3-6 个角色名）\n"
-              f"实力/地位变化：（主角从什么状态到什么状态）\n\n"
-              f"要求：卷与卷之间要有明显的格局升级，不能原地打转。直接输出，无前言。")
+              f"实力/地位变化：（主角从什么状态到什么状态）\n"
+            + (chain_fmt if chain_fmt else "")
+            + f"\n要求：卷与卷之间要有明显的格局升级，不能原地打转。直接输出，无前言。")
         r = call("planning", prompt, on_delta, max_tokens=int(self.g.get("max_tokens_outline") or 8000))
         vols: List[Dict[str, Any]] = []
         cur = 1
@@ -2131,14 +2147,57 @@ class Novelist:
             m = re.search(r"章节范围[^\d]*(\d+)\D+(\d+)", blk)
             a, b = (int(m.group(1)), int(m.group(2))) if m else (cur, cur + per - 1)
             name = (re.search(r"卷名\s*[:：]\s*(.+)", blk) or [None, f"第{len(vols)+1}卷"])[1]
+            fld = lambda k: (re.search(rf"^{k}\s*[:：]\s*(.+)$", blk, re.M) or [None, ""])[1].strip()
             vols.append({"index": len(vols) + 1, "name": str(name).strip()[:30],
-                         "start": a, "end": b, "text": blk})
+                         "start": a, "end": b, "text": blk,
+                         "solves": fld("本卷解决")[:80],
+                         "exposes": fld("解决之后暴露")[:80]})
             cur = b + 1
+        if chain and len(vols) > 1:
+            bad = self._check_volume_chain(vols)
+            if bad:
+                # 只告警不拒收：纯字面判断会误伤合法的语义链条
+                # （「没有意识形态撑不住」→「造一套天理出来」一个字都不重合）
+                self._log("⚠ 但是链可能没咬合（字面判断，可能误报）：" + "；".join(bad[:3]))
         if vols:
             self.p.write("volumes.json", json.dumps(vols, ensure_ascii=False, indent=2))
             self.p.mem.index_document("world", "volumes", r.text)
         self._log(f"分卷 {len(vols)} 卷 / {r.elapsed:.1f}s")
         return vols
+
+    @staticmethod
+    def _check_volume_chain(vols: List[Dict[str, Any]]) -> List[str]:
+        """校验「但是链」是否咬合：第 i 卷暴露的问题，必须是第 i+1 卷要解决的。
+
+        不做字符串全等 —— 模型总会换个说法。用**重合系数**（交集 / 较短那个集合）
+        而不是交并比：拿真实的链条标定过，
+            他没有名分→拿到名分      交并比 0.29  重合系数 0.50
+            没钱没地→拿到钱和地       0.33 / 0.67
+            得罪整个士大夫阶级→被士大夫阶级反扑  0.42 / 0.62
+            他没有名分→北伐中原收复燕云  0.00 / 0.00
+        交并比在「该咬合」那一侧只有 0.29~0.42，离噪声太近；重合系数是 0.50~0.67，
+        与「不该咬合」的 0.00 完全分开，取 0.40 作阈。
+
+        **这只是告警，不是拒收。** 纯字面判断必然误伤合法的语义链条 ——
+        原作里「没有意识形态撑不住」→「造一套天理出来」是真链条，却一个字都不重合。
+        所以这里只写日志给人看，不阻断生成。
+        """
+        def sim(a: str, b: str) -> float:
+            sa = {c for c in a if '\u4e00' <= c <= '\u9fff'}
+            sb = {c for c in b if '\u4e00' <= c <= '\u9fff'}
+            if not sa or not sb:
+                return 0.0
+            return len(sa & sb) / min(len(sa), len(sb))
+
+        bad = []
+        for i in range(len(vols) - 1):
+            e, nxt = vols[i].get("exposes", ""), vols[i + 1].get("solves", "")
+            if not e or not nxt:
+                bad.append(f"第{i+1}→{i+2}卷：缺「解决之后暴露」或「本卷解决」")
+            elif sim(e, nxt) < 0.40:
+                bad.append(f"第{i+1}卷暴露「{e[:22]}」，第{i+2}卷却去解决"
+                           f"「{nxt[:22]}」—— 另起炉灶了")
+        return bad
 
     def volume_of(self, n: int) -> Dict[str, Any]:
         for v in (self.p._load("volumes.json", []) or []):

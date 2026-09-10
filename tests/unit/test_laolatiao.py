@@ -166,3 +166,74 @@ def test_没有牌的支线自动回退到老逻辑():
            "span": [1, 200], "cadence": 10, "last_touched": 5, "beats": []}]
     out = sc.thread_brief(th, 100, "cards")
     assert "已超期" in out, "没有 card 字段时必须退回 cadence 版，别让老书拿到空块"
+
+
+# ── 卷要的「但是链」 ───────────────────────────────────────
+
+def test_但是链咬合判定():
+    """阈值用重合系数 0.40 标定：该咬合的真实链条落在 0.50~0.67，
+    另起炉灶的落在 0.00。交并比在该咬合一侧只有 0.29~0.42，离噪声太近。"""
+    from server.orchestrator import Novelist
+    chk = Novelist._check_volume_chain
+    # 咬上：同义改写也要放过
+    ok = [{"solves": "活下来", "exposes": "他没有名分"},
+          {"solves": "拿到名分", "exposes": "他没钱没地"},
+          {"solves": "拿到钱和地", "exposes": ""}]
+    assert not [x for x in chk(ok) if "另起炉灶" in x]
+    # 没咬上：另起炉灶
+    bad = [{"solves": "活下来", "exposes": "他没有名分"},
+           {"solves": "北伐中原收复燕云", "exposes": "打不动"}]
+    assert any("另起炉灶" in x for x in chk(bad))
+    # 缺栏
+    miss = [{"solves": "活下来", "exposes": ""}, {"solves": "拿名分", "exposes": ""}]
+    assert any("缺" in x for x in chk(miss))
+
+
+def test_但是链是包开关():
+    assert LLT.get("volumeChain") is True
+    assert FQ.get("volumeChain") in (None, False)
+
+
+# ── 反馈控制器的阻尼与耦合保护 ────────────────────────────
+
+def test_三档阻尼措辞():
+    """漂出 10% 和漂出 900% 不能给同一句话——全量纠偏会把对白 0.37 一次压到 0.23。"""
+    import copy
+    pack = copy.deepcopy(LLT)
+    # 只留一项，方便断言
+    pack["windowFeedback"]["metrics"] = {"每千字叹号": LLT["windowFeedback"]["metrics"]["每千字叹号"]}
+    mild = window_drift(["他说。" * 200 + "好！" * 4], pack)      # 略低于下界
+    severe = window_drift(["他说。" * 400], pack)                 # 一个叹号都没有
+    assert "严重偏离" in severe
+    assert "轻微偏离" in mild or "明显偏离" in mild
+    assert severe != mild
+
+
+def test_耦合保护():
+    """砍对话时必须明写别把寄生在对话里的东西一起砍了。"""
+    import copy
+    pack = copy.deepcopy(LLT)
+    pack["windowFeedback"]["metrics"] = {"对白占比": LLT["windowFeedback"]["metrics"]["对白占比"]}
+    talky = "\n".join(['「你说的这个事，我听着不对。」'] * 60)
+    fb = window_drift([talky], pack)
+    assert "偏高" in fb
+    assert "别把这几样一起砍了" in fb
+    assert "心里那句" in fb
+
+
+def test_死区():
+    """漂出不到区间宽度 15% 的不该报——单章方差本来就大，为噪声纠偏只会引入新漂移。"""
+    import copy
+    pack = copy.deepcopy(LLT)
+    pack["windowFeedback"]["metrics"] = {
+        "段均字数": {"lo": 47, "hi": 62, "低": "串长", "高": "收短"},
+        "每千字叹号": LLT["windowFeedback"]["metrics"]["每千字叹号"],
+    }
+    # 段均刚过上界一点（区间宽 15，超出 <2.25 才算死区）；叹号一个都没有 → 只该报叹号
+    line = "他把账本合上推了回去，那半盏冷茶已经凉透，谁也没再去动它一下。"     # 30 字
+    t = "\n".join([line * 2 + "，"] * 30)                                    # 每段约 63 字
+    m = __import__("server.prompt_compiler", fromlist=["x"]).measure_text(t)
+    assert 62 < m["段均字数"] < 64.3, f"测试样本段均 {m['段均字数']} 不在死区内"
+    fb = window_drift([t], pack)
+    assert "叹号" in fb
+    assert "段均字数" not in fb, fb
