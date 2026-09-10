@@ -288,7 +288,13 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
     if negative:
         seg.append("\n#反向提示词库（禁止出现）\n" + "、".join(negative))
     if positive:
-        seg.append("\n#正向提示词库（尽量多使用，写出网感）\n" + " ".join(positive))
+        # 「尽量多使用」这个说法对**点缀型**词库是有害的：实测把 32 个市井话丢进来
+        # 配上这句，江湖话密度冲到 0.59/千字，而原作 p90 才 0.42、中位是 0.00。
+        # 包可以用 positiveNote 覆盖这句话，说清它是点缀还是主料。
+        note = sp.get("positiveNote") or "尽量多使用，写出网感"
+        seg.append("\n#正向提示词库（" + note.split("\n")[0] + "）\n"
+                   + " ".join(positive)
+                   + ("\n" + "\n".join(note.split("\n")[1:]) if "\n" in note else ""))
 
     seg.append(f"\n#本章剧情（共 {len(plots)} 条，每条约 {int(target_words/max(1,len(plots)))} 字）"
                f"\n{plot_block}\n【剧情结束】")
