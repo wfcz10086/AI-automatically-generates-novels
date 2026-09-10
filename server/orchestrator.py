@@ -1588,6 +1588,27 @@ class Novelist:
         return "\n".join(dict.fromkeys(lines))
 
     # ---------- 分层记忆装配 ----------
+    #: 约束档位。约束堆到二十几块之后, 模型的注意力全花在合规上, 写出来的东西
+    #: 「没错, 但也没意思」。而真正非有不可的其实只有三类:
+    #:   剧情连续 / 不超纲 / 战斗力不崩塌
+    #: minimal 只留这三类(外加命名注册表, 因为两个角色同名会让正文当场精神分裂),
+    #: 其余全关。normal 是老行为。档位可写在项目 meta 或文风包里, 对所有书通用。
+    MINIMAL_CONS = {"canon", "timeline", "roles", "terms", "power", "ledger",
+                    "orgs", "names"}
+
+    def con_level(self) -> str:
+        return (self.p.meta.get("constraint_level")
+                or self.style.get("constraintLevel") or "normal").lower()
+
+    def con_on(self, key: str) -> bool:
+        """这一块约束在当前档位下要不要发。"""
+        lv = self.con_level()
+        if lv == "minimal":
+            return key in self.MINIMAL_CONS
+        if lv == "off":
+            return False
+        return True
+
     def build_context(self, n: int, chapter_outline: str) -> Dict[str, Any]:
         """五层记忆 → 一份带预算报告的上下文. 见 memory_ctl.py."""
         mc = MemoryController(self.g["context_budget"], self.mcfg.get("layers"))
@@ -1633,32 +1654,32 @@ class Novelist:
 
         cons = []
         anchor = self.world_anchor()
-        if anchor.get("mode") == "alt" and anchor.get("dynasty"):
+        if anchor.get("mode") == "alt" and anchor.get("dynasty") and self.con_on("anchor"):
             cons.append(f"【朝代锚定·架空】本书朝代只叫「{anchor['dynasty']}」。"
                         f"绝对禁止出现真实朝代词：{'、'.join(anchor['forbidden'][:14])}。"
                         f"律法称「{anchor['dynasty']}律」，史书称「{anchor['dynasty']}史」。"
                         f"也不得出现真实历史人物（赵构、蔡京、岳飞、苏轼…），"
                         f"需要类似角色请用虚构姓名。")
-        elif anchor.get("mode") == "real":
+        elif anchor.get("mode") == "real" and self.con_on("anchor"):
             cons.append("【史实锚定·正统历史】本书写的就是真实朝代，朝代名、官职、律法、"
                         "纪年一律用真实名称，不要自造国号。凡涉及具体年份、官职品级、"
                         "物价、器物，必须与背景资料一致；资料没有的宁可写模糊，不许编数字。")
-        if anchor.get("main_place"):
+        if anchor.get("main_place") and self.con_on("anchor"):
             cons.append(f"【主场锚定】主角常驻地是「{anchor['main_place']}」，"
                         f"不得随意把主场换到别的县城；确需异地必须写明行程。")
         cn = self.canon()
-        if cn:
+        if cn and self.con_on("canon"):
             recent_facts = cn[-40:]
             cons.append("【已确立的不可逆事实，绝对不得推翻】\n" + "；".join(
                 f"{c['subject']}{c['fact']}(第{c['chapter']}章)" for c in recent_facts))
         era = self.era_card()
-        if era:
+        if era and self.con_on("era"):
             cons.append("【时代红线·写进正文即穿帮】\n" + self.condense(era, 3000))
         guide = self.p.read("style_guide.md")
-        if guide:
+        if guide and self.con_on("guide"):
             cons.append("【本书写作守则·自审沉淀】\n" + self.condense(guide, 3000))
         alias = self.protagonist_alias()
-        if alias:
+        if alias and self.con_on("alias"):
             cons.append(alias)
         # 命名注册表 —— 实测第 12 章模型给骨科主任起名「赵德海」, 与主角死对头
         # (学生会副主席)同名, 正文当场精神分裂。新配角必须避开已用姓名。
@@ -1666,7 +1687,7 @@ class Novelist:
         used_names |= {c.get("subject", "") for c in self.canon()
                        if re.fullmatch(r"[一-鿿]{2,4}", c.get("subject", ""))}
         surnames = {n[0] for n in used_names if len(n) >= 2}
-        if used_names:
+        if used_names and self.con_on("names"):
             cons.append("【命名注册表】已有角色："
                         + "、".join(sorted(used_names)[:24])
                         + "。新出现的任何配角（医生/官员/路人）绝不能与上述姓名"
@@ -1674,15 +1695,15 @@ class Novelist:
         lr = self.learned_rules()
         # 基底卡的红线 —— 模型为这本书判出来的, 比内置的七种预设更贴身
         red = self.basis_field("红线")
-        if red:
+        if red and self.con_on("basis"):
             cons.append("【世界基底红线·写了即错】\n" + self.condense(red, 2000))
         loose = self.basis_field("可以放开")
-        if loose:
+        if loose and self.con_on("basis"):
             cons.append("【本书可以放开的地方】" + loose.replace("\n", " ")[:200])
         # 数字锁单独成块。canon 里其实记了「蒋家报价一千二百贯」, 但它混在 80 条
         # 散文体事实里, 模型扫过去不会逐条比对数字。数字要单拎出来、短、可扫。
         tm = self.p.state.get("terms", {}) or {}
-        if tm:
+        if tm and self.con_on("terms"):
             hot_tm = sorted(tm.items(), key=lambda kv: -kv[1].get("at", 0))[:12]
             cons.append("【数字锁·已定死的数字，不得改口】"
                         + "；".join(f"{k}={v['value']}（第{v['at']}章定）"
@@ -1691,13 +1712,13 @@ class Novelist:
                         "并交代原因，不得静默换个数字。")
         spec = self.ledger_spec()
         pw = self.p.state.get("power", {}) or {}
-        if pw:
+        if pw and self.con_on("power"):
             hot = sorted(pw.items(), key=lambda kv: -kv[1].get("at", 0))[:10]
             cons.append(f"【{spec['power']['label']}·只进不退，不得凭空跃升或倒退】"
                         + "；".join(f"{nm}（第{v['at']}章）{v['state']}"
                                    for nm, v in hot))
         orgs = self.p.state.get("orgs", {}) or {}
-        if orgs:
+        if orgs and self.con_on("orgs"):
             # 变量名别用 recent —— 本函数上面的 recent 是「最近章节原文」,
             # 覆盖掉会让记忆装配拿到势力元组而不是字符串（这类遮蔽栽过两次）
             hot_orgs = sorted((kv for kv in orgs.items() if isinstance(kv[1], dict)),
@@ -1710,7 +1731,8 @@ class Novelist:
         # 牌市模式下这条是**错的约束** —— 它强迫手上没牌的人回来刷存在感。
         # 实测原作里洪承畴消失 781 章、王承恩 1047 章都没问题, 因为那段时间
         # 他们的牌确实不值钱; 硬拉回来给「一句状态交代」只会稀释掉他重新登场时的分量。
-        if lr.get("must_appear") and self.style.get("threadDriver") != "cards":
+        if (lr.get("must_appear") and self.style.get("threadDriver") != "cards"
+                and self.con_on("stale")):
             cons.append("【断线角色必须回归】" + "、".join(lr["must_appear"][:5])
                         + " —— 接下来几章内安排他们出场并有实质戏份。")
         # 自审看到「档案里有、正文没出现」就判成废弃, 可那多半是还没轮到出场 ——
@@ -1723,9 +1745,9 @@ class Novelist:
         designed = {c["name"] for c in self.roster()}
         drops = [r for r in (lr.get("drop_roles") or []) if r and r not in designed]
         late = [r for r in (lr.get("drop_roles") or []) if r in designed]
-        if drops:
+        if drops and self.con_on("drop"):
             cons.append("【已废弃角色，不得再提】" + "、".join(drops[:6]))
-        if late:
+        if late and self.con_on("drop"):
             cons.append("【档案里设计了却迟迟未登场】" + "、".join(late[:6])
                         + " —— 他们不是废弃角色，是还没轮到；有合适时机就安排登场。")
         # 开篇去重 —— 自检报告「连续两章寅时三刻开篇」, 光靠事后判雷同没用,
@@ -1737,23 +1759,24 @@ class Novelist:
                           if ln.strip()), "")
             if first:
                 heads.append(f"第{i}章：{first[:36]}")
-        if heads:
+        if heads and self.con_on("opening"):
             cons.append("【开篇必须换花样】前几章是这样开场的——" + "；".join(heads)
                         + "。本章开篇的时间词、地点、句式、视角都不得与之雷同，"
                         "换一种切入方式（如直接对白、动作特写、他人视角）。")
         tg = self.tic_guard()
-        if tg:
+        if tg and self.con_on("tics"):
             cons.append("【口癖抑制】" + tg)
         sg = self.signature_guard()
-        if sg:
+        if sg and self.con_on("tics"):
             cons.append(sg)
-        cons.append("【配角配额】本章除主角外至少让 2 个配角有独立台词与动作，"
-                    "配角不能只当背景板；不得给已知人物随意安排与其身份不符的官职。")
+        if self.con_on("quota"):
+            cons.append("【配角配额】本章除主角外至少让 2 个配角有独立台词与动作，"
+                        "配角不能只当背景板；不得给已知人物随意安排与其身份不符的官职。")
         # 登场过又长期消失的角色 —— 不是「从未出现」而是「出现完就没了」。
         # 实测潘金莲第 8 章被买回、第 9 章还在炉边坐着, 之后十几章一句没提,
         # 而主角明明欠着她一笔良心债（「义字那一档，他拨了三回」）, 人物就悬在半空。
         stale = self.stale_cast(n) if self.style.get("threadDriver") != "cards" else []
-        if stale:
+        if stale and self.con_on("stale"):
             cons.append("【出场过又断线的角色】" + "；".join(stale)
                         + " —— 他们出场过就消失了，读者还记得。"
                           "不必强行安排大戏，但要给一句状态交代（在做什么、什么处境）。")
@@ -1764,14 +1787,14 @@ class Novelist:
         anchor_forb = set(anchor.get("forbidden") or [])
         hard = [w for w in bl if w in anchor_forb]
         soft = [w for w in bl if w not in anchor_forb]
-        if hard:
+        if hard and self.con_on("blacklist"):
             cons.append("【绝不能出现】" + "、".join(hard[:20]))
-        if soft:
+        if soft and self.con_on("blacklist"):
             cons.append("【已被用滥的表达，本章最多出现 1 次，含变体】"
                         + "、".join(soft[:24]))
         # 分层注入 —— 之前永远取最早 6 条(FIFO), 而最早那几条恰恰是早期抽取
         # 不准的垃圾, 于是模型永远看不到真正该收的新伏笔, 回收率卡在 4%。
-        pend = self.p.mem.pending_foreshadow()
+        pend = self.p.mem.pending_foreshadow() if self.con_on("foreshadow") else []
         if pend:
             cap = int(self.mcfg.get("foreshadow_show", 24))
             urgent = [f for f in pend if n - f["planted"] >= 30][:max(4, cap // 3)]
@@ -1788,19 +1811,19 @@ class Novelist:
         # 资金台账 —— 数值状态必须跨章衔接。实测第 37 章冒出 3500 万,
         # 第 38 章又缩回「两百多万本金」, 因为没人跟踪账目, 模型随手编数。
         ledger = self.p.state.get("ledger", {})
-        if ledger:
+        if ledger and self.con_on("ledger"):
             last3 = sorted(ledger.items(), key=lambda kv: int(kv[0]))[-3:]
             cons.append(f"【{spec['resource']['label']}·数额必须与此衔接】" + "；".join(
                 f"第{k}章：{v}" for k, v in last3)
                 + "。本章出现的任何金额必须与上述期末规模连续，大额增减必须写明"
                   "来源或去向；禁止无由来的数量级跳变。")
         roles = self.p.state.get("roles", {})
-        if roles:
+        if roles and self.con_on("roles"):
             latest_roles = sorted(roles.items(), key=lambda kv: -kv[1].get("at", 0))[:8]
             cons.append("【角色当前状态·不得凭空改变】" + "；".join(
                 f"{k}（第{v['at']}章）{v['state']}" for k, v in latest_roles))
         tl = self.p.state.get("timeline", {})
-        if tl:
+        if tl and self.con_on("timeline"):
             last = [f"第{k}章:{v}" for k, v in sorted(tl.items(), key=lambda x: int(x[0]))[-4:] if v]
             if last:
                 cons.append("【时间线】" + "；".join(last)
