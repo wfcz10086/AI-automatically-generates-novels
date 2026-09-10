@@ -57,7 +57,20 @@ class OpenAICompatProvider(BaseProvider):
         #                         传 enable_thinking=false 会直接 400
         #                         「该模型始终会思考，不支持关闭思考」
         # 网关用 thinking_style 声明自己是哪一类。
+        # 聚合网关会同时服务多个模型族（gw4 上既有 glm 又有 qwen），而思考开关的
+        # 形态是**按模型族**分的, 不是按网关分的:
+        #   qwen 系支持 enable_thinking=false, 能彻底关掉；
+        #   glm 系只能调档, 传 enable_thinking=false 直接 400。
+        # 只配一个 thinking_style 必然有一半模型吃错参数 —— 实测 qwen 在配了
+        # effort 的网关上, 一条 6.2 万字提示词要 109s 且白烧 4096 思考 token；
+        # 换成 toggle 后 36s、思考 0。所以支持按模型名前缀覆盖。
         style = (self.cfg.get("thinking_style") or "toggle").lower()
+        by_model = self.cfg.get("thinking_style_by_model") or {}
+        _m = str(kw.get("model") or body.get("model") or "").lower()
+        for pref, st in by_model.items():
+            if _m.startswith(str(pref).lower()):
+                style = str(st).lower()
+                break
         if style == "effort":
             levels = self.cfg.get("thinking_levels") or {}
             body["reasoning_effort"] = (levels.get("on", "high") if thinking

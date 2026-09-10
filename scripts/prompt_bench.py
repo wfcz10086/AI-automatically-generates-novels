@@ -38,12 +38,15 @@ def _env():
 
 
 _env()
-BASE = os.environ["NOVEL_GW4_URL"].rstrip("/")
-KEY = os.environ["NOVEL_GW4_KEY"]
+# 默认走聚合网关；BENCH_GW=gw6 可切到阿里官方独占实例做对照 ——
+# 「聚合网关排队」是最容易污染模型测速的混杂因素，必须能一键排除。
+_GW = os.environ.get("BENCH_GW", "gw4").upper()
+BASE = os.environ[f"NOVEL_{_GW}_URL"].rstrip("/")
+KEY = os.environ[f"NOVEL_{_GW}_KEY"]
 
 
 def call(model: str, prompt: str, max_tokens: int = 6000, temp: float = 0.9,
-         retries: int = 3) -> str:
+         retries: int = 3, timeout: int = 300) -> str:
     body = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
@@ -56,7 +59,7 @@ def call(model: str, prompt: str, max_tokens: int = 6000, temp: float = 0.9,
     last = ""
     for i in range(retries):
         try:
-            r = requests.post(f"{BASE}/chat/completions", json=body, timeout=300,
+            r = requests.post(f"{BASE}/chat/completions", json=body, timeout=timeout,
                               headers={"Authorization": f"Bearer {KEY}"})
             r.raise_for_status()
             d = r.json()

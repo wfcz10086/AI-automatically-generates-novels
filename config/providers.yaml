@@ -45,6 +45,21 @@ gateways:
     # 键必须加引号: YAML 1.1 会把 on/off 解析成布尔 true/false,
     # 于是 levels.get("on") 取不到值, 只能碰运气落到默认档
     thinking_levels: {"off": low, "on": high}
+    # ⚠ 这是**聚合**网关, 上面同时挂着 glm / qwen / deepseek 三个族,
+    # 而思考开关的形态是按模型族分的, 不是按网关分的:
+    #   glm 关不掉, 只能调档(传 enable_thinking=false 直接 400)
+    #   qwen 支持 enable_thinking=false, 能彻底关掉
+    # 只配一个 thinking_style 必然有一族吃错参数 —— 实测同一条 6.2 万字提示词,
+    # qwen3.8-flash 拿到 effort 档要 109s 且白烧 4096 思考 token, 不传参数直接
+    # 4 分钟超时; 换成 toggle 后 **36s、思考 0**。按前缀覆盖:
+    thinking_style_by_model:
+      glm: effort
+      zhipu: effort
+      # qwen 虽然支持 enable_thinking=false(关掉能快 3 倍), 但实测关掉之后
+      # 制度解说直接归零、叹号掉到 1.28 —— 文体指标从 8/8 掉到 5/8。
+      # 写小说留思考、调最低档更划算。要极速场景(判定/抽取)再单独覆盖。
+      qwen: effort
+      deepseek: effort
     context_window: 128000
     # 实测该网关接受 32768。给到 20000：只按实际生成计费，给宽没有代价，
     # 而带 reasoning_effort=low 时模型自己会 stop，不会把额度烧在思考上
@@ -63,6 +78,27 @@ gateways:
     thinking_levels: {"off": low, "on": high}
     context_window: 128000
     max_tokens: 8192
+
+  gw6:
+    type: openai_compat
+    label: "阿里官方百炼独占实例"
+    base_url: ${NOVEL_GW6_URL}
+    api_key: ${NOVEL_GW6_KEY:-EMPTY}
+    default_model: ${NOVEL_GW6_MODEL}
+    reasoning_field: reasoning_content
+    # Qwen 系默认开思考(实测短提示词就吃掉 172 reasoning tokens), 但它支持
+    # enable_thinking=false 彻底关掉。实测同一条 6.2 万字提示词:
+    #   不传参数            → 4 分钟超时
+    #   enable_thinking=false → 36s, 但质量掉下来: 8 项文体指标只有 5 项落在
+    #                          原作 p10~p90 内, **一段制度解说都没有**(解说体 0),
+    #                          叹号 1.28(原作 8.8~9.2), 人物全在端着
+    #   reasoning_effort=low  → 109s, 烧 4096 思考 token, 但 **8/8 项全达标**
+    # 写小说是质量优先, 所以留思考、只调到最低档。慢 3 倍换 8/8, 而且 flash
+    # 本身只有 max 十分之一的价, 这笔账很划算。
+    thinking_style: effort
+    thinking_levels: {"off": low, "on": high}
+    context_window: 128000
+    max_tokens: 20000
 
 # 检索源 —— 与模型网关并列的一类 provider。加一家 = 加一段 YAML。
 # 写作时自动用于世界观/人物/剧情/正文的背景落地，不需要单独触发。
