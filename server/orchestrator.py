@@ -22,7 +22,7 @@ from .evaluator import audit, book_audit, window_audit
 from . import dials as dl
 from . import stagecraft as sc
 from .retrieval import Retriever
-from .prompt_compiler import (OUTLINE_REQUIRED, outline_format_block,
+from .prompt_compiler import (outline_required, outline_format_block, window_drift,
                              compile_chapter_prompt, compile_outline_prompt,
                                to_plot_list)
 from . import critic as critic_mod
@@ -1800,6 +1800,28 @@ class Novelist:
         out["retrieval"] = {k: retr_info.get(k) for k in ("internal", "external", "needs")}
         return out
 
+    def window_feedback(self, n: int) -> str:
+        """最近一个窗口的文体漂移，写成给下一章的两条纠偏指令。
+
+        「约束抢配额」的解法：结构件八条全压在每一章上，模型必然拆东墙补西墙
+        （实测与原作真章的平均相对差 27%）；只留常驻三条又会塌（39%）；
+        常驻三条 + 本方法按实测漂移动态补两条 = **16%**。
+        窗口长度与指标区间都在文风包的 windowFeedback 里，包没配就返回空串。
+        """
+        wf = (self.style.get("windowFeedback") or {})
+        w = int(wf.get("window") or 0)
+        if not w:
+            return ""
+        done = sorted(x for x in self.p.state.get("done", []) if x < n)
+        if len(done) < max(3, w // 3):      # 刚开书没样本，别拿两三章的噪声去纠偏
+            return ""
+        texts = [self.p.chapter(i) for i in done[-w:]]
+        try:
+            return window_drift([t for t in texts if t], self.style)
+        except Exception as e:              # 度量出问题不该拖垮写作
+            print(f"[window] 漂移计算跳过: {e}")
+            return ""
+
     def prev_summary(self, n: int, k: int | None = None) -> str:
         k = k or self.mcfg.get("recent_chapters", 3)
         """最近 k 章摘要 + 所属 L2 段摘要 —— 长篇控 context 的关键."""
@@ -3013,8 +3035,8 @@ class Novelist:
             f"- 开头接得住前一章，结尾交得回后一章\n"
             f"- 章节名不要与全书已用过的重复\n\n"
             f"每章按下面格式输出，章与章之间用一行 ###fenge 分隔：\n"
-            + outline_format_block(6) +
-            f"\n⚠ 五个字段一个都不能少 —— 缺字段的章不予采用。")
+            + outline_format_block(6, 0, self.style) +
+            f"\n⚠ {len(outline_required(self.style))} 个字段一个都不能少 —— 缺字段的章不予采用。")
         r = call("planning", prompt, on_delta, max_tokens=int(self.g.get("max_tokens_outline") or 8000))
         parts = [clean(x) for x in re.split(r"###fenge", r.text) if x.strip()]
         done = 0
@@ -3026,7 +3048,7 @@ class Novelist:
             if idx not in chapters:      # 越界的丢掉, 不许它顺手改别的章
                 continue
             body = self.clean_outline(part)
-            lack = [f for f in OUTLINE_REQUIRED
+            lack = [f for f in outline_required(self.style)
                     if not re.search(rf"^\s*{f}\s*[:：]\s*\S", body, re.M)]
             if lack:                     # 残缺的不许换上去, 原稿还在
                 self._log(f"第{idx}章重排结果缺 {'、'.join(lack)}，不予采用")
@@ -3929,7 +3951,8 @@ class Novelist:
                          if m],
             outline_cap=self.outline_cap(),
             plots_per_chapter=max(3, int(
-                self.target_words() / (int(self.style.get("blockWords") or 500) * 0.8))))
+                self.target_words() / (int(self.style.get("blockWords") or 500) * 0.8))),
+            style_pack=self.style)
         # 细纲生成之前也要召回已确立的事实 —— 否则会写出自相矛盾的剧情。
         # 实测: 第 25 章把玉佩指向皇子赵琰, 第 33 章又说是东平府通判赵家之物,
         # 因为细纲生成压根没接记忆层, 模型看不到前面已经定死的结论。
@@ -3987,7 +4010,7 @@ class Novelist:
             # 判据取自**字段契约**（prompt_compiler.OUTLINE_REQUIRED），
             # 与提示词同源：守卫自带一份副本一定会漂移，实测松松地查个「钩子」
             # 就被「剧情6：钩子：…」蒙混过关，整批十章的爽点全丢了。
-            lack = [f for f in OUTLINE_REQUIRED
+            lack = [f for f in outline_required(self.style)
                     if not re.search(rf"^\s*{f}\s*[:：]\s*\S", body, re.M)]
             if lack:
                 truncated.append(idx)
@@ -4170,6 +4193,7 @@ class Novelist:
             constraints=L.get("L5_constraint", ""),
             memory=ctx.get("prev_summary", ""),
             block_words=int(st.get("blockWords") or 500),
+            window_feedback=self.window_feedback(n),
         )
         # 非小说类型: 成品的形态是剧本页/分镜表, 不是网文段落。类型包里写好的格式
         # 规范(Fountain 场头、【镜N】景别|时长)必须真的发给模型 —— 原来算出 lvl

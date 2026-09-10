@@ -120,7 +120,8 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
                            chapter_outline: str,
                            positive: List[str], negative: List[str],
                            constraints: str = "", memory: str = "",
-                           block_words: int = 500) -> str:
+                           block_words: int = 500,
+                           window_feedback: str = "") -> str:
     """编译单章正文提示词。"""
     plots = to_plot_list(chapter_outline)
     blocks = max(1, round(target_words / block_words))
@@ -164,11 +165,59 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
                    + (f"\n  正例：{'；'.join(op.get('good', [])[:2])}" if op.get("good") else "")
                    + (f"\n  反例（禁止）：{'；'.join(op.get('bad', [])[:2])}" if op.get("bad") else ""))
     pc = sp.get("paragraphChars")
+    sc = sp.get("sentenceChars")
     if pc and len(pc) == 2:
         # 段落长度是文风包的属性, 不是全局常数: 番茄要 15-30 字的极短段,
         # 起点历史可以到 60 字。全局纪律里只能写个泛泛区间, 这里按包覆盖。
-        seg.append(f"⚠️ 【段落节奏】每段 {pc[0]}-{pc[1]} 字，一段只写一个动作或"
-                   f"一句话；超过 {pc[1]} 字必须断段。手机端阅读，长段劝退。")
+        #
+        # 「一段只写一个动作或一句话」这句话只对短段包成立。实测老辣调
+        # (对标大罗罗两本 796 万字)原作句均 23~30 字、句长 80 分位 40~49 字,
+        # 带上这句话会把生成句长压到 15.9 字, 读起来完全不是那个味。
+        # 有 sentenceChars 的包走长句分支。
+        if sc and len(sc) == 2:
+            seg.append(
+                f"⚠️ 【句子与段落】句子不要切碎：一句话平均 {sc[0]}-{sc[1]} 字，"
+                f"允许用逗号把三四个小分句串成一长句再收句号，"
+                f"不许写成一句七八个字的排比堆。\n"
+                f"  段落每段两到三句、{pc[0]}-{pc[1]} 字；"
+                f"只有需要砸出节奏的那一句才单独成段，一章这样的单句段不超过八个；"
+                f"最长的一段不超过 {int(pc[1]*2.5)} 字。")
+        else:
+            seg.append(f"⚠️ 【段落节奏】每段 {pc[0]}-{pc[1]} 字，一段只写一个动作或"
+                       f"一句话；超过 {pc[1]} 字必须断段。手机端阅读，长段劝退。")
+    si = (sp.get("structuralItems") or {}).get("items")
+    if si:
+        # 只发 resident 的常驻条目。实测(n=6, 与原作真章逐项对比):
+        #   八条全压     平均相对差 27%   ——  互相抢配额, 修好一项就掉另一项
+        #   只留三条     平均相对差 39%   ——  没写的项直接塌掉
+        #   常驻三条 + 窗口反馈补两条  16%  ——  比全压低四成
+        # 动态那几条由 window_feedback 按上个窗口的实测漂移带上来。
+        si = [x for x in si if x.get("resident", True)] or si
+        # 数值目标(「对白占比 20~28%」「反讽 2~4 处」)模型执行不了 —— 写作时数不了数。
+        # A/B 实测把它们换成【时机+做法+起手样例+上下界+反例】五件套之后:
+        #   独立反问 0.7→2.3、反讽 0.3→5.3、误读 0→2.7、解说 0.7→3.3、字数 1975→2728。
+        # 但**没写进去的项会被挤掉**: 唯独漏了「情绪外放」, 叹号密度 8.20→0.14,
+        # 补一条立刻回到 7.72。所以每个想要的东西都必须有它自己的一条。
+        seg.append("\n🧱 【本章必须包含的结构件·逐条落实，不是建议】")
+        for it in si:
+            body = [f"\n▍{it['名']}"]
+            if it.get("时机"):
+                body.append(f"　时机：{it['时机']}")
+            if it.get("做法"):
+                body.append(f"　做法：{it['做法']}")
+            if it.get("上下界"):
+                body.append(f"　分量：{it['上下界']}")
+            if it.get("加码"):
+                body.append(f"　加码：{it['加码']}")
+            if it.get("起手"):
+                body.append("　起手：" + "".join(f"「{x}」" for x in it["起手"]))
+            if it.get("例"):
+                body.append("　样例：" + "  ".join(f"「{x}」" for x in it["例"][:5]))
+            if it.get("关键"):
+                body.append(f"　关键：{it['关键']}")
+            if it.get("反例"):
+                body.append(f"　反例：{it['反例']}")
+            seg.append("\n".join(body))
     pb = sp.get("pleasureBeats") or {}
     if pb.get("beats"):
         # 只说「每章一个爽点」模型就写成「谈成了/赢了」—— 赢了但不爽。
@@ -177,6 +226,9 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
                    + "\n".join(pb["beats"])
                    + ("\n  别犯这些毛病：" + "；".join(pb.get("antipatterns", []))
                       if pb.get("antipatterns") else ""))
+    if window_feedback:
+        seg.append("\n📐 【上个窗口的漂移·这一章补一下】\n" + window_feedback.strip()
+                   + "\n其余各项保持原样，不要为了补这两项牺牲别的。")
     ag = sp.get("antagonist") or {}
     if ag.get("rules"):
         seg.append("\n【对手规格】" + "；".join(ag["rules"]))
@@ -272,7 +324,34 @@ OUTLINE_FIELDS = [
 OUTLINE_REQUIRED = [f for f, req, _ in OUTLINE_FIELDS if req]
 
 
-def outline_format_block(plots_per_chapter: int = 6, cap: int = 0) -> str:
+def outline_fields(style_pack: Optional[Dict[str, Any]] = None):
+    """字段契约, 允许文风包覆盖。
+
+    默认那一套是通用网文的。老辣调(对标大罗罗两本 796 万字)的字段是**倒推实测**定的:
+    拿两本原作各 8 章真章让模型倒推细纲, 统计每个字段的填充率 ——
+      视角/承接/后果/账目/解说/重场/章末 100%  动作 94%  误读 81%  代价 50%
+    所以「代价」不是章级字段而是事件级(一个 5 章的事件付一次代价, 其余 4 章不付),
+    误读同理; 而「解说」100% 出现且均长 130 字, 是这个调子的骨头。
+    包里给了 outlineFields 就用包里的, 没给就用默认 —— 老书与其它文风不受影响。
+    """
+    fs = (style_pack or {}).get("outlineFields")
+    if not fs:
+        return OUTLINE_FIELDS
+    out = []
+    for f in fs:
+        if isinstance(f, dict):
+            out.append((f["name"], bool(f.get("required", True)), f.get("hint", "")))
+        else:                                   # ["名", true, "说明"]
+            out.append((f[0], bool(f[1]), f[2]))
+    return out
+
+
+def outline_required(style_pack: Optional[Dict[str, Any]] = None):
+    return [f for f, req, _ in outline_fields(style_pack) if req]
+
+
+def outline_format_block(plots_per_chapter: int = 6, cap: int = 0,
+                         style_pack: Optional[Dict[str, Any]] = None) -> str:
     """按字段契约生成「每章按此格式输出」那一段。
 
     `cap` 是单章细纲的字数上限。不给上限的话细纲会一路发胖：实测某书
@@ -281,7 +360,7 @@ def outline_format_block(plots_per_chapter: int = 6, cap: int = 0) -> str:
     成品会像注水的细纲。
     """
     lines = ["第N章 章节名"]
-    for name, _req, hint in OUTLINE_FIELDS:
+    for name, _req, hint in outline_fields(style_pack):
         if name == "剧情1":
             lines.append(f"剧情1：{hint}")
             lines.append("剧情2：…")
@@ -294,6 +373,8 @@ def outline_format_block(plots_per_chapter: int = 6, cap: int = 0) -> str:
                              f"整章细纲控制在 {cap} 字以内。"
                              f"细纲是给写手的路条，不是正文的缩写 —— "
                              f"写满了，写正文就只剩扩写，成品会平。")
+        elif name.startswith("剧情"):
+            continue                    # 剧情2/3 由上面的分支一并列出
         else:
             lines.append(f"{name}：{hint}")
     return "\n".join(lines)
@@ -307,7 +388,8 @@ def compile_outline_prompt(*, title: str, start: int, count: int,
                            plots_per_chapter: int = 6,
                            outline_cap: int = 0,
                            character_rules: Optional[List[str]] = None,
-                           used_titles: Optional[List[str]] = None) -> str:
+                           used_titles: Optional[List[str]] = None,
+                           style_pack: Optional[Dict[str, Any]] = None) -> str:
     """编译分章细纲提示词 —— 输出编号剧情清单，而不是散文。"""
     # 先算好可选段落再拼；直接在 f-string 序列里插 `+ (...)` 会打断隐式拼接
     used_block = (f"#已用过的章节名（本批一律不得重复，也不得只改一两个字）\n"
@@ -335,9 +417,9 @@ def compile_outline_prompt(*, title: str, start: int, count: int,
         f"#必守约束\n{constraints}\n\n"
         f"{rules_block}"
         f"每章严格按下面格式输出，章与章之间用一行 ###fenge 分隔：\n\n"
-        f"{outline_format_block(plots_per_chapter, outline_cap)}\n"
+        f"{outline_format_block(plots_per_chapter, outline_cap, style_pack)}\n"
         f"（本批第一章的「承接」要接住【前情】里给出的上一章结尾）\n"
-        f"⚠ {len(OUTLINE_REQUIRED)} 个字段一个都不能少，"
+        f"⚠ {len(outline_required(style_pack))} 个字段一个都不能少，"
         f"尤其是**重场**、**爽点**与**章末钩子**："
         f"不许把钩子塞进剧情条目里，缺字段的章会被整章丢弃重排。\n\n"
         f"衔接要求（最容易塌的地方，逐条对照）：\n"
@@ -353,3 +435,63 @@ def compile_outline_prompt(*, title: str, start: int, count: int,
         f"新角色：姓名|身份|因何而来|挂靠于（已有的某个角色或某个组织）\n"
         f"—— 挂靠是硬要求：新人必须依附已有的人或势力，不能是孤魂野鬼。\n\n"
         f"直接输出，无前言。")
+
+#: 正文文体度量 —— 窗口软反馈的量尺。
+#: 阈值来自两本原作 282 个 10 章窗口的 5/95 分位（见 packs/style/laolatiao.json）。
+#: 招牌反讽起手只算强标记：实测原作「还别说/说穿了/可问题是」每章仅 0.12~0.24 次，
+#: 把「不是/真是/居然」也算进来会得到一个由虚词撑起来的假指标。
+IRONY_STRONG = ["还别说", "说穿了", "可问题是", "这哪儿是", "这哪里是",
+                "用脚后跟", "想想都", "好像很少有人"]
+EXPLAIN_MARK = ["所谓", "其实", "这就是", "说穿了", "通常情况下", "实际上", "规矩", "制度"]
+
+
+def measure_text(text: str) -> Dict[str, float]:
+    """量一章（或一个窗口）正文的文体指标。"""
+    body = re.sub(r"^#.*$", "", text or "", flags=re.M).strip()
+    lines = [l.strip() for l in body.split("\n") if l.strip()]
+    n = len(body) or 1
+    dlg = sum(len(x) for x in re.findall(r"[「『\"“][^」』\"”]{0,300}[」』\"”]", body))
+    return {
+        "字数": len(body),
+        "对白占比": round(dlg / n, 3),
+        "每千字问号": round(body.count("？") / n * 1000, 2),
+        "每千字叹号": round(body.count("！") / n * 1000, 2),
+        "段均字数": round(sum(len(l) for l in lines) / max(1, len(lines)), 1),
+        "独立反问句": sum(1 for l in lines if l.endswith("？") and len(l) < 45),
+        "反讽旁白": sum(body.count(w) for w in IRONY_STRONG),
+        "解说体": sum(body.count(w) for w in EXPLAIN_MARK),
+    }
+
+
+def window_drift(texts: List[str], style_pack: Optional[Dict[str, Any]] = None) -> str:
+    """把最近几章量一遍, 算出漂得最厉害的 topK 项, 写成一句人话。
+
+    这是「约束抢配额」的解法。实测(n=6, 与原作真章逐项对比):
+      八条结构件全压在每一章上 → 平均相对差 27%（修好一项就掉另一项）
+      只留常驻三条             → 39%（没写的项直接塌）
+      常驻三条 + 本函数补两条   → **16%**
+    项少了模型才照顾得过来。
+    """
+    wf = (style_pack or {}).get("windowFeedback") or {}
+    mets = wf.get("metrics") or {}
+    if not texts or not mets:
+        return ""
+    ms = [measure_text(t) for t in texts if t and len(t) > 400]
+    if not ms:
+        return ""
+    avg = {k: sum(m.get(k, 0) for m in ms) / len(ms) for k in mets}
+    devs = []
+    for k, spec in mets.items():
+        v, lo, hi = avg.get(k, 0), spec.get("lo"), spec.get("hi")
+        if lo is not None and v < lo:
+            devs.append((abs(v - lo) / max(abs(lo), 1e-9), k, "低", v, spec))
+        elif hi is not None and v > hi:
+            devs.append((abs(v - hi) / max(abs(hi), 1e-9), k, "高", v, spec))
+    if not devs:
+        return ""
+    devs.sort(reverse=True)
+    out = []
+    for _, k, d, v, spec in devs[:int(wf.get("topK") or 2)]:
+        out.append(f"· {k}偏{d}（最近 {len(ms)} 章 {v:.2f}，"
+                   f"目标 {spec.get('lo')}~{spec.get('hi')}）—— 这一章请：{spec.get(d, '')}")
+    return "\n".join(out)
