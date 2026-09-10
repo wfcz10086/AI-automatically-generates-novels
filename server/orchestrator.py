@@ -4501,7 +4501,8 @@ class Novelist:
             # 结果是：正文那一遍精心给的结构件管住了前半截，后半截全漏，
             # 叹号密度被稀释到原作的 1/30。扩写必须带上同一套调子。
             grow = (f"下面这一章只有 {was} 字，目标 {target} 字，缺 {target - was} 字。\n"
-                    f"请在**不改变任何已有情节与结局**的前提下扩写到 {target} 字左右：\n"
+                    f"请在**不改变任何已有情节与结局**的前提下扩写到 {target} 字左右"
+                    f"（**上限 {int(target * 1.15)} 字，超了同样算不合格**）：\n"
                     f"- 把一笔带过的关键场景演出来（对话、动作、交锋的来回）\n"
                     f"- 给已出场的配角补上反应与小动作\n"
                     f"- 补足做局/算账/谈判的具体过程，让读者跟得上推理\n"
@@ -4950,6 +4951,16 @@ class Novelist:
             elapsed += r.elapsed
             one = critic_mod.parse(clean(r.text))
             if not one:
+                # 一遍读崩了不能默默跳过: overall 是存活遍数的平均,
+                # 少一遍就等于换了把尺子, 章与章的分数不再可比。
+                self._log(f"  评审第{n}章「{spec['name']}」这遍没读出结果, 重试一次")
+                r2 = call("judging", prompt, on_delta, max_tokens=2000)
+                elapsed += r2.elapsed
+                one = critic_mod.parse(clean(r2.text))
+            if not one:
+                self._log(f"  ⚠ 评审第{n}章「{spec['name']}」两次都失败, "
+                          f"本章缺 {len(spec['dims'])}+ 个维度, 分数偏高不可比")
+                merged.setdefault("failed_passes", []).append(spec["name"])
                 continue
             merged["scores"].update(one.get("scores") or {})
             for k in ("issues", "contradictions", "tics"):
