@@ -1699,7 +1699,10 @@ class Novelist:
             cons.append("【势力现状·不得与此冲突】" + "；".join(
                 f"{nm}（第{v.get('at', '?')}章）{v.get('state', '')}"
                 for nm, v in hot_orgs))
-        if lr.get("must_appear"):
+        # 牌市模式下这条是**错的约束** —— 它强迫手上没牌的人回来刷存在感。
+        # 实测原作里洪承畴消失 781 章、王承恩 1047 章都没问题, 因为那段时间
+        # 他们的牌确实不值钱; 硬拉回来给「一句状态交代」只会稀释掉他重新登场时的分量。
+        if lr.get("must_appear") and self.style.get("threadDriver") != "cards":
             cons.append("【断线角色必须回归】" + "、".join(lr["must_appear"][:5])
                         + " —— 接下来几章内安排他们出场并有实质戏份。")
         # 自审看到「档案里有、正文没出现」就判成废弃, 可那多半是还没轮到出场 ——
@@ -1741,7 +1744,7 @@ class Novelist:
         # 登场过又长期消失的角色 —— 不是「从未出现」而是「出现完就没了」。
         # 实测潘金莲第 8 章被买回、第 9 章还在炉边坐着, 之后十几章一句没提,
         # 而主角明明欠着她一笔良心债（「义字那一档，他拨了三回」）, 人物就悬在半空。
-        stale = self.stale_cast(n)
+        stale = self.stale_cast(n) if self.style.get("threadDriver") != "cards" else []
         if stale:
             cons.append("【出场过又断线的角色】" + "；".join(stale)
                         + " —— 他们出场过就消失了，读者还记得。"
@@ -1799,6 +1802,31 @@ class Novelist:
                           mid=mid, recall=recall, constraints="\n".join(cons))
         out["retrieval"] = {k: retr_info.get(k) for k in ("internal", "external", "needs")}
         return out
+
+    def live_misreads(self, n: int, cap: int = 5) -> str:
+        """还没被戳破的误读 —— 当**燃料**用，不是当禁令用。
+
+        现有 build_context 塞了二十多个约束块，几乎全是「不得／禁止／必须衔接」。
+        禁令能防倒退，不能产生推进。误读正相反：它是这类书主要的情节发生器
+        （一个动作 × N 个误读者 = N 条新支线），所以要放在提示词**前部**，
+        用「所以接下来会发生什么」的语气，而不是塞进「必守约束」里。
+        """
+        mis = [m for m in (self.p.state.get("misreads") or [])
+               if not m.get("closed_at")]
+        if not mis:
+            return ""
+        mis = sorted(mis, key=lambda m: -int(m.get("at") or 0))[:cap]
+        lines = []
+        for m in mis:
+            age = n - int(m.get("at") or n)
+            tag = "（埋了 %d 章了，该结账了）" % age if age >= 25 else ""
+            lines.append(f"· {m.get('who','')}：凭「{m.get('because','')}」，"
+                         f"认定「{m.get('concludes','')}」，于是「{m.get('acts','')}」{tag}")
+        return ("这些人现在都**信着一个错的东西**，而且正照着它行动。"
+                "他们不知道真相，本章也不必让他们知道 ——\n"
+                + "\n".join(lines)
+                + "\n他们各自的下一步，会把局面推到主角没打算去的地方。"
+                  "本章要么让其中一条继续发酵，要么让一条被当众戳破。")
 
     def window_feedback(self, n: int) -> str:
         """最近一个窗口的文体漂移，写成给下一章的两条纠偏指令。
@@ -3017,7 +3045,8 @@ class Novelist:
         ]
         if stage:
             blocks.append(sc.stage_brief(stage, chapters[0]))
-        tb = sc.thread_brief(self.threads(), chapters[0])
+        tb = sc.thread_brief(self.threads(), chapters[0],
+                             self.style.get("threadDriver") or "cadence")
         if tb:
             blocks.append(tb)
         blocks.append(f"【这几章现在的内容（要被替换掉）】\n{cur}")
@@ -3899,7 +3928,8 @@ class Novelist:
         if sb:
             cons.append(sb)
         thr = self.threads()
-        tbrief = sc.thread_brief(thr, start)
+        tbrief = sc.thread_brief(thr, start,
+                                 self.style.get("threadDriver") or "cadence")
         if tbrief:
             cons.append(tbrief)
         due = sc.thread_overdue(thr, start)
@@ -3943,6 +3973,13 @@ class Novelist:
         if not vol:
             self.step_volumes()
             vol = self.volume_of(start)
+        # 活跃误读放在约束块**最前面**，语气是「接下来会发生什么」而不是「不许怎样」。
+        # 排纲这一步最需要它：一个动作 × N 个误读者 = N 条新支线，
+        # 不用另外设计情节，只要老实结算每个人会怎么误会。
+        lm = self.live_misreads(start)
+        if lm:
+            cons.insert(0, "🔥【正在发酵的误会·本批的情节燃料】\n" + lm)
+
         # 排纲必须看见**已经写出来的正文**，不是只看自己上一批排的细纲。
         # 只喂摘要接不住文风、称谓、和正文里临时长出来的东西 —— 实测第 2 章细纲
         # 写「何九叔验出武大郎体内有弹头」，正文改成了「弹头从青石板缝里抠出来」，
@@ -4228,6 +4265,7 @@ class Novelist:
             memory=ctx.get("prev_summary", ""),
             block_words=int(st.get("blockWords") or 500),
             window_feedback=self.window_feedback(n),
+            fuel=self.live_misreads(n),
         )
         # 非小说类型: 成品的形态是剧本页/分镜表, 不是网文段落。类型包里写好的格式
         # 规范(Fountain 场头、【镜N】景别|时长)必须真的发给模型 —— 原来算出 lvl
@@ -4930,7 +4968,17 @@ class Novelist:
             f"不记随口提到的价钱。没有就写「无」）\n"
             f"势力变动：（本章涉及的组织/门派/军团/商号/朝堂派系发生了什么结构性"
             f"变化，格式 势力名=当前掌事者/规模或实力/立场，分号分隔。"
-            f"新建、易主、合并、覆灭、结盟、反目都算。没有就写「无」）\n\n"
+            f"新建、易主、合并、覆灭、结盟、反目都算。没有就写「无」）\n"
+            # 误读是这类书最主要的情节发生器：一个动作 × N 个误读者 = N 条新支线。
+            # 它必须被记账，否则埋下去就没人管了 —— 和伏笔一样，只是伏笔记的是
+            # 「藏起来的真相」，误读记的是「别人信了的假解释」。
+            f"误读：（本章有谁**推断错了**？格式 谁|他凭什么这么想|他得出的错误结论|"
+            f"他因此做了什么，多条用分号分隔，最多 2 条。\n"
+            f"  只记**当事人自己信以为真、并据此行动**的错误判断；"
+            f"读者已经知道是错的、而人物也知道自己在猜，那不算。\n"
+            f"  没有就写「无」）\n"
+            f"收误读：（本章有谁**发现自己之前想错了**？写清是谁的哪个误会被戳破了，"
+            f"分号分隔。没有就写「无」）\n\n"
             f"{self.condense(text, 9000)}")
         r = call("polishing", prompt, max_tokens=600)
         out = clean(r.text)
@@ -4979,6 +5027,29 @@ class Novelist:
                 name = alias[0]
             if name and val:
                 st.setdefault("identity", {})[name] = {"at": n, "now": val}
+
+        # 误读台账 —— 一个动作 × N 个误读者 = N 条新支线, 是这类书主要的情节发生器。
+        # 记的是「别人信了的假解释」, 与伏笔(藏起来的真相)互补。
+        mis = st.setdefault("misreads", [])
+        for item in [x.strip() for x in re.split(r"[;；]", field("误读")) if "|" in x][:2]:
+            parts = [y.strip() for y in item.split("|")]
+            while len(parts) < 4:
+                parts.append("")
+            who, because, concludes, acts = parts[:4]
+            if alias and who == alias[1]:
+                who = alias[0]
+            if who and concludes:
+                mis.append({"at": n, "who": who[:20], "because": because[:80],
+                            "concludes": concludes[:90], "acts": acts[:80],
+                            "closed_at": 0})
+        closed = field("收误读")
+        if closed:
+            for m in mis:
+                if not m["closed_at"] and (m["who"] in closed or m["concludes"][:10] in closed):
+                    m["closed_at"] = n
+        if len(mis) > 60:                       # 只留最近的, 老的早就结完了
+            st["misreads"] = [m for m in mis if not m["closed_at"]][-40:] + \
+                             [m for m in mis if m["closed_at"]][-20:]
 
         # 数字条款台账: 一旦定下就不许改口, 除非正文明写「改标/重议/毁约」
         terms = st.setdefault("terms", {})

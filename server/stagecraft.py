@@ -755,6 +755,17 @@ def build_threads(*, outline: str, stages: Sequence[Dict[str, Any]],
         f"从第几章到第几章、这条线的 3-6 个关键节点、"
         f"以及**多少章至少要露一次面**（cadence：线越重要数越小；"
         f"贯穿全书的主要支线 10-15，阶段性的 20-30）。\n\n"
+        # 支线不是一条线, 是【一个人 + 他手里的一张牌】。逐章扫描原作人名分布
+        # 得到的是「大簇+长空白」(秦桧最大空白 183 章、洪承畴 781 章、王承恩 1047 章,
+        # 一回来就是连续 8~72 章的密集簇), 与 cadence 这种均匀节拍器正相反。
+        # 真机制是牌价随局势浮动, 牌一变值钱他自己就冒出来。
+        f"另外，每条线还要写清三件事 —— 支线不是一张待办清单，"
+        f"是**一个人手里攥着一张牌**：\n"
+        f"- card：他手里的那张牌（一个把柄／一笔债／一个身份／一门手艺／一支队伍）\n"
+        f"- valuable_when：什么局面下这张牌**突然变值钱**（2-3 条。"
+        f"这是他被自动召唤的条件，不是日历）\n"
+        f"- leverage：他和主角之间的**双向把柄**（我捏着你的，你也捏着我的）。"
+        f"单向的迟早被清算掉，双向的能撑几百章\n\n"
         # 支线的收尾同样要守张力铁律。**这条原先只写进了张力提示词**, 于是支线
         # 里冒出「转身离去，血债以时间销账」「以大局退却」这种写法 —— 张力账
         # 那边刚把这个人写成「不死不休、禁止妥协」, 支线这边让他自己走了,
@@ -766,6 +777,8 @@ def build_threads(*, outline: str, stages: Sequence[Dict[str, Any]],
         f"只输出 JSON，不要代码围栏：\n"
         '{"threads":[{"name":"某某线","kind":"势力","owner":["甲","乙"],'
         '"org":"某组织或空字符串","span":[30,235],"cadence":12,'
+        '"card":"他手里的那张牌","valuable_when":["什么局面下它值钱"],'
+        '"leverage":"双向把柄",'
         '"beats":["节点1","节点2"],"ending":"这条线最后怎么收"}]}\n\n'
         f"可用角色：{'、'.join(roster or []) or '（见总纲）'}\n\n"
         f"#总纲\n{outline[:12000]}")
@@ -793,6 +806,9 @@ def build_threads(*, outline: str, stages: Sequence[Dict[str, Any]],
             "cadence": max(4, min(cad, 60)),
             "beats": [str(z)[:50] for z in (x.get("beats") or [])][:8],
             "ending": str(x.get("ending") or "")[:120],
+            "card": str(x.get("card") or "")[:90],
+            "valuable_when": [str(z)[:60] for z in (x.get("valuable_when") or [])][:3],
+            "leverage": str(x.get("leverage") or "")[:90],
             "last_touched": 0,
         })
     return out
@@ -839,7 +855,8 @@ def active_threads(threads: Sequence[Dict[str, Any]], n: int) -> List[Dict[str, 
     return [t for t in threads or [] if t["span"][0] <= n <= t["span"][1]]
 
 
-def thread_brief(threads: Sequence[Dict[str, Any]], n: int) -> str:
+def thread_brief(threads: Sequence[Dict[str, Any]], n: int,
+                 driver: str = "cadence") -> str:
     """注入排纲的支线约束块。
 
     带上「前几次是怎么露面的」，因为只要求「必须推进」会推出四章一个模子 ——
@@ -850,6 +867,8 @@ def thread_brief(threads: Sequence[Dict[str, Any]], n: int) -> str:
     live = active_threads(threads, n)
     if not live:
         return ""
+    if driver == "cards" and any(t.get("card") for t in live):
+        return _thread_brief_cards(live, n)
     lines = ["【本批活着的支线（主线管方向，支线管密度 —— 全书只有一条线在走就会干）】"]
     for t in live[:8]:
         who = "、".join(t["owner"]) or t.get("org") or ""
@@ -864,6 +883,43 @@ def thread_brief(threads: Sequence[Dict[str, Any]], n: int) -> str:
             lines.append(f"    前几次这样露的面：{'；'.join(how[-3:])}")
             lines.append(f"    ⚠ 本批**必须换一种方式**推进它：换场景、换视角人物、"
                          f"换事件类型、换它与主线咬合的方式。重复上面的套路算不合格。")
+    return "\n".join(lines)
+
+
+def _thread_brief_cards(live: Sequence[Dict[str, Any]], n: int) -> str:
+    """牌市版的支线块 —— 不按日历派活，按牌价召唤。
+
+    实测原作里支线的分布是「大簇 + 长空白」：秦桧最大空白 183 章、洪承畴 781 章、
+    王承恩 1047 章，而一回来就是连续 8~72 章的密集簇。cadence（每 N 章露一次）
+    是均匀节拍器，与这个形状正相反 —— 按它写出来读者的感受是「这条线又来了」，
+    而不是「他怎么来了」。
+
+    真机制：每个人手里有一张牌，牌价随局势浮动，牌一变值钱他自己就冒出来。
+    所以这里只把牌摊开，让排纲那一步自己判断谁该登场。
+    """
+    lines = ["【手里有牌的人（支线不是一张待办清单，是一群攥着牌的人）】"]
+    for t in live[:8]:
+        who = "、".join(t.get("owner") or []) or t.get("org") or t["name"]
+        last = t.get("last_touched") or 0
+        seen = f"上次露面第 {last} 章，已隔 {n - last} 章" if last else "还没露过面"
+        lines.append(f"- {who}｜{t['name']}｜{seen}")
+        if t.get("card"):
+            lines.append(f"    牌：{t['card']}")
+        if t.get("valuable_when"):
+            lines.append(f"    什么时候值钱：{'；'.join(t['valuable_when'])}")
+        if t.get("leverage"):
+            lines.append(f"    双向把柄：{t['leverage']}")
+        how = t.get("recent_how") or []
+        if how:
+            lines.append(f"    前几次这样露的面：{'；'.join(how[-2:])}"
+                         f"　⚠ 再登场必须换一种方式")
+    lines.append(
+        "⚠ **不要按「谁很久没出现」来安排出场**。只问一句：按本批的局面，"
+        "谁手上的牌**突然变值钱了**？值钱的才登场，而且要能一句话说清"
+        "他为什么现在来；说不清就别来。\n"
+        "　牌不值钱的人继续消失，多久都行 —— 不要给他「交代一句近况」，那是稀释。\n"
+        "　如果有两个人的牌在同一件事上同时值钱，让他们撞上：写清他们必须合作的理由，"
+        "和他们必然互相坑的理由。撞出来的东西是第三条线，不用另外设计。")
     return "\n".join(lines)
 
 

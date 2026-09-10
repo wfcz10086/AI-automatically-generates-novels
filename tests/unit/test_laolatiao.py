@@ -125,3 +125,44 @@ def test_区间取自原作282个窗口的5_95分位(k, lo, hi):
 def test_句长区间():
     """实测原作句均 23~30 字；写「段落短」会把生成句长压到 15.9。"""
     assert LLT["sentenceChars"] == [23, 31]
+
+
+# ── 误读台账与牌市 ────────────────────────────────────────
+
+def test_误读当燃料放在提示词前部而不是约束里():
+    """约束块全是「不得/禁止」，能防倒退不能产生推进。误读要放前面当燃料。"""
+    p = _prompt(LLT, fuel="· 老宦：凭「空白诏纸被搬走」，认定「要清算司礼监」，于是「连夜抢解释权」",
+                constraints="【已确立的不可逆事实】某某已死")
+    i_fuel, i_cons = p.find("🔥 【正在发酵的误会"), p.find("#必守约束")
+    assert i_fuel > 0 and i_cons > 0
+    assert i_fuel < i_cons, "燃料必须在必守约束之前"
+
+
+def test_牌市块不按日历派活():
+    import server.stagecraft as sc
+    th = [{"id": 1, "name": "验尸线", "kind": "谜团", "owner": ["何九叔"], "org": "",
+           "span": [2, 220], "cadence": 12, "last_touched": 22, "beats": [],
+           "card": "一枚弹头 + 一份验尸格目",
+           "valuable_when": ["提刑司来查", "有人翻旧案"],
+           "leverage": "互相捏着命门"}]
+    cad = sc.thread_brief(th, 150, "cadence")
+    crd = sc.thread_brief(th, 150, "cards")
+    assert "已超期，本批必须推进" in cad
+    assert "已超期" not in crd
+    assert "谁手上的牌**突然变值钱了**" in crd
+    assert "牌不值钱的人继续消失" in crd
+    assert "一枚弹头" in crd
+
+
+def test_牌市模式停用断线必须回归():
+    """牌不值钱就该继续消失——原作里洪承畴消失 781 章、王承恩 1047 章都没问题。"""
+    assert LLT.get("threadDriver") == "cards"
+    assert FQ.get("threadDriver") in (None, "cadence")
+
+
+def test_没有牌的支线自动回退到老逻辑():
+    import server.stagecraft as sc
+    th = [{"id": 1, "name": "旧线", "kind": "人物", "owner": ["某甲"], "org": "",
+           "span": [1, 200], "cadence": 10, "last_touched": 5, "beats": []}]
+    out = sc.thread_brief(th, 100, "cards")
+    assert "已超期" in out, "没有 card 字段时必须退回 cadence 版，别让老书拿到空块"

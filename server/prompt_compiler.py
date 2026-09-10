@@ -121,7 +121,8 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
                            positive: List[str], negative: List[str],
                            constraints: str = "", memory: str = "",
                            block_words: int = 500,
-                           window_feedback: str = "") -> str:
+                           window_feedback: str = "",
+                           fuel: str = "") -> str:
     """编译单章正文提示词。"""
     plots = to_plot_list(chapter_outline)
     blocks = max(1, round(target_words / block_words))
@@ -247,6 +248,12 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
         seg.append(f"\n#写作背景\n{background.strip()}")
     if world_digest:
         seg.append(f"\n#世界观速览\n{world_digest.strip()}")
+
+    if fuel:
+        # 生成式输入放在**前部**。约束块（#必守约束）全是「不得/禁止」，
+        # 那种东西能防倒退不能产生推进；燃料是「现在世界处于什么状态，
+        # 所以接下来会发生什么」，位置和语气都得跟禁令分开。
+        seg.append("\n🔥 【正在发酵的误会·这是本章情节的燃料】\n" + fuel.strip())
 
     cb = cast_block(roster, chapter_outline, protagonist)
     if cb:
