@@ -111,6 +111,33 @@ def p_faction(seed: str) -> str:
 只输出清单，不要展开剧情。"""
 
 
+def p_mkcards(seed: str, factions: str) -> str:
+    return f"""种子：
+{seed}
+
+各方势力：
+{factions}
+
+给这本书建一份**配角牌库**，10~14 个人。支线不是一条线，是【一个人 + 他手里的一张牌】。
+每人输出：
+  who            姓名 + 身份
+  card           他手里的那张牌：一个把柄 / 一笔债 / 一个身份 / 一门手艺 / 一支队伍
+  wants          他自己要什么（不是主角要他做什么）
+  fears          他怕什么。fears 比 wants 更能驱动他
+  valuable_when  什么局面下他的牌变值钱（这是他被自动召唤的条件，写 2~3 条）
+  worthless_when 什么局面下他该消失
+  leverage       他和主角之间的**双向把柄**——我捏着你的，你也捏着我的
+
+名单里必须至少各有一个：
+  · 有污点、不敢拒绝脏活的人（脏活得交给他）
+  · 敌营里的明白人（让对手阵营可推理，而不是一团黑）
+  · 知道主角过去的人（长期隐雷）
+  · 因为自卑或怕丢脸而会做出不理性决定的人
+  · 全部价值就是被当众打脸一次然后可以永久消失的人
+
+不许写「忠心耿耿的部下」这种没有自己账本的人。"""
+
+
 def p_turn(seed: str, factions: str) -> str:
     return f"""这是一次【世界回合】。主角不在场，不许提到主角在做什么。
 
@@ -204,6 +231,37 @@ def p_misread(action: str, factions: str) -> str:
      行动：商量去找一件黄袍｜生出：主角被吼醒，被迫当场表态并顺势整编军队
 
 最后单独一行：spawns 里最大的那一条是哪个——它将成为下一回合的输入。"""
+
+
+def p_cards(situation: str, cards_state: str) -> str:
+    """牌市重估 —— 支干自我成长的那一步。放在误读扩散之后、切章之前。"""
+    return f"""新局面：
+{situation}
+
+所有还活着的人，以及每个人手里的牌：
+{cards_state}
+
+第一问：在这个新局面下，**谁手上的牌突然变值钱了**？列出 1~4 个人。每人写明：
+  - 他的哪张牌值钱了
+  - 是局面里的哪一条让它值钱的
+  - 他自己知不知道自己的牌值钱了（多半不完全知道）
+  - 他会主动来找主角，还是等着被找，还是先去找主角的对手
+
+第二问：这几个人里，有没有两个人的牌**在同一件事上同时值钱**？
+  如果有，他们必须在这一回合撞上。写明：他们必须合作的理由 /
+  他们必然互相坑的理由（各自的 wants 和 fears 是冲突的）/ 这一撞会长出什么新东西。
+
+第三问：有没有谁的牌因为这个局面**贬值甚至作废**了？
+  他就此退场，可以消失很久。**不要给他「交代一句近况」，那是稀释。**
+  但要记下：他这张牌将来在什么条件下会重新值钱。
+
+第四问：这个局面有没有**造出一张新牌**？（某人捡到一样东西 / 知道了一个秘密 / 被塞了一个位子）
+  如果有，给这张牌建档：who / card / wants / fears / valuable_when / leverage。
+
+硬规矩：
+- 不许因为「这个人很久没出现了」就把他叫回来。牌不值钱就该继续消失。
+- 每个被叫回来的人，都必须能一句话说清他为什么现在来。说不清就别来。
+- 最耐用的牌是**双向把柄**（我捏着你的，你也捏着我的）。有机会就往这个方向做。"""
 
 
 def p_cut(action: str, misread: str) -> str:
@@ -398,8 +456,8 @@ def win_gate(texts: list) -> dict:
 
 # ─────────────────────────── 跑一轮 ───────────────────────────
 
-STAGES = ["1_seed", "2_factions", "3_turn", "4_conflict", "5_obvious",
-          "6_counter", "7_misread", "8_cut", "9_outline", "10_draft"]
+STAGES = ["1_seed", "2_factions", "2b_cards0", "3_turn", "4_conflict", "5_obvious",
+          "6_counter", "7_misread", "8_cards", "9_cut", "10_outline", "11_draft"]
 
 
 def run_round(model: str, idea: str, out: Path, rnd: int) -> dict:
@@ -421,15 +479,17 @@ def run_round(model: str, idea: str, out: Path, rnd: int) -> dict:
 
     seed = step("1_seed", p_seed(idea), 7000, 0.95)
     fac = step("2_factions", p_faction(seed), 5000)
+    cards0 = step("2b_cards0", p_mkcards(seed, fac), 6000, 0.9)
     turn = step("3_turn", p_turn(seed, fac), 6000)
     conf = step("4_conflict", p_conflict(turn, _field(seed, "accounts")), 3000, 0.7)
     obv = step("5_obvious", p_obvious(conf), 3000, 0.7)
     cm = step("6_counter", p_counter(conf, obv, _field(seed, "counter_move"),
                                      _field(seed, "cheat")), 4000, 1.0)
     mis = step("7_misread", p_misread(cm, fac), 5000, 0.95)
-    cut = step("8_cut", p_cut(cm, mis), 4000)
-    out_l = step("9_outline", p_outline(cut, cm, mis), 3500)
-    draft = step("10_draft", p_draft(out_l), 8000, 0.92)
+    crd = step("8_cards", p_cards(f"{cm}\n\n{mis}", cards0), 4500, 0.9)
+    cut = step("9_cut", p_cut(cm, mis + "\n\n【本回合牌市】\n" + crd), 4000)
+    out_l = step("10_outline", p_outline(cut, cm, mis), 3500)
+    draft = step("11_draft", p_draft(out_l), 8000, 0.92)
 
     g = gate(draft)
     (d / "metrics.json").write_text(
