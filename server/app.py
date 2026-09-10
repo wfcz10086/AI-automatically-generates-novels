@@ -1037,8 +1037,10 @@ def step(slug: str):
             elif what == "outline":
                 nv.step_outline(emit)
             elif what == "chapter_outlines":
-                nv.step_chapter_outlines(n or 1, int(b.get("count") or
-                                                     p.cfg["generation"]["outline_batch"]), emit)
+                # 同上：配置里的 outline_batch 默认是 0（自动），不能直接当章数用
+                nv.step_chapter_outlines(n or 1,
+                                         int(b.get("count") or 0) or nv.outline_batch(),
+                                         emit)
             elif what == "repair":
                 nv.step_repair(emit)
             elif what == "volumes":
@@ -1086,7 +1088,13 @@ def _auto_worker(slug: str, upto: int, staged: bool = False):
         if not p.read("outline.md"):
             job["stage"] = "总纲"; nv.step_outline()
             if pause("总纲"): return
-        batch = p.cfg["generation"]["outline_batch"]
+        # 原来直接取配置值, 而 outline_batch 默认是 0（含义是「按输出上限自动算」），
+        # 于是这里会调 step_chapter_outlines(n, 0) 排 0 章。必须走 nv.outline_batch()。
+        # 同时夹住领先上限：细纲不许排到正文太前面（见 Novelist.outline_lead）。
+        _lead = nv.outline_lead()
+        batch = nv.outline_batch()
+        if _lead:
+            batch = min(batch, max(1, _lead))
         n = (p.state.get("current") or 0) + 1
         end = min(upto, p.meta["target_chapters"])
         while n <= end and not job.get("stop"):

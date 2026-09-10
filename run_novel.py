@@ -108,6 +108,15 @@ def cmd_outline(a):
         print("[前置] 分卷")
         nv.step_volumes()
     total = a.to or int(p.meta.get("target_chapters") or 0)
+    # 细纲不许排到正文太前面。一次排完全书是「剧情不连续」的根源：
+    # 后一批细纲的输入只能是前一批细纲，永远不可能是正文。见 Novelist.outline_lead()。
+    # `--to` 是用户显式指定的范围，尊重它；不指定才按领先上限收着排。
+    stop = nv.outline_stop_at()
+    if stop and not a.to:
+        total = min(total, stop)
+        print(f"[滚动排纲] 已写到第 {p.state.get('current') or 0} 章，"
+              f"本轮只排到第 {total} 章（领先上限 {nv.outline_lead()} 章）。"
+              f"写完再跑一次 outline 会自动接着排。")
     stamp = _code_stamp()
     while True:
         co = p._load("chapter_outlines.json", {}) or {}
@@ -125,7 +134,12 @@ def cmd_outline(a):
         if _code_stamp() != stamp:
             print("!! 代码已更新，退出交由守护以新版本续排")
             return 3
-    print(f"✓ 全书 {total} 章细纲已排完。下一步：review 审阅，再 run 写正文")
+    tgt = a.to or int(p.meta.get("target_chapters") or 0)
+    if total < tgt:
+        print(f"✓ 第 1-{total} 章细纲已排完（全书 {tgt} 章，滚动排纲）。"
+              f"下一步：run 写正文，写完再跑 outline 接着排")
+    else:
+        print(f"✓ 全书 {total} 章细纲已排完。下一步：review 审阅，再 run 写正文")
     return 0
 
 
@@ -170,8 +184,11 @@ def cmd_run(a):
     while n <= end:
         outlines = p._load("chapter_outlines.json", {})
         if str(n) not in outlines:
-            print(f"  → 生成第 {n}-{n+batch-1} 章细纲")
-            nv.step_chapter_outlines(n, batch)
+            # 领先上限同样适用：写到第 n 章时，最多把细纲排到 n+lead
+            lead = nv.outline_lead()
+            b = min(batch, max(1, lead)) if lead else batch
+            print(f"  → 生成第 {n}-{n+b-1} 章细纲")
+            nv.step_chapter_outlines(n, b)
         if _code_stamp() != stamp:
             print("!! 代码或配置已更新，本进程退出交由守护以新版本续跑")
             sys.exit(3)

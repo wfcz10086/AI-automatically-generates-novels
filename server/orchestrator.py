@@ -3605,6 +3605,26 @@ class Novelist:
                 return int(k)
         return 0
 
+    def outline_lead(self) -> int:
+        """细纲最多允许领先正文多少章。0 = 不限（老行为）。
+
+        排纲一次排完全书是「剧情不连续」的根源：实测某书 346 章细纲在正文只写了
+        6 章时两小时内全部排完 —— 后一批细纲的输入只能是前一批细纲，永远不可能是
+        正文，因为那时正文还不存在。正文一偏离，后面三百多章细纲全部失效，
+        而且没有任何东西知道这件事。
+
+        滚动排纲让每一批都能看见**已经写出来的正文**（见 step_chapter_outlines 里
+        的「最近几章正文原文」块）。
+        """
+        return max(0, int(self.g.get("outline_lead") or 0))
+
+    def outline_stop_at(self) -> int:
+        """本轮排纲允许排到第几章为止。没设领先上限就返回 0（不设限）。"""
+        lead = self.outline_lead()
+        if not lead:
+            return 0
+        return int(self.p.state.get("current") or 0) + lead
+
     def outline_batch(self, want: int = 0) -> int:
         """一批排多少章细纲 —— 按输出上限算，不是拍一个 10。
 
@@ -3923,6 +3943,20 @@ class Novelist:
         if not vol:
             self.step_volumes()
             vol = self.volume_of(start)
+        # 排纲必须看见**已经写出来的正文**，不是只看自己上一批排的细纲。
+        # 只喂摘要接不住文风、称谓、和正文里临时长出来的东西 —— 实测第 2 章细纲
+        # 写「何九叔验出武大郎体内有弹头」，正文改成了「弹头从青石板缝里抠出来」，
+        # 而线索表照旧按细纲往下排，后面三个节拍全建在没发生的事实上。
+        recent_full = ""
+        done_before = sorted(x for x in self.p.state.get("done", []) if x < start)
+        for i in done_before[-2:]:
+            body = self.p.chapter(i)
+            if body:
+                recent_full += (f"\n———— 第{i}章 正文（**以这个为准**，"
+                                f"与细纲冲突时按正文往下接）————\n{body[:3000]}\n")
+        if recent_full:
+            cons.append("【最近几章的正文原文】" + recent_full)
+
         outline_ctx = self.asset("outline.md")            # 分卷必须看见终局与节奏表
         if vol:
             outline_ctx = (f"【本卷：{vol['name']}（第{vol['start']}-{vol['end']}章）】\n"

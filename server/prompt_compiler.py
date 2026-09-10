@@ -457,7 +457,10 @@ def measure_text(text: str) -> Dict[str, float]:
         "每千字问号": round(body.count("？") / n * 1000, 2),
         "每千字叹号": round(body.count("！") / n * 1000, 2),
         "段均字数": round(sum(len(l) for l in lines) / max(1, len(lines)), 1),
-        "独立反问句": sum(1 for l in lines if l.endswith("？") and len(l) < 45),
+        # 带引号的独立问句结尾是「」而不是？, 直接 endswith("？") 会整批漏掉 ——
+        # 而原作大量用「」写人物心里那句问话, 正是要数的东西。先剥引号再判。
+        "独立反问句": sum(1 for l in lines
+                      if l.rstrip("」』\"”').").endswith("？") and len(l) < 48),
         "反讽旁白": sum(body.count(w) for w in IRONY_STRONG),
         "解说体": sum(body.count(w) for w in EXPLAIN_MARK),
     }
