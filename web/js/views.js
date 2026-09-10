@@ -396,15 +396,24 @@ const TabRender = {
   },
   export(p) {
     const t = S.catalog.typeDetail[p.meta.type_id] || {};
-    const all = [['txt','纯文本 TXT'],['md','Markdown'],
-                 ['plan','创作方案（骨架/支线/阶梯/张力/承诺 + 全部细纲）'],
-                 ['outline','仅大纲（总纲+细纲纯文本）'],
-                 ['docx','Word DOCX'],['epub','电子书 EPUB'],
-                 ['fountain','剧本 Fountain'],['srt','字幕 SRT']];
+    // 名字要短, 说明另起一行。原来把「创作方案（骨架/支线/阶梯/张力/承诺 + 全部细纲）」
+    // 这种 24 字的文案直接塞进 grid-3 的按钮里, 一行放不下就把格子撑破了。
+    const all = [['txt','纯文本','TXT'],['md','Markdown','.md'],
+                 ['plan','创作方案','骨架/支线/阶梯/张力/承诺 + 全部细纲'],
+                 ['outline','仅大纲','总纲 + 细纲纯文本'],
+                 ['docx','Word','DOCX'],['epub','电子书','EPUB'],
+                 ['fountain','剧本','Fountain'],['srt','字幕','SRT']];
     return `<div class="card"><div class="card-head"><div class="card-title">导出</div>
       <div class="card-sub">类型「${esc(t.name||'')}」声明的格式：${(t.exporters||[]).join(' / ')}</div></div>
-      <div class="grid grid-3">${all.map(([k,n])=>
-        `<a class="btn" href="${API.exportUrl(p.slug,k)}" download style="justify-content:center">⬇ ${n}</a>`).join('')}</div>
+      <div class="grid grid-3">${all.map(([k,n,sub])=>
+        `<a class="btn" href="${API.exportUrl(p.slug,k)}" download title="${esc(sub)}"
+            style="flex-direction:column;align-items:center;gap:2px;height:auto;padding:10px 8px;
+                   text-align:center;white-space:normal;line-height:1.35">
+           <span>⬇ ${esc(n)}</span>
+           <span class="card-sub" style="font-size:11px;opacity:.72;
+                 overflow:hidden;text-overflow:ellipsis;display:-webkit-box;
+                 -webkit-line-clamp:2;-webkit-box-orient:vertical">${esc(sub)}</span>
+         </a>`).join('')}</div>
       <div class="card-sub" style="margin-top:14px">
         一份设定可导出多种形态：小说正文、剧本、字幕、纯大纲。这是「一稿多态」的落点。</div></div>`;
   }
@@ -1106,9 +1115,23 @@ async function runStep(step, outSel, label, extra={}) {
     });
 }
 
-async function toggleAuto() {
+let _autoBusy = false;                 // 防止连点工具栏那个按钮时开出多个弹窗/多次停止
+
+async function toggleAuto(ev) {
+  if (_autoBusy) return;
+  const btn = ev && ev.currentTarget;
   const running = S.cur.job && S.cur.job.running;
-  if (running) { await API.auto(S.cur.slug, {stop:true}); toast('已请求停止'); return; }
+  if (running) {
+    _autoBusy = true;
+    if (btn) { btn.disabled = true; btn.textContent = '停止中…'; }
+    try { await API.auto(S.cur.slug, {stop:true}); toast('已请求停止'); }
+    catch (e) { toast('停止失败：' + (e && e.message || e), 'warn'); }
+    finally {
+      _autoBusy = false;
+      if (btn) { btn.disabled = false; btn.textContent = '■ 停止'; }
+    }
+    return;
+  }
   const left = S.cur.meta.target_chapters - (S.cur.state.done||[]).length;
   modal(`<h2>自动创作</h2><div class="modal-sub">
       世界观 → 角色 → 总纲 → 分章细纲 → 逐章正文 → 多遍评审 → 不合格自动重写</div>
@@ -1123,10 +1146,28 @@ async function toggleAuto() {
       $$('#au-mode .pill').forEach(x => x.onclick = () => {
         $$('#au-mode .pill').forEach(y=>y.classList.remove('active')); x.classList.add('active');
       });
-      $('#au-go').onclick = async () => {
-        await API.auto(S.cur.slug, {upto: +$('#au-n').value,
-          mode: $('#au-mode .pill.active').dataset.v});
-        closeModal(); toast('已启动后台创作', 'ok'); startPoll();
+      // 启动请求要飞几秒, 按钮全程不禁用 => 用户以为没反应就接着点,
+      // 每点一次多发一个后台任务。后端虽然有 409「已在运行」兜着,
+      // 但前端从不把这个错显示出来, 看着还是「没反应」。两头都得管。
+      $('#au-go').onclick = async (ev) => {
+        const btn = ev.currentTarget;
+        if (btn.disabled) return;
+        btn.disabled = true;
+        const old = btn.textContent;
+        btn.textContent = '启动中…';
+        try {
+          const r = await API.auto(S.cur.slug, {upto: +$('#au-n').value,
+            mode: $('#au-mode .pill.active').dataset.v});
+          if (r && r.ok === false) {           // 409「已在运行」之类
+            toast(r.msg || '启动失败', 'warn');
+            btn.disabled = false; btn.textContent = old;
+            return;
+          }
+          closeModal(); toast('已启动后台创作', 'ok'); startPoll();
+        } catch (e) {
+          toast('启动失败：' + (e && e.message || e), 'warn');
+          btn.disabled = false; btn.textContent = old;
+        }
       };
   }});
 }
