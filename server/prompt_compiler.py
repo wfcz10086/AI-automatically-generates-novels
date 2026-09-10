@@ -107,6 +107,27 @@ def _digest(card: str, limit: int = 150) -> str:
     return s[:limit]
 
 
+def render_item(it: Dict[str, Any]) -> str:
+    """把一条结构件渲染成提示词里的一块。
+
+    常驻件和被窗口反馈临时拉进来的动态件共用这个函数 —— 早先动态件只发一行纠偏
+    指令，起手样例／上下界／反例全都送不到模型手里，等于那条件从来没生效过。
+    """
+    body = [f"\n▍{it.get('名', '')}"]
+    for key, label in (("时机", "时机"), ("做法", "做法"), ("上下界", "分量"),
+                       ("加码", "加码")):
+        if it.get(key):
+            body.append(f"　{label}：{it[key]}")
+    if it.get("起手"):
+        body.append("　起手：" + "".join(f"「{x}」" for x in it["起手"]))
+    if it.get("例"):
+        body.append("　样例：" + "  ".join(f"「{x}」" for x in it["例"][:5]))
+    for key in ("关键", "反例"):
+        if it.get(key):
+            body.append(f"　{key}：{it[key]}")
+    return "\n".join(body)
+
+
 def compile_chapter_prompt(*, title: str, index: int, target_words: int,
                            genre_line: str, manner: str, alias_rule: str = "",
                            style_pack: Optional[Dict[str, Any]] = None,
@@ -201,24 +222,7 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
         # 补一条立刻回到 7.72。所以每个想要的东西都必须有它自己的一条。
         seg.append("\n🧱 【本章必须包含的结构件·逐条落实，不是建议】")
         for it in si:
-            body = [f"\n▍{it['名']}"]
-            if it.get("时机"):
-                body.append(f"　时机：{it['时机']}")
-            if it.get("做法"):
-                body.append(f"　做法：{it['做法']}")
-            if it.get("上下界"):
-                body.append(f"　分量：{it['上下界']}")
-            if it.get("加码"):
-                body.append(f"　加码：{it['加码']}")
-            if it.get("起手"):
-                body.append("　起手：" + "".join(f"「{x}」" for x in it["起手"]))
-            if it.get("例"):
-                body.append("　样例：" + "  ".join(f"「{x}」" for x in it["例"][:5]))
-            if it.get("关键"):
-                body.append(f"　关键：{it['关键']}")
-            if it.get("反例"):
-                body.append(f"　反例：{it['反例']}")
-            seg.append("\n".join(body))
+            seg.append(render_item(it))
     pb = sp.get("pleasureBeats") or {}
     if pb.get("beats"):
         # 只说「每章一个爽点」模型就写成「谈成了/赢了」—— 赢了但不爽。
@@ -230,6 +234,18 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
     if window_feedback:
         seg.append("\n📐 【上个窗口的漂移·这一章补一下】\n" + window_feedback.strip()
                    + "\n其余各项保持原样，不要为了补这两项牺牲别的。")
+        # 反馈命中了哪条结构件, 就把那一整条也带上 —— 否则动态件的起手样例、
+        # 上下界、反例永远送不到模型手里, 只剩一句干巴巴的「多喊几句」。
+        wanted, all_items = [], (sp.get("structuralItems") or {}).get("items") or []
+        mets = (sp.get("windowFeedback") or {}).get("metrics") or {}
+        for k, spec in mets.items():
+            if k in window_feedback and spec.get("item"):
+                wanted.append(spec["item"])
+        pulled = [x for x in all_items
+                  if x.get("名") in wanted and not x.get("resident", True)]
+        if pulled:
+            seg.append("\n🧱 【为补上面这两项，本章额外加这几条结构件】"
+                       + "".join(render_item(x) for x in pulled))
     ag = sp.get("antagonist") or {}
     if ag.get("rules"):
         seg.append("\n【对手规格】" + "；".join(ag["rules"]))
