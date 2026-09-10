@@ -1834,6 +1834,64 @@ class Novelist:
         out["retrieval"] = {k: retr_info.get(k) for k in ("internal", "external", "needs")}
         return out
 
+    def factions(self, rebuild: bool = False) -> List[Dict[str, Any]]:
+        """会自己往前走的势力表 —— 横向扩散的燃料。
+
+        误读/牌市/但是链都挂在主角身上，主角不动世界就不动。而原作里最耐读的
+        一部分恰恰是「主角不在场时世界自己在走」：完颜宗构党争、大金父慈子孝、
+        赵构在金陵一口气取四百武进士…… 主角回头一看，世界变了。
+        """
+        cached = self.p._load("factions.json", [])
+        if cached and not rebuild:
+            return cached
+        try:
+            fs = sc.build_factions(self.asset("outline.md"),
+                                   [c["name"] for c in self.roster()],
+                                   self.p.meta.get("title", ""),
+                                   self._ask_planner)
+        except Exception as e:
+            print(f"[factions] 生成失败: {e}")
+            return cached or []
+        if fs:
+            self.p.write("factions.json", json.dumps(fs, ensure_ascii=False, indent=2))
+            self._log("势力 %d 家：%s" % (len(fs), "、".join(f["name"] for f in fs)))
+        return fs
+
+    def world_turn(self, n: int) -> str:
+        """每隔几章让各势力各走一步 —— 完全不管主角在干什么。
+
+        结果存进 state["world_turns"]，并作为下一批排纲的燃料。
+        频率由文风包的 worldTurn.every 决定；没配就不跑。
+        """
+        cfg = self.style.get("worldTurn") or {}
+        every = int(cfg.get("every") or 0)
+        if not every:
+            return ""
+        turns = self.p.state.setdefault("world_turns", {})
+        last = max((int(k) for k in turns), default=0)
+        if n - last < every and turns:
+            return turns.get(str(last), "")
+        fs = self.factions()
+        if not fs:
+            return ""
+        clock = self.basis_field("锚点") or ""
+        try:
+            r = call("planning", sc.world_turn_prompt(fs, n, clock[:160],
+                                                     f"{n - last} 章" if last else ""),
+                     max_tokens=int(self.g.get("max_tokens_plan") or 8000))
+            txt = clean(r.text)
+        except Exception as e:
+            print(f"[world_turn] 跳过: {e}")
+            return turns.get(str(last), "")
+        if not txt:
+            return turns.get(str(last), "")
+        turns[str(n)] = txt[:2600]
+        for f in fs:
+            f["last_turn"] = n
+        self.p.write("factions.json", json.dumps(fs, ensure_ascii=False, indent=2))
+        self._log(f"世界回合 @第{n}章：各势力各走一步（{len(fs)} 家）")
+        return turns[str(n)]
+
     def live_misreads(self, n: int, cap: int = 5) -> str:
         """还没被戳破的误读 —— 当**燃料**用，不是当禁令用。
 
@@ -4083,6 +4141,13 @@ class Novelist:
         lm = self.live_misreads(start)
         if lm:
             cons.insert(0, "🔥【正在发酵的误会·本批的情节燃料】\n" + lm)
+        # 世界自转 —— 横向扩散。放在最前面, 让排纲先看见「世界自己变成了什么样」,
+        # 再决定主角撞上哪一条。没有这一块, 各势力就只是背景板。
+        wt = self.world_turn(start)
+        if wt:
+            cons.insert(0, "🌍【世界自转·主角不在场时各家各走了一步】\n" + wt
+                        + "\n本批要让主角**撞上**其中至少一条，"
+                          "而不是把它们当背景交代掉。")
 
         # 排纲必须看见**已经写出来的正文**，不是只看自己上一批排的细纲。
         # 只喂摘要接不住文风、称谓、和正文里临时长出来的东西 —— 实测第 2 章细纲

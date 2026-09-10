@@ -1171,3 +1171,83 @@ def setback_missing(stages: Sequence[Dict[str, Any]],
             out.append(f"{s['name']}（第{s['start']}-{s['end']}章）"
                        f"全程没有主角真正的失手，{len(got)}/{quota}")
     return out
+
+# ─────────────────────── 世界自转（扩散因子） ───────────────────────
+#
+# 前面那些机制(误读/牌市/但是链)都挂在主角身上 —— 主角不动, 世界就不动。
+# 而原作里最耐读的一部分恰恰是「主角不在场时世界自己在走」: 完颜宗构党争、
+# 大金父慈子孝、赵构在金陵一口气取四百武进士、耶律大石西迁称帝……
+# 主角回头一看, 世界变了。这是横向加宽的唯一来源。
+#
+# 做法: 给每个势力一份自己的目标与内部矛盾, 每隔几章让它们**各自走一步**,
+# 完全不管主角在干什么。走出来的结果再当作下一批排纲的输入。
+
+def build_factions(outline: str, roster: Sequence[str], title: str,
+                   ask: Callable[[str], str]) -> List[Dict[str, Any]]:
+    """从总纲里抽出「会自己往前走」的势力。"""
+    prompt = (
+        f"下面是长篇作品《{title}》的总纲。\n\n"
+        f"请列出 5~7 个**非主角势力** —— 门派、宗族、朝廷、妖族、商会、教团都算。\n"
+        f"关键要求：这些势力必须是**主角不在场时也会自己往前走**的东西，"
+        f"不是等着主角来推的背景板。\n\n"
+        f"每个势力给出：\n"
+        f"- name 名称\n"
+        f"- wants 它最想要什么（一句话，具体到可以据此行动）\n"
+        f"- inner 它内部谁和谁在争、争什么（**这一栏最重要**：没有内部矛盾的势力"
+        f"只会做理性选择，而理性的势力是不会犯错的，也就不会产生剧情）\n"
+        f"- fears 它怕什么\n"
+        f"- state 它现在的实力/处境（可数：多少人、占几处、握着什么）\n"
+        f"- reads_hero 它此刻怎么看主角（多半是错的）\n\n"
+        f"硬要求：至少有两个势力之间有**与主角无关**的直接利害冲突。\n\n"
+        f'只输出 JSON，不要代码围栏：\n'
+        f'{{"factions":[{{"name":"某派","wants":"…","inner":"…","fears":"…",'
+        f'"state":"…","reads_hero":"…"}}]}}\n\n'
+        f"可用角色：{'、'.join(roster or []) or '（见总纲）'}\n\n#总纲\n{outline[:12000]}")
+    data = parse_json(ask(prompt), "factions")
+    out = []
+    for i, x in enumerate((data.get("factions") or [])[:8]):
+        if not isinstance(x, dict) or not str(x.get("name") or "").strip():
+            continue
+        out.append({
+            "id": i + 1,
+            "name": str(x["name"])[:20],
+            "wants": str(x.get("wants") or "")[:90],
+            "inner": str(x.get("inner") or "")[:120],
+            "fears": str(x.get("fears") or "")[:90],
+            "state": str(x.get("state") or "")[:120],
+            "reads_hero": str(x.get("reads_hero") or "")[:90],
+            "last_turn": 0,
+        })
+    return out
+
+
+def world_turn_prompt(factions: Sequence[Dict[str, Any]], n: int,
+                      clock: str = "", elapsed: str = "") -> str:
+    """让各势力各走一步 —— 主角不在场。"""
+    lines = []
+    for f in factions:
+        lines.append(f"【{f['name']}】想要：{f['wants']}")
+        if f.get("inner"):
+            lines.append(f"　　内部在争：{f['inner']}")
+        if f.get("fears"):
+            lines.append(f"　　怕：{f['fears']}")
+        lines.append(f"　　现状：{f.get('state','')}")
+        if f.get("reads_hero"):
+            lines.append(f"　　它眼里的主角：{f['reads_hero']}")
+    return (
+        "这是一次【世界回合】。**主角不在场，通篇不许提到主角在做什么。**\n\n"
+        + "\n".join(lines)
+        + (f"\n\n时钟：{clock}" if clock else "")
+        + (f"\n距上一次世界回合过去了：{elapsed}" if elapsed else "")
+        + f"\n\n让上面每一个势力，按**它自己的目标和它自己的内部矛盾**，各自往前走一步。\n"
+          f"每个势力输出四行：\n"
+          f"  做了什么：一个具体动作（不许写「继续发展」「暗中积蓄」这种空话）\n"
+          f"  账变成了多少：它自己的实力/地盘/人手/筹码变成了什么\n"
+          f"  没看见的隐患：这个动作在它自己看来是聪明的，但埋下了什么它没意识到的麻烦\n"
+          f"  对主角的影响：这件事会怎么波及主角（可以是「暂时无关」）\n\n"
+          f"硬要求：\n"
+          f"- 至少一个势力做出**对它自己不利**的动作，因为内部斗争压倒了外部理性\n"
+          f"- 至少一个势力因为**误判主角**而行动\n"
+          f"- 不许所有势力都在针对主角。它们大部分时间在互相咬\n"
+          f"- 至少有两个势力的动作**直接撞在一起**\n\n"
+          f"最后单独一行「本回合最大的变化：」写清哪一条对天下格局影响最大。")

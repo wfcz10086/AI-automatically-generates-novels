@@ -329,3 +329,42 @@ def test_当众失态是常驻结构件():
     assert "他心里一紧" in it["关键"]               # 要给出反例
     p = _prompt(LLT)
     assert "▍让有身份的人当众失态" in p
+
+
+# ── 世界自转（横向扩散因子）────────────────────────────────
+
+def test_自转是包开关且两个包都开了():
+    import json as _j
+    from pathlib import Path as _P
+    for f in ("laolatiao", "roushen-shuangwen"):
+        pk = _j.loads((_P(__file__).resolve().parents[2] /
+                       f"packs/style/{f}.json").read_text(encoding="utf-8"))
+        assert (pk.get("worldTurn") or {}).get("every") == 8, f
+    assert (FQ.get("worldTurn") or {}).get("every") in (None, 0), "老包不该被波及"
+
+
+def test_世界回合提示词的硬要求():
+    """没有这几条, 各势力会写成一致对外的背景板, 扩散就不发生。"""
+    import server.stagecraft as sc
+    fs = [{"name": "缥缈阁", "wants": "十年一割维持格局", "inner": "六圣里有两位想提前",
+           "fears": "有人修到能威胁他们", "state": "执掌天下", "reads_hero": "一个凡人罢了"},
+          {"name": "狐族", "wants": "补足元气化形", "inner": "老狐王与少壮派争鼎炉",
+           "fears": "被道门剿", "state": "元气大伤", "reads_hero": "极品鼎炉"}]
+    p = sc.world_turn_prompt(fs, 9, "三年后开罗刹海", "8 章")
+    assert "主角不在场" in p
+    assert "对它自己不利" in p            # 内部斗争压倒外部理性
+    assert "误判主角" in p
+    assert "不许所有势力都在针对主角" in p
+    assert "直接撞在一起" in p            # 势力互撞才长出第三条线
+    assert "缥缈阁" in p and "六圣里有两位想提前" in p
+
+
+def test_自转结果进排纲且排在最前():
+    """世界自转要让排纲先看见世界变成什么样, 再决定主角撞上哪一条。"""
+    import inspect
+    from server import orchestrator
+    src = inspect.getsource(orchestrator.Novelist.step_chapter_outlines)
+    assert "world_turn(start)" in src
+    assert "🌍" in src
+    assert 'cons.insert(0' in src
+    assert "撞上" in src
