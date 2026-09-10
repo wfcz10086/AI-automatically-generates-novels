@@ -938,7 +938,9 @@ const TabMount = {
             ${(r.subject || (cur!=='canon'&&cur!=='foreshadow'&&r.key))
               ?`<span style="flex:0 0 auto;font-weight:600">${esc(r.subject||r.key)}</span>`:''}
             <span style="flex:1;font-size:13px;color:var(--text-2)">${esc(r.fact||r.text||'')}
-              ${r.done?' <span class="badge badge-ok">已回收</span>':''}</span>
+              ${r.done?` <span class="badge badge-ok">${
+                cur==='misread'?'已戳破':cur==='methods'?'已作废':'已回收'}</span>`
+                :(cur==='misread'?' <span class="badge badge-warn">发酵中</span>':'')}</span>
             ${cur==='foreshadow'?'':`<button class="btn btn-sm lg-del"
               data-k="${esc(r.key)}" style="flex:0 0 auto">删除</button>`}
           </div>`).join('') : '<div class="empty">这本台账还是空的</div>';

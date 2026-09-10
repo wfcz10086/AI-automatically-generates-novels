@@ -426,6 +426,10 @@ LEDGER_KINDS = {
     "ledger":   "资源账",
     "timeline": "时间线",
     "foreshadow": "伏笔",
+    # 误读是这套引擎的心脏(一个动作 × N 个误读者 = N 条新支线), 却是唯一
+    # 一本前端看不见的台账 —— 抽错一条会一路错到底, 而且没人发现得了。
+    "misread":  "活跃误会",
+    "methods":  "解法与作废",
 }
 
 
@@ -484,6 +488,20 @@ def project_ledgers(slug: str):
                 p.write("canon.json", json.dumps(cn, ensure_ascii=False, indent=2))
                 return jsonify({"ok": True, "left": len(cn)})
             return jsonify({"error": "out of range"}), 404
+        if kind in ("misread", "methods"):
+            # 列表型台账按下标删。误会记岔了必须能就地拨正, 否则它会一直
+            # 当燃料喂进排纲, 越滚越歪。
+            lst = p.state.get({"misread": "misreads",
+                               "methods": "methods"}[kind]) or []
+            try:
+                idx = int(key)
+            except ValueError:
+                return jsonify({"error": "bad key"}), 400
+            if 0 <= idx < len(lst):
+                lst.pop(idx)
+                p.save()
+                return jsonify({"ok": True, "left": len(lst)})
+            return jsonify({"error": "out of range"}), 404
         if kind in ("identity", "orgs", "roles", "power", "ledger",
                     "terms", "timeline"):
             d = p.state.get(kind) or {}
@@ -531,6 +549,23 @@ def project_ledgers(slug: str):
         "foreshadow": [{"key": str(f.get("id", i)), "chapter": f.get("chapter"),
                         "text": f.get("text"), "done": bool(f.get("resolved_at"))}
                        for i, f in enumerate(fs)],
+        # 误会: 已戳破的标 done, 未戳破的才是活跃燃料
+        "misread": [{"key": str(i), "chapter": m.get("at"),
+                     "subject": m.get("who"),
+                     "text": (f"凭「{m.get('because','')}」→ 认定「{m.get('concludes','')}」"
+                              + (f" → 于是「{m.get('acts')}」" if m.get("acts") else "")),
+                     "done": bool(m.get("closed_at"))}
+                    for i, m in enumerate(st.get("misreads") or [])
+                    if isinstance(m, dict)],
+        # 解法: 同一路数用满次数就会被下作废令, expired 里的标 done
+        "methods": [{"key": str(i), "chapter": m.get("at"),
+                     "subject": m.get("method"),
+                     "text": m.get("solved") or "",
+                     "done": any(Novelist._same_move(str(m.get("method") or ""),
+                                                     str(e.get("method") or ""))
+                                 for e in (st.get("expired_methods") or []))}
+                    for i, m in enumerate(st.get("methods") or [])
+                    if isinstance(m, dict)],
     })
 
 
