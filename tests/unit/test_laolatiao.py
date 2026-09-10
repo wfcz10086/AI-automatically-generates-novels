@@ -418,3 +418,19 @@ def test_换壳令要长在但是链上且不许原地升级():
     assert "肉身暴露在戒律堂视线中" in p      # 收壳理由来自本卷 exposes
     assert "性质不同" in p                    # 换赛道, 不是升一级
     assert "看错" in p                        # 换壳本身要产生新误读
+
+
+def test_评审骨架必须列全本遍维度():
+    """静态样例只列三五个维度就打省略号，模型照着提前收尾，实测每遍稳定漏评
+    2-3 维；于是每章总分按不同数量的维度平均出来，章与章不可比。"""
+    import server.critic as c
+    dims = [("人物一致性", "a"), ("对白质感", "b"), ("开篇与钩子", "c"),
+            ("描写配给", "d")]
+    p = c.build_prompt(title="T", n=1, text="正文", prev_texts=[], world="",
+                       roster="", canon=[], outline="", budget_chars=3000,
+                       recalled=[], digests=[], roles={}, timeline=[],
+                       dims_override=dims, pass_name="文字读", real_mode=False)
+    for name, _ in dims:
+        assert f'"{name}"' in p, f"骨架里缺维度 {name}"
+    assert "一个都不能少" in p
+    assert "..." not in c.schema_for([d[0] for d in dims])

@@ -77,6 +77,21 @@ def style_dims(style_pack, pass_name: str):
 
 DIMENSIONS = PASSES[0]["dims"] + PASSES[1]["dims"]
 
+#: 静态样例只列了三五个维度就打省略号, 模型照着样例提前收尾 ——
+#: 实测每遍稳定漏评 2-3 维(对白质感、开篇与钩子、描写配给、对手智商守恒…),
+#: 于是每章的总分是按不同数量的维度平均出来的, 章与章根本不可比。
+#: 正确做法是把**本遍要评的每一个维度名**都写进骨架, 模型只需填数字。
+def schema_for(dim_names: List[str]) -> str:
+    scores = ",".join(f'"{d}":<0-100的整数>' for d in dim_names)
+    return ('{"scores":{' + scores + '},'
+            '"issues":[{"dim":"上面维度名之一","severity":"high|mid|low",'
+            '"what":"一句话说清问题","evidence":"引用正文原句"}],'
+            '"contradictions":[{"fact":"与哪条已确立事实冲突","evidence":"正文原句"}],'
+            '"new_facts":[{"subject":"人物或事物","fact":"本章确立的不可逆事实",'
+            '"kind":"death|rank|betray|marry|destroy|reveal|other"}],'
+            '"tics":["本章出现的、属于套路的叙述装置或句式"]}')
+
+
 CRITIQUE_SCHEMA = (
     '{"scores":{"人物一致性":85,"设定自洽":70,"视角与人称":90,'
     '"文风新鲜度":60,"剧情推进":80},'
@@ -161,7 +176,9 @@ def build_prompt(*, title: str, n: int, text: str, prev_texts: List[str],
         f"**签约/入伙/合作达成/关系确立**、重要据点或资产的取得与位置。\n"
         f"  不算：临时的位置、情绪、正在进行的计划。\n"
         f"  没有就给空数组，宁缺毋滥。\n\n"
-        f"只输出 JSON（不要代码围栏），格式：\n{CRITIQUE_SCHEMA}\n"
+        f"只输出 JSON（不要代码围栏），格式：\n{schema_for([d[0] for d in dims_list])}\n"
+        f"⚠ scores 里上面列的 {len(dims_list)} 个维度**一个都不能少**，"
+        f"每个都要给 0-100 的整数。少一个这次评审就作废。\n"
         f"issues 最多 6 条，只报**有正文原句为证**的。")
 
 
