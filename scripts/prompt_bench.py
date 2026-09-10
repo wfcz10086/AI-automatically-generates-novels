@@ -320,12 +320,34 @@ MISREAD_W = STYLE["词表"]["误读推断词"]
 EXPLAIN_W = ["所谓", "其实", "这就是", "说穿了", "通常情况下", "实际上", "规矩", "制度"]
 
 
-def gate(text: str) -> dict:
+# 阈值来自两本书 282 个「10 章滚动窗口」的 5/95 分位。
+# 教训：第一版把【全书平均】当成【每章硬指标】，结果原作 60 章 0 通过 ——
+# 单章方差极大（对白占比 2 分位 0.04、98 分位 0.54，因为有的章全是武戏，
+# 有的章全是朝堂对辩）。文风是窗口级的事，单章只拦硬伤。
+CH_GATE = {                      # 单章：只拦硬伤，宽
+    "words": (2000, 4200),
+    "para_avg": (35, 80),
+    "para_max": 280,
+    "dialogue_min": 0.02,
+}
+WIN_GATE = {                     # 每 10 章滚动窗口：文风真正的控制点
+    "对白占比":   (0.16, 0.34),
+    "每千字问号": (3.4, 7.7),
+    "每千字叹号": (6.6, 11.3),
+    "段均字数":   (47, 62),
+    "独立反问句": (7, None),
+    "反讽旁白":   (12, None),
+    "误读推断":   (2, None),
+    "解说体":     (8, None),
+}
+
+
+def measure(text: str) -> dict:
     body = re.sub(r"^#.*$", "", text, flags=re.M).strip()
     lines = [l.strip() for l in body.split("\n") if l.strip()]
     n = len(body) or 1
     dlg = sum(len(x) for x in re.findall(r"[「『\"“][^」』\"”]{0,300}[」』\"”]", body))
-    m = {
+    return {
         "字数": len(body),
         "对白占比": round(dlg / n, 3),
         "每千字问号": round(body.count("？") / n * 1000, 2),
@@ -339,20 +361,38 @@ def gate(text: str) -> dict:
         "解说体": sum(body.count(w) for w in EXPLAIN_W),
         "结尾完整": bool(body) and body[-1] in "。！？…」』\"”",
     }
-    fails = []
-    if not 2400 * 0.85 <= m["字数"] <= 3400 * 1.25: fails.append("字数")
-    if not 0.20 <= m["对白占比"] <= 0.28: fails.append("对白占比")
-    if not 4.5 <= m["每千字问号"] <= 6.5: fails.append("问号密度")
-    if not 7.5 <= m["每千字叹号"] <= 10.5: fails.append("叹号密度")
-    if not 40 <= m["段均字数"] <= 62: fails.append("段均字数")
-    if m["最长段"] > 200: fails.append("单段过长")
-    if not 3 <= m["独立反问句"] <= 6: fails.append("独立反问句")
-    if not 2 <= m["反讽旁白"] <= 5: fails.append("反讽旁白")
-    if m["误读推断"] < 1: fails.append("无误读")
-    if m["解说体"] < 1: fails.append("无解说")
-    if not m["结尾完整"]: fails.append("结尾截断")
-    m["未过项"] = fails
-    m["通过"] = not fails
+
+
+def gate(text: str) -> dict:
+    """单章闸：只拦硬伤。文风偏差交给 win_gate（每 10 章）。"""
+    m = measure(text)
+    f = []
+    lo, hi = CH_GATE["words"]
+    if not lo <= m["字数"] <= hi: f.append("字数")
+    lo, hi = CH_GATE["para_avg"]
+    if not lo <= m["段均字数"] <= hi: f.append("段均字数")
+    if m["最长段"] > CH_GATE["para_max"]: f.append("单段过长")
+    if m["对白占比"] < CH_GATE["dialogue_min"]: f.append("几乎无对白")
+    if not m["结尾完整"]: f.append("结尾截断")
+    m["未过项"] = f
+    m["通过"] = not f
+    return m
+
+
+def win_gate(texts: list) -> dict:
+    """窗口闸：连续 10 章合起来量。这才是文风的控制点。"""
+    joined = "\n".join(texts)
+    m = measure(joined)
+    for k in ("独立反问句", "反讽旁白", "误读推断", "解说体"):
+        m[k] = sum(measure(t)[k] for t in texts)
+    f = []
+    for k, (lo, hi) in WIN_GATE.items():
+        v = m[k]
+        if lo is not None and v < lo: f.append(f"{k}偏低({v})")
+        if hi is not None and v > hi: f.append(f"{k}偏高({v})")
+    m["未过项"] = f
+    m["通过"] = not f
+    m["窗口章数"] = len(texts)
     return m
 
 
