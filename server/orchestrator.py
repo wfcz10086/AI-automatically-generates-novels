@@ -1811,17 +1811,31 @@ class Novelist:
         （一个动作 × N 个误读者 = N 条新支线），所以要放在提示词**前部**，
         用「所以接下来会发生什么」的语气，而不是塞进「必守约束」里。
         """
+        def _at(m, dflt: int = 0) -> int:
+            # 台账是模型抽出来的, 字段随时可能缺或脏。这里炸掉会**打断整章写作**,
+            # 而它只是用来排个序 —— 兜住, 别让一条烂数据毁掉一章。
+            try:
+                return int(m.get("at") or dflt)
+            except (TypeError, ValueError):
+                return dflt
+
         mis = [m for m in (self.p.state.get("misreads") or [])
-               if not m.get("closed_at")]
+               if isinstance(m, dict) and not m.get("closed_at") and m.get("concludes")]
         if not mis:
             return ""
-        mis = sorted(mis, key=lambda m: -int(m.get("at") or 0))[:cap]
+        mis = sorted(mis, key=lambda m: -_at(m))[:cap]
         lines = []
         for m in mis:
-            age = n - int(m.get("at") or n)
+            age = n - _at(m, n)
             tag = "（埋了 %d 章了，该结账了）" % age if age >= 25 else ""
-            lines.append(f"· {m.get('who','')}：凭「{m.get('because','')}」，"
-                         f"认定「{m.get('concludes','')}」，于是「{m.get('acts','')}」{tag}")
+            # 缺字段的条目别印成「凭「」…于是「」」这种残句 —— 有什么写什么
+            bits = []
+            if m.get("because"):
+                bits.append(f"凭「{m['because']}」")
+            bits.append(f"认定「{m.get('concludes','')}」")
+            if m.get("acts"):
+                bits.append(f"于是「{m['acts']}」")
+            lines.append(f"· {m.get('who') or '有人'}：" + "，".join(bits) + tag)
         return ("这些人现在都**信着一个错的东西**，而且正照着它行动。"
                 "他们不知道真相，本章也不必让他们知道 ——\n"
                 + "\n".join(lines)

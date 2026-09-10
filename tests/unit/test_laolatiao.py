@@ -237,3 +237,31 @@ def test_死区():
     fb = window_drift([t], pack)
     assert "叹号" in fb
     assert "段均字数" not in fb, fb
+
+
+# ── 台账健壮性 ────────────────────────────────────────────
+
+def test_误读台账脏数据不许打断写作(tmp_path, monkeypatch):
+    """台账是模型抽出来的，字段随时可能缺或脏。这里炸掉会打断整章写作。"""
+    import shutil
+    from server.orchestrator import Novelist, Project, create_project
+    p = create_project("单测脏台账", "novel", "lishi", "laolatiao",
+                       target_chapters=20, target_words=60000,
+                       fields={"premise": "x", "background": "y", "relationships": ""})
+    slug = p.slug
+    try:
+        p.state["misreads"] = [
+            {"at": 1, "who": "甲", "concludes": "错的结论"},   # 缺 because/acts
+            {"who": "乙"},                                     # 缺 concludes → 应被过滤
+            {}, "不是字典", None,                              # 完全无效
+            {"at": "x", "who": "丙", "because": "b", "concludes": "c",
+             "acts": "d", "closed_at": 0},                     # at 是非数字字符串
+            {"at": None, "who": "丁", "concludes": "戊"},
+        ]
+        p.save()
+        out = Novelist(Project(slug)).live_misreads(30)
+        assert "甲" in out and "丙" in out and "丁" in out
+        assert "乙" not in out, "缺 concludes 的条目应被过滤掉"
+        assert "凭「」" not in out and "于是「」" not in out, "缺字段不许印成残句"
+    finally:
+        shutil.rmtree(f"projects/{slug}", ignore_errors=True)
