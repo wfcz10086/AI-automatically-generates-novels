@@ -186,6 +186,62 @@ def render_item(it: Dict[str, Any]) -> str:
     return "\n".join(body)
 
 
+#: ── 提示词槽位定额 ──
+#: 每修一个问题就往提示词加一块 ⚠，一天下来 52 块，块块都写着「硬指标／
+#: 不合格／铁律」。模型面前全是最高优先级，等于没有优先级 —— 实测约束打架时
+#: 文体漂移 27%。所以给槽位定额：新指令要进来，就得顶掉同槽里更次要的那块，
+#: 不许无限追加。装不下的，说明它本来就轮不到这一章执行。
+#:
+#: (标记前缀, 槽位, 优先级) —— 优先级小的先被挤出去。
+SLOT_RULES: List[tuple] = [
+    ("📌", "任务", 100), ("#本章剧情", "任务", 100), ("再次确认", "任务", 99),
+    ("🔥", "燃料", 90), ("⛔", "燃料", 88), ("🔄", "燃料", 88), ("⚙", "燃料", 85),
+    ("🎯", "调子", 80), ("📏", "调子", 78),
+    # 窗口漂移是按最近十章**实测**出来的纠偏, 且只对这几章有效, 过期作废 ——
+    # 比任何静态词表都值钱, 原来排在最低位每章都被挤掉。
+    ("📐", "调子", 76), ("▍", "调子", 70), ("✍", "调子", 55), ("🗣", "调子", 50),
+    ("⚠️ 【设定与红线打架", "纪律", 95),
+    ("⚠️ 【开篇铁律", "纪律", 82), ("⚠️ 【句子与段落", "纪律", 75),
+    ("⚠️ 【段落节奏", "纪律", 75), ("⚠️", "纪律", 40), ("🧱", "纪律", 65),
+    ("#反向提示词库", "纪律", 45), ("#正向提示词库", "纪律", 35),
+]
+#: 槽位字符定额。任务槽不设限 —— 那是「这一章要写什么」，挤掉它等于不写。
+SLOT_BUDGET = {"任务": 0, "燃料": 2600, "调子": 4200, "纪律": 3000}
+
+
+def _slot_of(block: str) -> tuple:
+    head = block.lstrip("\n")
+    for pref, slot, pri in SLOT_RULES:
+        if head.startswith(pref):
+            return slot, pri
+    return "", 0                      # 没登记的块不受定额管（世界观/记忆等）
+
+
+def enforce_slots(seg: List[str], on_drop=None) -> List[str]:
+    """按槽位定额裁剪指令块：同槽超预算时，优先级低的先出局。
+
+    这不是省 token —— 记忆层比这些大一个量级。这是**恢复优先级**：
+    留下的每一块都在预算内，模型才分得清什么是真的必须做。
+    """
+    keep = [True] * len(seg)
+    for slot, budget in SLOT_BUDGET.items():
+        if budget <= 0:
+            continue
+        idx = [i for i, b in enumerate(seg) if _slot_of(b)[0] == slot]
+        used = sum(len(seg[i]) for i in idx)
+        if used <= budget:
+            continue
+        # 低优先级先丢；同级丢长的（长的往往是可展开的样例，不是判据）
+        for i in sorted(idx, key=lambda i: (_slot_of(seg[i])[1], -len(seg[i]))):
+            if used <= budget:
+                break
+            keep[i] = False
+            used -= len(seg[i])
+            if on_drop:
+                on_drop(slot, seg[i].lstrip("\n").split("\n")[0][:36], len(seg[i]))
+    return [b for b, k in zip(seg, keep) if k]
+
+
 def compile_chapter_prompt(*, title: str, index: int, target_words: int,
                            genre_line: str, manner: str, alias_rule: str = "",
                            style_pack: Optional[Dict[str, Any]] = None,
@@ -267,12 +323,16 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
                 bits.append(f"　▸ {k}\n" + "\n".join(f"　　{e}" for e in ex))
             seg.append("\n✍ 【这一章重点练这两样·照这个味道写，不要照抄句子】\n"
                        + "\n".join(bits))
-    for key, head in (("句子分工", "句子的长短分工"),
-                      ("反讽三法", "反讽怎么写"),
-                      ("当众失态的写法", "有身份的人丢脸怎么写"),
-                      ("心理怎么写", "人物心里的算计怎么写"),
-                      ("段落与转场", "段落形态与切镜头"),
-                      ("狠劲", "这个调子最狠的一手")):
+    # 六块手艺一次全发 = 一次给模型六个「重点」, 等于没有重点; 而且撑爆调子槽
+    # 之后会被定额稳定挤掉同样那几块, 那些块就永久饿死了(又变成死字段)。
+    # 按章号轮换三块: 每章有重点, 两章之内六块全覆盖。
+    _craft = (("句子分工", "句子的长短分工"),
+              ("反讽三法", "反讽怎么写"),
+              ("当众失态的写法", "有身份的人丢脸怎么写"),
+              ("心理怎么写", "人物心里的算计怎么写"),
+              ("段落与转场", "段落形态与切镜头"),
+              ("狠劲", "这个调子最狠的一手"))
+    for key, head in [_craft[(index * 3 + i) % len(_craft)] for i in range(3)]:
         v = sp.get(key)
         if not isinstance(v, dict):
             continue
@@ -409,8 +469,13 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
     wl = sp.get("词表")
     if isinstance(wl, dict):
         bits = []
+        # 五栏一次全发 1000+ 字, 会把调子槽顶爆; 而且模型只会平均地撒。
+        # 禁用栏每章都要, 其余按章号轮换两栏。
+        _cols = [k for k in wl if not k.startswith("_") and wl[k] and "禁用" not in k]
+        _pick = ({_cols[(index + i) % len(_cols)] for i in range(2)} if _cols else set())
+        _pick |= {k for k in wl if "禁用" in k}
         for k, v in wl.items():
-            if k.startswith("_") or not v:
+            if k.startswith("_") or not v or k not in _pick:
                 continue
             items = v if isinstance(v, list) else [v]
             tag = "**这些一个都别用**" if "禁用" in k else ""
@@ -426,6 +491,11 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
                f"\n{plot_block}\n【剧情结束】")
     seg.append(f"\n再次确认：全章 {target_words} 字左右，写完 {len(plots)} 条剧情即收尾。"
                f"直接输出正文，不要任何前言、标题或说明。")
+    dropped: List[str] = []
+    seg = enforce_slots(
+        seg, on_drop=lambda s_, h, n: dropped.append(f"{s_}槽挤掉「{h}」({n}字)"))
+    if dropped:
+        print("[prompt] " + "；".join(dropped))
     return "\n".join(seg)
 
 

@@ -492,3 +492,32 @@ def test_包里不许有无人消费的字段():
         if miss:
             dead[_p.Path(pk).name] = miss
     assert not dead, f"这些字段没有任何代码消费，等于没写: {dead}"
+
+
+# ═══════════ 提示词槽位定额 ═══════════
+
+def test_槽位定额按优先级挤_不是按顺序砍():
+    from server.prompt_compiler import enforce_slots, SLOT_BUDGET
+    big = "x" * 3000
+    seg = ["\n🎯 主调" + big,          # 调子 80
+           "\n🗣 词表" + big,          # 调子 50 —— 该它先出局
+           "\n📌 本章硬约束" + big]     # 任务，不限额，永不出局
+    dropped = []
+    out = enforce_slots(seg, on_drop=lambda s, h, n: dropped.append(h))
+    assert any(b.lstrip("\n").startswith("📌") for b in out), "任务槽不许被挤"
+    assert any(b.lstrip("\n").startswith("🎯") for b in out), "高优先级不该先出局"
+    assert dropped and "词表" in dropped[0]
+
+
+def test_窗口漂移的优先级高于静态词表():
+    """漂移是按最近十章实测出来的、只对这几章有效的纠偏，过期作废；
+    静态词表哪一章发都一样。原来漂移排最低位，每章都被挤掉。"""
+    from server.prompt_compiler import _slot_of
+    assert _slot_of("\n📐 漂移")[1] > _slot_of("\n🗣 词表")[1]
+    assert _slot_of("\n📐 漂移")[1] > _slot_of("\n✍ 片段")[1]
+
+
+def test_任务槽不设限():
+    """「这一章要写什么」挤掉了就等于不写。"""
+    from server.prompt_compiler import SLOT_BUDGET
+    assert SLOT_BUDGET["任务"] == 0
