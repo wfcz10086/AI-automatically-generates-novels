@@ -362,7 +362,14 @@ def call(profile: str, prompt: str, on_delta: Optional[Callable[[str], None]] = 
     if kw.get("thinking"):
         gw = (registry.gateways.get(
             (registry.profiles.get(profile) or {}).get("gateway", "")) or {})
-        if gw.get("thinking_style") == "effort":
+        # 网关级 thinking_style 之外，还要看按模型族的覆盖 —— 否则
+        # 「网关是 toggle、但这个模型被覆盖成 effort」时预算不会放大。
+        _st = gw.get("thinking_style")
+        _m = str(kw.get("model") or gw.get("default_model") or "").lower()
+        for _p, _v in (gw.get("thinking_style_by_model") or {}).items():
+            if _m.startswith(str(_p).lower()):
+                _st = _v; break
+        if _st == "effort":
             ceiling = int(gw.get("max_tokens") or 8192)
             kw["max_tokens"] = min(ceiling, max(int(kw.get("max_tokens") or 2000)
                                                 * THINK_BUDGET_X, 6000))
@@ -4844,8 +4851,11 @@ class Novelist:
                 canon=self.canon(), outline=outline_txt,
                 budget_chars=budget, recalled=recalled, digests=digests,
                 roles=self.p.state.get("roles", {}), timeline=timeline,
-                dims_override=(spec["dims"] + critic_mod.REAL_DIMS
-                               if pi == 0 and real else spec["dims"]),
+                # 维度三来源: 通遍固有的 + 真实历史专属的 + **本书文风包声明的**。
+                # 少了第三项, 评审就在用通用网文的尺子量一套换过的文风。
+                dims_override=(spec["dims"]
+                               + (critic_mod.REAL_DIMS if pi == 0 and real else [])
+                               + critic_mod.style_dims(self.style, spec["name"])),
                 pass_name=spec["name"], real_mode=real,
                 era_hint=self.era_brief(400) if real else "")
             r = call("judging", prompt, on_delta, max_tokens=2000)

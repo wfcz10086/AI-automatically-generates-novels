@@ -61,6 +61,20 @@ REAL_DIMS = [
                 "是否对得上"),
 ]
 
+def style_dims(style_pack, pass_name: str):
+    """文风包自己声明的评审维度。
+
+    生成端换了一整套文风(结构件/字段契约/标题规格/窗口反馈), 评审端却还在用
+    通用网文的那几条 —— 等于**用旧尺子量新东西**: 它不知道「当众失态」是必需的,
+    不知道「制度解说是骨头」, 不知道叹号低说明人物在端着。
+    评审不懂, 那条「不合格自动重写」的回路就没有方向, 重写出来的东西不会更靠近目标。
+
+    包里按遍次声明: {"文字读": [["维度名","怎么判"], ...]}
+    """
+    d = (style_pack or {}).get("critiqueDims") or {}
+    return [tuple(x) for x in (d.get(pass_name) or []) if len(x) == 2]
+
+
 DIMENSIONS = PASSES[0]["dims"] + PASSES[1]["dims"]
 
 CRITIQUE_SCHEMA = (
