@@ -480,7 +480,14 @@ def window_drift(texts: List[str], style_pack: Optional[Dict[str, Any]] = None) 
       八条结构件全压在每一章上 → 平均相对差 27%（修好一项就掉另一项）
       只留常驻三条             → 39%（没写的项直接塌）
       常驻三条 + 本函数补两条   → **16%**
-    项少了模型才照顾得过来。
+
+    第二轮端到端实测暴露了两个问题, 这一版都补上了:
+      1. **没有阻尼**: 漂出去 10% 和漂出去 900% 给的是同一句话, 模型全量施加纠偏,
+         结果对白 0.37 一次被压到 0.23（目标区间 0.16~0.34，压到了下半区）。
+         现在按漂移幅度分三档措辞。
+      2. **没有耦合保护**: 让它「少一点对话」, 问号 5.2→3.5、独立反问 5.0→2.5 跟着塌 ——
+         因为问句和心里那句话本来就寄生在对话里。现在每项可声明 dont_sacrifice,
+         纠偏时明写「别把它一起砍了」。
     """
     wf = (style_pack or {}).get("windowFeedback") or {}
     mets = wf.get("metrics") or {}
@@ -493,15 +500,30 @@ def window_drift(texts: List[str], style_pack: Optional[Dict[str, Any]] = None) 
     devs = []
     for k, spec in mets.items():
         v, lo, hi = avg.get(k, 0), spec.get("lo"), spec.get("hi")
+        width = max(1e-9, (hi - lo)) if (lo is not None and hi is not None) else 1.0
         if lo is not None and v < lo:
-            devs.append((abs(v - lo) / max(abs(lo), 1e-9), k, "低", v, spec))
+            devs.append(((lo - v) / width, k, "低", v, spec))
         elif hi is not None and v > hi:
-            devs.append((abs(v - hi) / max(abs(hi), 1e-9), k, "高", v, spec))
+            devs.append(((v - hi) / width, k, "高", v, spec))
     if not devs:
         return ""
     devs.sort(reverse=True)
+    # 死区：漂出区间不到区间宽度 15% 的不值得纠 —— 单章方差本来就大，
+    # 为这点噪声去动提示词只会引入新的漂移。
+    devs = [d for d in devs if d[0] >= 0.15] or devs[:1]
     out = []
-    for _, k, d, v, spec in devs[:int(wf.get("topK") or 2)]:
-        out.append(f"· {k}偏{d}（最近 {len(ms)} 章 {v:.2f}，"
-                   f"目标 {spec.get('lo')}~{spec.get('hi')}）—— 这一章请：{spec.get(d, '')}")
+    for ratio, k, d, v, spec in devs[:int(wf.get("topK") or 2)]:
+        if ratio < 0.4:
+            force, tone = "稍微", "轻微偏离，微调即可，不要用力过猛"
+        elif ratio < 1.2:
+            force, tone = "", "明显偏离，这一章要真的改过来"
+        else:
+            force, tone = "明显", "严重偏离，这一章要用力纠"
+        act = spec.get(d, "")
+        keep = spec.get("dont_sacrifice") or []
+        keep_line = ("　（纠的时候别把这几样一起砍了：" + "、".join(keep) + "）"
+                     if keep and d == "高" else "")
+        out.append(f"· {k}偏{d}（最近 {len(ms)} 章 {v:.2f}，目标 "
+                   f"{spec.get('lo')}~{spec.get('hi')}｜{tone}）\n"
+                   f"　这一章请：{force}{act}" + ("\n" + keep_line if keep_line else ""))
     return "\n".join(out)
