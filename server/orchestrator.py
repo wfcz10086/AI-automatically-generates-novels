@@ -5041,22 +5041,37 @@ class Novelist:
                                + critic_mod.style_dims(self.style, spec["name"])),
                 pass_name=spec["name"], real_mode=real,
                 era_hint=self.era_brief(400) if real else "")
-            r = call("judging", prompt, on_delta, max_tokens=2000)
-            elapsed += r.elapsed
-            one = critic_mod.parse(clean(r.text))
-            if not one:
-                # 一遍读崩了不能默默跳过: overall 是存活遍数的平均,
-                # 少一遍就等于换了把尺子, 章与章的分数不再可比。
-                self._log(f"  评审第{n}章「{spec['name']}」这遍没读出结果, 重试一次")
-                r2 = call("judging", prompt, on_delta, max_tokens=2000)
-                elapsed += r2.elapsed
-                one = critic_mod.parse(clean(r2.text))
-            if not one:
-                self._log(f"  ⚠ 评审第{n}章「{spec['name']}」两次都失败, "
+            # 2000 装不下 15 个维度 + 6 条带原文引证的问题 + new_facts + tics,
+            # 实测 30 章里 17 章被截断。截断后 JSON 仍可能解析成功但缺 scores。
+            cap = int(self.g.get("max_tokens_critique") or 4000)
+
+            def _read_once() -> Dict[str, Any]:
+                rr = call("judging", prompt, on_delta, max_tokens=cap)
+                return rr.elapsed, critic_mod.parse(clean(rr.text))
+
+            el, one = _read_once()
+            elapsed += el
+            # 判据是「这一遍有没有交回分数」, 不是「有没有解析出东西」——
+            # 原来只查 `not one`, 于是「解析成功但 scores 为空」这一路
+            # 完全静默。而 overall 是存活遍数的平均, 少一遍就等于换了把尺子,
+            # 章与章的分数不再可比(第1章按15维、第4章按8维)。
+            if not (one or {}).get("scores"):
+                self._log(f"  评审第{n}章「{spec['name']}」这遍没交回分数, 重试一次")
+                el, one = _read_once()
+                elapsed += el
+            if not (one or {}).get("scores"):
+                self._log(f"  ⚠ 评审第{n}章「{spec['name']}」两次都没交回分数, "
                           f"本章缺 {len(spec['dims'])}+ 个维度, 分数偏高不可比")
                 merged.setdefault("failed_passes", []).append(spec["name"])
                 continue
-            merged["scores"].update(one.get("scores") or {})
+            got = one.get("scores") or {}
+            want = {d[0] for d in spec["dims"]}
+            miss = want - set(got)
+            if miss:
+                self._log(f"  评审第{n}章「{spec['name']}」漏评 {len(miss)} 维: "
+                          f"{'、'.join(sorted(miss))}")
+                merged.setdefault("missing_dims", []).extend(sorted(miss))
+            merged["scores"].update(got)
             for k in ("issues", "contradictions", "tics"):
                 merged[k] += one.get(k) or []
             if pi == 0:                      # 事实抽取只做一遍, 避免重复入账
