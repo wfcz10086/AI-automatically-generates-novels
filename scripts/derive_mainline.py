@@ -145,6 +145,55 @@ def p_advance(name: str, rows: list[str]) -> str:
 {chr(10).join(rows)}"""
 
 
+#: 校准只许碰**引擎层真正消费的字段** —— 否则又会长出一堆没人读的死参数
+#: (见 tests 里的「包里不许有无人消费的字段」)。
+CALIB_KEYS = """
+misreadLifecycle.发酵章数   一次误读从挂上到促成错误行动, 通常隔几章 [下限,上限]
+misreadLifecycle.上限       误读最长活几章就必须被戳破
+misreadLifecycle.戳破方式   戳破时靠什么发生(一句话)
+advanceFuel.账目变动        这一档燃料占全部推进动力的比例(0-1 小数)
+advanceFuel.新误读          同上
+advanceFuel.旧误读发酵      同上
+advanceFuel.外部事件        同上
+advanceFuel.新人物          同上
+advanceFuel.承接率          有多少章的开头明确接住上一章结尾(0-1 小数)
+eventSpan.span              同一件事通常横跨几章 [下限,上限]
+obsolete.afterUses          主角同一路数连着奏效几次之后, 作者会让它失灵一次
+reshell.tailChapters        卷末提前几章开始收走主角借来的位置
+worldTurn.every             隔几章各势力自己走一步(与主角无关的世界回合)
+"""
+
+
+def p_calibrate(name: str, advance: str, chain: str, style: str) -> str:
+    return f"""你在给一套长篇小说生产线做**参数校准**。下面是从《{name}》原著
+逆向出来的三份材料。请据此给出这套生产线该用的参数值。
+
+规矩：
+- 只根据材料里**能数出来／能指认出来**的东西给值，材料里没依据的那一项写 null。
+- 比例项加起来应接近 1。
+- 只输出 JSON，不要代码围栏，不要解释。
+
+需要的参数（点号表示嵌套）：
+{CALIB_KEYS}
+
+输出格式（示例值，请替换）：
+{{"misreadLifecycle":{{"发酵章数":[1,3],"上限":5,"戳破方式":"..."}},
+ "advanceFuel":{{"账目变动":0.35,"新误读":0.30,"旧误读发酵":0.15,
+   "外部事件":0.15,"新人物":0.05,"承接率":0.88}},
+ "eventSpan":{{"span":[3,25]}},"obsolete":{{"afterUses":3}},
+ "reshell":{{"tailChapters":6}},"worldTurn":{{"every":8}},
+ "_依据":{{"misreadLifecycle":"材料里哪句话支持这个值","advanceFuel":"...","其他":"..."}}}}
+
+── 推进机制分析 ──
+{advance}
+
+── 全书主线链 ──
+{chain[:6000]}
+
+── 文笔指纹 ──
+{style[:3000]}"""
+
+
 def p_seed(name: str, chain: str, first_outlines: list[str]) -> str:
     return f"""你拿到了《{name}》的全书主线链和开局几章的倒推细纲。
 现在把它压缩回**种子**——如果作者动笔前只写一页纸，这页纸上是什么。
@@ -295,6 +344,28 @@ def main():
     seed = call_hard(a.m_main, p_seed(name, chain, first), 4000, "L3种子")
     (out / "L3_seed.md").write_text(seed, encoding="utf-8")
     print(f"[L3] 种子 {time.time()-t:.0f}s", flush=True)
+
+    # ── L4 校准参数(结构化) ──
+    # 今天这些数是我读完 L2a 手抄进包的: 误读寿命我原以为 25 章、实证 1-3;
+    # 推进燃料我原以为误读占七成、实证三成。手抄一次就固化一次错误,
+    # 所以这一步必须出机器可读的 JSON, 由 scripts/calibrate.py 回写进引擎层。
+    t = time.time()
+    cal = call_hard(a.m_main, p_calibrate(name, adv, chain, style), 2500, "L4校准")
+    m = re.search(r"\{.*\}", cal, re.S)
+    if m:
+        try:
+            obj = json.loads(m.group(0))
+            obj["_book"] = name
+            obj["_from"] = out.name
+            (out / "L4_calibration.json").write_text(
+                json.dumps(obj, ensure_ascii=False, indent=1), encoding="utf-8")
+            print(f"[L4] 校准参数 {time.time()-t:.0f}s → L4_calibration.json", flush=True)
+        except Exception as e:
+            (out / "L4_calibration.raw.md").write_text(cal, encoding="utf-8")
+            print(f"[L4] JSON 解析失败({e}), 原文存 L4_calibration.raw.md", flush=True)
+    else:
+        (out / "L4_calibration.raw.md").write_text(cal, encoding="utf-8")
+        print("[L4] 没找到 JSON, 原文存 L4_calibration.raw.md", flush=True)
     print(f"\n全部产物在 {out}", flush=True)
 
 
