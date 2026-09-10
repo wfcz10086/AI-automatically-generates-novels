@@ -33,6 +33,27 @@ SP = ro.SP
 BOOKS = ro.BOOKS
 
 
+def _ok(t: str) -> bool:
+    return bool(t) and not t.lstrip().startswith("[[调用失败")
+
+
+def call_hard(model: str, prompt: str, max_tokens: int, what: str,
+              temp: float = 0.4) -> str:
+    """链式环节专用: 失败就必须吵。
+
+    pb.call 失败三次后会**把错误字符串当正文返回** —— 那对基准脚本无所谓,
+    对这条链是毒: 实测 qj 窗3 超时, 错误字符串被写进产物, 而窗4-8 又把
+    这段「上一段主线结论」接着往下推, 整条链从窗3 起全脏, 还一声不吭。
+    """
+    for attempt, tmo in enumerate((300, 600)):
+        t = pb.call(model, prompt, max_tokens, temp, retries=2, timeout=tmo)
+        if _ok(t):
+            return t
+        print(f"  !! {what} 第 {attempt+1} 轮失败({t[:70]}), "
+              + ("换 600s 超时重来" if attempt == 0 else "放弃"), flush=True)
+    raise RuntimeError(f"{what} 连续失败, 中止 —— 不把脏结论喂给下一环")
+
+
 def p_window(name: str, lo: int, hi: int, titles: list[str], outlines: list[str],
              prev_window: str) -> str:
     return f"""你在给长篇小说《{name}》做主线逆向工程。下面是第 {lo}-{hi} 章的材料：
@@ -214,15 +235,23 @@ def main():
         titles = [c["title"] for c in chs if lo <= c["n"] <= hi]
         ols = [f"◆ 第{r['n']}章\n{r['outline']}" for r in l1 if lo <= r["n"] <= hi]
         t = time.time()
-        w = pb.call(a.m_main, p_window(name, lo, hi, titles, ols,
-                                       windows[-1] if windows else ""), 2500, 0.4)
+        f_win = out / f"L2_win{i+1:02d}_{lo}-{hi}.md"
+        if f_win.exists():
+            cached_w = f_win.read_text(encoding="utf-8")
+            if _ok(cached_w):
+                windows.append(cached_w)
+                print(f"[L2] 窗{i+1}/{nwin} 第{lo}-{hi}章 复用", flush=True)
+                continue
+        w = call_hard(a.m_main, p_window(name, lo, hi, titles, ols,
+                                         windows[-1] if windows else ""),
+                      2500, f"L2窗{i+1}")
         windows.append(w)
-        (out / f"L2_win{i+1:02d}_{lo}-{hi}.md").write_text(w, encoding="utf-8")
+        f_win.write_text(w, encoding="utf-8")
         print(f"[L2] 窗{i+1}/{nwin} 第{lo}-{hi}章 {time.time()-t:.0f}s", flush=True)
 
     # ── L2 主线：串链 ──
     t = time.time()
-    chain = pb.call(a.m_main, p_chain(name, windows), 6000, 0.4)
+    chain = call_hard(a.m_main, p_chain(name, windows), 6000, "L2主线链")
     (out / "L2_chain.md").write_text(chain, encoding="utf-8")
     print(f"[L2] 全书主线链 {time.time()-t:.0f}s", flush=True)
 
@@ -235,14 +264,14 @@ def main():
         if len(b) > 2200:
             mid = len(b) // 3
             excerpts.append(f"(第{n}章) " + b[mid:mid + 1800])
-    style = pb.call(a.m_main, p_style(name, excerpts), 4000, 0.4)
+    style = call_hard(a.m_main, p_style(name, excerpts), 4000, "L2s文笔")
     (out / "L2s_style.md").write_text(style, encoding="utf-8")
     print(f"[L2s] 文笔指纹（{len(excerpts)} 段摘录）{time.time()-t:.0f}s", flush=True)
 
     # ── L2t 标题系统 ──
     t = time.time()
     all_titles = [c["title"] for c in chs]
-    tit = pb.call(a.m_main, p_titles(name, all_titles), 4000, 0.4)
+    tit = call_hard(a.m_main, p_titles(name, all_titles), 4000, "L2t标题")
     (out / "L2t_titles.md").write_text(tit, encoding="utf-8")
     print(f"[L2t] 标题系统（{len(all_titles)} 个）{time.time()-t:.0f}s", flush=True)
 
@@ -256,14 +285,14 @@ def main():
             if m:
                 keep.append(f"{fld}={m.group(1).strip()[:110]}")
         rows.append(f"第{r['n']}章 | " + " | ".join(keep))
-    adv = pb.call(a.m_main, p_advance(name, rows), 4000, 0.4)
+    adv = call_hard(a.m_main, p_advance(name, rows), 4000, "L2a推进")
     (out / "L2a_advance.md").write_text(adv, encoding="utf-8")
     print(f"[L2a] 推进机制 {time.time()-t:.0f}s", flush=True)
 
     # ── L3 种子 ──
     t = time.time()
     first = [f"◆ 第{r['n']}章\n{r['outline']}" for r in l1[:4]]
-    seed = pb.call(a.m_main, p_seed(name, chain, first), 4000, 0.4)
+    seed = call_hard(a.m_main, p_seed(name, chain, first), 4000, "L3种子")
     (out / "L3_seed.md").write_text(seed, encoding="utf-8")
     print(f"[L3] 种子 {time.time()-t:.0f}s", flush=True)
     print(f"\n全部产物在 {out}", flush=True)
