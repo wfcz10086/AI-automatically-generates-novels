@@ -661,7 +661,71 @@ class Novelist:
         a = self.world_anchor()
         out = list(a.get("forbidden") or []) + list(a.get("forbidden_people") or [])
         out += self.learned_rules().get("forbidden_terms", [])
+        out += self.era_named_forbidden()
         return list(dict.fromkeys([w for w in out if w]))
+
+    def era_named_forbidden(self) -> List[str]:
+        """时代红线卡里**用引号点名**的禁用词, 自动进验收黑名单。
+
+        实测: era_card 写着「严禁直接写出'纽约'等现代专有名词」, 连着加了五条
+        同义红线, 而 hard_blacklist 里压根没有「纽约」—— 规则一直在累加,
+        验收却一次都没查。红线卡是模型写的自然语言, 里面点名的词就是硬证据。
+        """
+        card = self.p.read("era_card.md")
+        if not card:
+            return []
+        out: List[str] = []
+        for line in card.splitlines():
+            if not re.search(r"严禁|禁止|不得|不许", line):
+                continue
+            for m in re.finditer(r"[‘'「『\"“]([^’'」』\"”，。；：\n]{2,10})[’'」』\"”]", line):
+                w = m.group(1).strip()
+                # 排除「暗语/意象」这一侧的替代词 —— 那是要**写**的, 不是禁的
+                # 同一句里常常既点名禁用词、又点名**替代写法** ——
+                # 「严禁X，必须通过'梦境碎片'呈现」里的梦境碎片是要写的东西。
+                # 实测不过滤会把三个替代词一起拉黑, 等于把出路也堵死。
+                seg = line[max(0, m.start() - 16):m.start()]
+                if re.search(r"转化为|转化成|替代|代之|写成|改成|呈现|体现|"
+                             r"如：|例如|通过|以.{0,6}方式", seg):
+                    continue
+                # 禁用词是**专名**: 短、没有动词、不是一句描述。
+                # 「旁人误解的疯话」这种带「的」的短语是写法说明, 不是要禁的词。
+                if (w and not re.fullmatch(r"[0-9a-zA-Z]+", w)
+                        and len(w) <= 6 and "的" not in w):
+                    out.append(w)
+        return out
+
+    def asset_conflicts(self) -> str:
+        """禁用词出现在常驻文档里 —— 提示词自己在打架, 必须当场调解。
+
+        禁令写在红线卡, 而世界观／角色卡／总纲里明明白白写着那个词, 模型每章
+        重读一遍这些文档, 当然照抄。实测「纽约」在提示词里出现 7 次(世界观 3、
+        角色卡 1、总纲 1、上一章原文 2), 评审连着 4 章判违规 —— 不是模型不听话,
+        是它同时收到「他是纽约黑帮」和「不许写纽约」两条指令。
+        """
+        bad = [w for w in self.hard_blacklist() if w]
+        if not bad:
+            return ""
+        hits: Dict[str, List[str]] = {}
+        for name, label in (("world_bible.md", "世界观"),
+                            ("characters.md", "角色卡"),
+                            ("outline.md", "总纲")):
+            txt = self.p.read(name)
+            for w in bad:
+                if w and w in txt:
+                    hits.setdefault(w, []).append(label)
+        if not hits:
+            return ""
+        lines = ["\n⚠️ 【设定与红线打架·按这里处理】"]
+        for w, where in hits.items():
+            lines.append(f"　「{w}」写在{'、'.join(where)}里，但它是**禁用词**。"
+                         f"那是设定的来源，不是准许你照抄的许可。")
+        lines.append("　本章遇到这些东西：**只写它的样子、手感、作用和它在主角身上"
+                     "留下的东西，绝不写出那个名字**。\n"
+                     "　例：不写「纽约街头」，写「那座终年下雨、抬头看不见天的城」；"
+                     "不写「格洛克」，写「那件冰凉的、一扣就响的铁物」。\n"
+                     "　前几章里若已经写出过那个名字，那是**旧错**，本章不许跟着学。")
+        return "\n".join(lines)
 
     def blacklist(self) -> List[str]:
         # 基底卡的检测词是这本书专属的穿帮词, 必须参与验收 —— 光写进提示词
@@ -4538,7 +4602,8 @@ class Novelist:
             # 覆盖文风包的通用版本 —— 越贴题材越管用
             style_pack=({**st, "pleasureBeats": self.genre["pleasureBeats"]}
                         if self.genre.get("pleasureBeats") else st),
-            extra_directive=self.prompt_override("content_extra"),
+            extra_directive=((self.prompt_override("content_extra") or "")
+                             + self.asset_conflicts()),
             global_rules=self.cfg.get("anti_ai_rules") or [],
             directives=self.cfg.get("chapter_directives") or [],
             character_rules=((self.cfg.get("character_rules") or [])

@@ -434,3 +434,22 @@ def test_评审骨架必须列全本遍维度():
         assert f'"{name}"' in p, f"骨架里缺维度 {name}"
     assert "一个都不能少" in p
     assert "..." not in c.schema_for([d[0] for d in dims])
+
+
+def test_红线卡点名的词要进验收黑名单_但别把替代词也拉黑():
+    """era_card 连加五条「严禁写出'纽约'」，而 hard_blacklist 里压根没有它 ——
+    规则一直在累加，验收一次都没查。同一句里点名的**替代写法**不能被误伤。"""
+    import re as _re
+    pat = _re.compile(r"[‘'「『\"“]([^’'」』\"”，。；：\n]{2,10})[’'」』\"”]")
+    line = ("【时代红线】严禁直接写出'纽约'等现代专有名词；"
+            "必须通过'梦境碎片'呈现")
+    keep = []
+    for m in pat.finditer(line):
+        seg = line[max(0, m.start() - 16):m.start()]
+        if _re.search(r"转化为|转化成|替代|代之|写成|改成|呈现|体现|"
+                      r"如：|例如|通过|以.{0,6}方式", seg):
+            continue
+        w = m.group(1)
+        if len(w) <= 6 and "的" not in w:
+            keep.append(w)
+    assert keep == ["纽约"], keep
