@@ -467,3 +467,28 @@ def test_口号式收尾只在结尾判_且不误伤具体画面():
     # 同一句出现在章中是人物心声，不该判——所以只查结尾 180 字
     mid = "破军心说这只是开始。" + "正文" * 200
     assert not SLOGAN_END.search(mid.rstrip()[-180:])
+
+
+# ═══════════ 架构护栏：让「写了但没生效」在提交时就挂掉 ═══════════
+
+def test_包里不许有无人消费的字段():
+    """今天一天修的十个 bug 里有四个是同一件事：字段写进包/配置了，
+    但没有任何代码去读它——包越迭代越大，生效的却越来越少。
+    实测发现 6 个死字段，其中「主调的三条腿」是整个调子的核心。
+
+    新增字段时若这条挂了，要么把它接进消费方，要么别加。"""
+    import glob as _g, json as _j, pathlib as _p
+    root = _p.Path(__file__).resolve().parents[2]
+    code = "\n".join(_p.Path(f).read_text(encoding="utf-8")
+                     for f in _g.glob(str(root / "server/*.py")))
+    META = {"id", "name", "description", "note", "platform", "order"}
+    dead = {}
+    for pk in _g.glob(str(root / "packs/engine/*.json")) + \
+              _g.glob(str(root / "packs/style/*.json")):
+        d = _j.loads(_p.Path(pk).read_text(encoding="utf-8"))
+        miss = [k for k in d
+                if not k.startswith("_") and k not in META
+                and f'"{k}"' not in code and f"'{k}'" not in code]
+        if miss:
+            dead[_p.Path(pk).name] = miss
+    assert not dead, f"这些字段没有任何代码消费，等于没写: {dead}"

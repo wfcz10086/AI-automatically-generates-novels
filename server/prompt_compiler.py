@@ -243,6 +243,30 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
     # 于是精心逆向出来的文笔全靠扩写那 30% 的字去补, 前 70% 是文风盲的。
     if sp.get("主调"):
         seg.append("\n🎯 【本书的调子·通篇按这个写】\n" + str(sp["主调"]).strip())
+    legs = sp.get("主调的三条腿")
+    if legs:
+        seg.append("\n🎯 【调子靠这几条腿站着·缺一条整章就散】\n"
+                   + "\n".join(f"　{i+1}. {x}" for i, x in enumerate(legs[:4])))
+    rules_ch = sp.get("写作守则")
+    if rules_ch:
+        # 这一栏一直躺在包里没人读 —— 里面写着「章末不许是感想、总结、决心」,
+        # 而实测 59 章里 4 章用「才刚刚开始」收尾, 我还专门写了个检测去抓它。
+        # 规则本来就有, 只是从没送到模型手里。
+        seg.append("\n📏 【本章硬规矩·逐条照做】\n"
+                   + "\n".join(f"- {x}" for x in rules_ch))
+    seeds = sp.get("片段种子库")
+    if isinstance(seeds, dict):
+        # 全库 2400 字, 每章全发是浪费; 按章号轮换两组, 既省 token 又避免
+        # 模型每章照抄同一批样例(那会变成新的叙述拐杖)。
+        keys = [k for k in seeds if k != "说明" and isinstance(seeds[k], list) and seeds[k]]
+        if keys:
+            pick = [keys[(index + i) % len(keys)] for i in range(2)]
+            bits = []
+            for k in dict.fromkeys(pick):
+                ex = seeds[k][:2]
+                bits.append(f"　▸ {k}\n" + "\n".join(f"　　{e}" for e in ex))
+            seg.append("\n✍ 【这一章重点练这两样·照这个味道写，不要照抄句子】\n"
+                       + "\n".join(bits))
     for key, head in (("句子分工", "句子的长短分工"),
                       ("反讽三法", "反讽怎么写"),
                       ("当众失态的写法", "有身份的人丢脸怎么写"),
@@ -379,6 +403,21 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
         seg.append("\n#正向提示词库（" + note.split("\n")[0] + "）\n"
                    + " ".join(positive)
                    + ("\n" + "\n".join(note.split("\n")[1:]) if "\n" in note else ""))
+
+    # 词表分栏发, 不要混进 positive 一锅端 —— 「反讽旁白引导词」和
+    # 「江湖市井话」是两种用法, 混在一起模型只会平均地撒。
+    wl = sp.get("词表")
+    if isinstance(wl, dict):
+        bits = []
+        for k, v in wl.items():
+            if k.startswith("_") or not v:
+                continue
+            items = v if isinstance(v, list) else [v]
+            tag = "**这些一个都别用**" if "禁用" in k else ""
+            bits.append(f"　▸ {k}{tag}：" + "、".join(str(x) for x in items[:14]))
+        if bits:
+            seg.append("\n🗣 【这本书的说话方式·分栏取用，不要平均地撒】\n"
+                       + "\n".join(bits))
 
     ofb = outline_fields_block(chapter_outline, sp)
     if ofb:

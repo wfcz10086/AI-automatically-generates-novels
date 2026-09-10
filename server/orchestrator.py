@@ -4329,6 +4329,18 @@ class Novelist:
                           "而不是把它们当背景交代掉。")
         # 作废与换壳 —— 五算子里的纵向两条。放最前面, 它们决定这一批的骨架:
         # 主角靠什么过关这件事本身要发生变化, 而不是永远靠同一招越用越熟。
+        # 推进燃料配比 —— 实测两本原著: 账目变动 35% > 新误读 30% >
+        # 旧误读发酵 15% > 外部事件 15% > 新人物 5%。不给这一条, 模型会章章
+        # 靠「又来了个新人物」「又有人误会了」推进, 账目那一格永远不动。
+        af = self.style.get("advanceFuel") or {}
+        if af.get("指令"):
+            pct = "、".join(f"{k} {int(v*100)}%" for k, v in af.items()
+                           if isinstance(v, float) and k != "承接率")
+            cons.insert(0, "⚙【这一批的推进燃料配比·从原著实测】\n"
+                        + (f"　{pct}\n" if pct else "")
+                        + "　" + str(af["指令"])
+                        + (f"\n　另: 原著 {int(af['承接率']*100)}% 的章开头明确接住上一章"
+                           "结尾那条信息, 本批也要做到。" if af.get("承接率") else ""))
         sm = self.stale_method(start)
         if sm:
             cons.insert(0, "⛔" + sm)
