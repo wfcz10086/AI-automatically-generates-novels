@@ -154,6 +154,7 @@ def main():
     ap.add_argument("--windows", type=int, default=0, help="0=自动(每窗约70章)")
     ap.add_argument("--m-outline", default="glm-5.3-flash")
     ap.add_argument("--m-main", default="qwen3.8-max")
+    ap.add_argument("--resume", default="", help="复用已有目录里的 L1，接着往下跑")
     a = ap.parse_args()
 
     f, pat, name = BOOKS[a.book]
@@ -161,7 +162,12 @@ def main():
     N = len(chs)
     stride = a.stride or max(1, round(N / 80))
     nwin = a.windows or max(4, round(N / 70))
-    out = ROOT / "reports/mainline" / f"{a.book}-{time.strftime('%m%d-%H%M')}"
+    # 断点续跑: L1 是按章落盘的, 重跑一次等于把上百次调用白烧一遍。
+    # --resume 指到上次的目录, 已有的 L1_*.md 直接复用。
+    if a.resume:
+        out = Path(a.resume) if "/" in a.resume else ROOT / "reports/mainline" / a.resume
+    else:
+        out = ROOT / "reports/mainline" / f"{a.book}-{time.strftime('%m%d-%H%M')}"
     out.mkdir(parents=True, exist_ok=True)
     print(f"《{name}》{N} 章 | 细纲取样步长 {stride} | {nwin} 窗 → {out}", flush=True)
 
@@ -179,6 +185,10 @@ def main():
 
     def one(c):
         n = c["n"]
+        cached = out / f"L1_{n:04d}.md"
+        if cached.exists() and cached.stat().st_size > 200:
+            return {"n": n, "title": c["title"],
+                    "outline": cached.read_text(encoding="utf-8")}
         body = body_of(n)
         if not body:
             return None
