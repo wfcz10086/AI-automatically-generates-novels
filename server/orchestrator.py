@@ -281,6 +281,18 @@ TRACE_KEEP = 400
 _trace_seq = [0]
 
 
+#: 本书选定的模型。project.json 里一直有 model 字段, 前端也让人选,
+#: 但 call() 走 registry.resolve(profile) 只认 providers.yaml 的档位和网关
+#: default_model —— 书级 model 从来没生效过, 换模型只能去改全局 .env,
+#: 而且改了会波及所有书。实测第 1-35 章 meta 写着 flash, 实际全是 max 写的。
+_BOOK_MODEL: Optional[str] = None
+
+
+def bind_model(m: Optional[str]) -> None:
+    global _BOOK_MODEL
+    _BOOK_MODEL = (m or "").strip() or None
+
+
 def bind_trace(d: Optional[Path]) -> None:
     global _TRACE_DIR
     _TRACE_DIR = d
@@ -350,6 +362,8 @@ def call(profile: str, prompt: str, on_delta: Optional[Callable[[str], None]] = 
     吃光 max_tokens 导致正文被截断. 空输出会自动关思考重试一次.
     """
     provider, kw = registry.resolve(profile)
+    if _BOOK_MODEL:
+        kw["model"] = _BOOK_MODEL
     if not _retry:
         kw["thinking"] = False
     if max_tokens:
@@ -539,6 +553,7 @@ class Novelist:
         # 这对绝大多数同人是对的，可这一本要的恰恰是「打服武松」。
         # 没有覆盖口子的话，只能改包（伤别的书）或跟包对着写（模型两头听、写歪）。
         bind_trace(project.dir / "trace")
+        bind_model(m.get("model"))
         self.genre = self._with_overrides(
             registry.genres.get(m.get("genre_id")) or {}, "genre")
         self.style = self._with_overrides(
@@ -1999,7 +2014,10 @@ class Novelist:
         lines = []
         for m in mis:
             age = n - _at(m, n)
-            tag = "（埋了 %d 章了，该结账了）" % age if age >= 25 else ""
+            # 阈值原来写死 25 章 —— 而原著误读极少活过 5 章。25 章才提醒,
+            # 等于默认允许挂 24 章, 提醒来得比病晚太多。
+            _old = int((self.style.get("misreadLifecycle") or {}).get("上限") or 25)
+            tag = "（埋了 %d 章了，该结账了）" % age if age >= _old else ""
             # 缺字段的条目别印成「凭「」…于是「」」这种残句 —— 有什么写什么
             bits = []
             # 台账字段是模型写的, 长起来没边(实测五条燃料 5.8k 字, 是细纲硬约束
@@ -2011,9 +2029,20 @@ class Novelist:
             if m.get("acts"):
                 bits.append(f"于是「{_c(m['acts'])}」")
             lines.append(f"· {m.get('who') or '有人'}：" + "，".join(bits) + tag)
-        return ("这些人现在都**信着一个错的东西**，而且正照着它行动。"
-                "他们不知道真相，本章也不必让他们知道 ——\n"
-                + "\n".join(lines)
+        # 实测原著误读寿命 1-3 章、极少超过 5, 靠「行动撞墙」戳破而不是口头解释。
+        # 原来这里写的是「本章也不必让他们知道」—— 等于鼓励一直挂着,
+        # 结果生成书的误会平均活 4.7 章、最长 23 章, 挂成了没人管的死账。
+        lc = self.style.get("misreadLifecycle") or {}
+        cap_ch = int(lc.get("上限") or 0)
+        tail = ""
+        if cap_ch:
+            tail = ("\n\n⚠ 误会不是用来一直挂着的悬念：每一条挂上账后 "
+                    f"{'-'.join(str(x) for x in (lc.get('发酵章数') or [1, 3]))} 章内"
+                    f"必须**促成一个错误行动**，{cap_ch} 章之内必须撞墙戳破。\n"
+                    "　戳破靠" + str(lc.get("戳破方式") or "行动撞墙") + "，不靠谁开口解释。\n"
+                    "　上面标了「该结账了」的，本批就结掉。")
+        return ("这些人现在都**信着一个错的东西**，而且正照着它行动。\n"
+                + "\n".join(lines) + tail
                 + "\n他们各自的下一步，会把局面推到主角没打算去的地方。"
                   "本章要么让其中一条继续发酵，要么让一条被当众戳破。")
 

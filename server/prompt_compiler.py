@@ -238,6 +238,32 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
     if global_rules:
         seg.append("\n⚠️ 【写作纪律·全局】\n" + "\n".join(f"- {r}" for r in global_rules))
     sp = style_pack or {}
+    # 主调和文笔层原来**只发给扩写**, 正文这一遍从头到尾没见过 —— 实测第30章
+    # 提示词里「现代内行人的眼睛」「算自己的账」「叙述者」出现 0 次。
+    # 于是精心逆向出来的文笔全靠扩写那 30% 的字去补, 前 70% 是文风盲的。
+    if sp.get("主调"):
+        seg.append("\n🎯 【本书的调子·通篇按这个写】\n" + str(sp["主调"]).strip())
+    for key, head in (("句子分工", "句子的长短分工"),
+                      ("反讽三法", "反讽怎么写"),
+                      ("当众失态的写法", "有身份的人丢脸怎么写"),
+                      ("心理怎么写", "人物心里的算计怎么写"),
+                      ("段落与转场", "段落形态与切镜头"),
+                      ("狠劲", "这个调子最狠的一手")):
+        v = sp.get(key)
+        if not isinstance(v, dict):
+            continue
+        lines = [f"\n▍{head}"]
+        for k2, v2 in v.items():
+            if k2.startswith("_") and k2 != "_":
+                continue
+            if isinstance(v2, list):
+                v2 = "；".join(str(x) for x in v2[:3])
+            body = str(v2).strip()
+            if not body:
+                continue
+            lines.append(f"　{'' if k2 == '_' else k2 + '：'}{body}")
+        if len(lines) > 1:
+            seg.append("\n".join(lines))
     op = sp.get("opening") or {}
     if op:
         seg.append("\n⚠️ 【开篇铁律】" + op.get("rule", "")
