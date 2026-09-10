@@ -107,6 +107,48 @@ def _digest(card: str, limit: int = 150) -> str:
     return s[:limit]
 
 
+def outline_fields_block(chapter_outline: str,
+                         style_pack: Optional[Dict[str, Any]] = None) -> str:
+    """把细纲里**不是剧情**的那几栏单独提出来当硬约束。
+
+    to_plot_list() 只把细纲拍平成「剧情1…剧情N」的动作清单, 视角/代价/章末钩子/
+    解说/误读/账目这几栏**全被扔掉了** —— 模型根本收不到, 自然照不到。
+    实测第 1 章评审报了 4 处矛盾, 全是这个原因: 细纲要求狐媚视角写成了全知,
+    要求「左臂骨裂暗伤」的代价一个字没提, 要求的章末钩子被换成了别的。
+    这几栏是本套架构的命根子(视角=一章一眼, 代价=肉身是消耗品,
+    钩子=下一章的承接), 丢了等于架构白搭。
+    """
+    if not chapter_outline:
+        return ""
+    want = ["视角", "承接", "解说", "账目", "后果", "误读", "代价", "重场", "章末钩子", "章末"]
+    names = [n for n, _r, _h in outline_fields(style_pack)] or want
+    want = [w for w in want if w in names] or want
+    pat = "|".join(want)
+    got = []
+    for m in re.finditer(rf"^\s*({pat})\s*[:：]\s*(.+?)\s*$", chapter_outline, re.M):
+        k, v = m.group(1), m.group(2).strip()
+        if v and v not in ("无", "本章不动账", "-"):
+            got.append((k, v))
+    if not got:
+        return ""
+    LABEL = {"视角": "本章从谁的眼睛看（**整章不得越界到别人脑子里**）",
+             "承接": "开头要接住的上一章钩子",
+             "解说": "本章要讲透的那条规矩／数字／器物",
+             "账目": "本章要动的那一格账",
+             "后果": "本章要生出的新麻烦",
+             "误读": "本章谁要算错、错在哪、因此做了什么",
+             "代价": "本章必须付出的代价（**写不出来就是没付**）",
+             "重场": "占一半篇幅的那一拍",
+             "章末钩子": "结尾必须落在这上面（下一章要接它）",
+             "章末": "结尾必须落在这上面（下一章要接它）"}
+    out = ["\n📌 【本章细纲的硬约束·逐条落到正文里，漏一条算不合格】"]
+    for k, v in got:
+        out.append(f"　{k}｜{LABEL.get(k, '')}\n　　{v}")
+    out.append("　⚠ 上面这几栏不是参考，是**验收项**：视角错了、代价没写、"
+               "钩子换了，都会被判不合格并退回重写。")
+    return "\n".join(out)
+
+
 def render_item(it: Dict[str, Any]) -> str:
     """把一条结构件渲染成提示词里的一块。
 
@@ -296,6 +338,9 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
                    + " ".join(positive)
                    + ("\n" + "\n".join(note.split("\n")[1:]) if "\n" in note else ""))
 
+    ofb = outline_fields_block(chapter_outline, sp)
+    if ofb:
+        seg.append(ofb)
     seg.append(f"\n#本章剧情（共 {len(plots)} 条，每条约 {int(target_words/max(1,len(plots)))} 字）"
                f"\n{plot_block}\n【剧情结束】")
     seg.append(f"\n再次确认：全章 {target_words} 字左右，写完 {len(plots)} 条剧情即收尾。"
