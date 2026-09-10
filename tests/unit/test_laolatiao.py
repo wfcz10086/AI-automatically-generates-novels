@@ -453,3 +453,17 @@ def test_红线卡点名的词要进验收黑名单_但别把替代词也拉黑(
         if len(w) <= 6 and "的" not in w:
             keep.append(w)
     assert keep == ["纽约"], keep
+
+
+def test_口号式收尾只在结尾判_且不误伤具体画面():
+    """59 章里 4 章用了同一句「才刚刚开始」+「在这个人人XX的世界里」。
+    提示词早写了「不要在结尾进行总结」——禁令没人查就等于不存在。"""
+    from server.evaluator import SLOGAN_END
+    bad = ("他知道，真正的游戏才刚刚开始。在这个人人都修仙的世界里，"
+           "他要做的，就是用拳头打破他们的规则，然后用自己的方式，活下去。")
+    good = ("状元印表面的古篆在他掌心纹路里彻底沉寂下去，仿佛从未活过来过。")
+    assert SLOGAN_END.search(bad)
+    assert not SLOGAN_END.search(good)
+    # 同一句出现在章中是人物心声，不该判——所以只查结尾 180 字
+    mid = "破军心说这只是开始。" + "正文" * 200
+    assert not SLOGAN_END.search(mid.rstrip()[-180:])
