@@ -196,6 +196,34 @@ def parse(raw: str) -> Dict[str, Any]:
     return d
 
 
+#: 生死是伤害最大的一类事实 —— 死了的人又活了、活着的人被写死, 一旦固化就
+#: 一路错到底。这两组词互斥, 用程序判得了, 不该只靠评审(它是概率性的:
+#: 实测第5章第一遍抓到 4 条矛盾, 重写后同样的错误一条没抓到, 脏事实照样入账)。
+_DEAD = ("已死", "死亡", "身亡", "被杀", "毙命", "尸体", "咽气", "断气")
+_ALIVE = ("逃走", "逃脱", "跑了", "逃跑", "被逼退", "退走", "撤离", "未死",
+          "活口", "生还", "报信", "逃离")
+
+
+def _alive_dead_conflict(canon: List[Dict[str, Any]], subj: str,
+                         fact: str) -> Optional[Dict[str, Any]]:
+    """新事实说他死了, 而台账里有条说他跑了(或反过来) —— 返回冲突的那一条。"""
+    def pol(t: str) -> int:
+        d = any(w in t for w in _DEAD)
+        a = any(w in t for w in _ALIVE)
+        return 1 if (d and not a) else (-1 if (a and not d) else 0)
+
+    p_new = pol(fact)
+    if not p_new:
+        return None
+    for c in canon:
+        if str(c.get("subject", "")).strip() != subj:
+            continue
+        p_old = pol(str(c.get("fact", "")))
+        if p_old and p_old != p_new:
+            return c
+    return None
+
+
 def merge_canon(canon: List[Dict[str, Any]], new_facts: List[Dict[str, Any]],
                 chapter: int, limit: int = 300) -> tuple:
     """把本章确立的事实并进台账，返回 (新台账, 新增条数)。"""
@@ -206,6 +234,11 @@ def merge_canon(canon: List[Dict[str, Any]], new_facts: List[Dict[str, Any]],
             continue
         subj, fact = str(f.get("subject", "")).strip(), str(f.get("fact", "")).strip()
         if not subj or not fact or len(fact) > 80:
+            continue
+        clash = _alive_dead_conflict(canon, subj, fact)
+        if clash:
+            print(f"[canon] 拒收第{chapter}章「{subj}：{fact[:28]}」—— "
+                  f"与第{clash.get('chapter')}章「{str(clash.get('fact'))[:28]}」生死矛盾")
             continue
         key = (subj, f.get("kind"))
         if key in seen:

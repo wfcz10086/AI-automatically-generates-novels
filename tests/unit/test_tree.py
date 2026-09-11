@@ -381,3 +381,24 @@ def test_矛盾章的新事实不入台账():
     # 无矛盾时照常收
     merged2, added2 = cm.merge_canon(canon, new, 5)
     assert added2 == 1
+
+
+def test_生死矛盾由程序拒收_不靠评审():
+    """评审是概率性的：第5章第一遍抓到 4 条矛盾，重写后同样的错误一条没抓到，
+    「散修乙已死亡」照样入了 canon。生死互斥，程序判得了。"""
+    from server.critic import merge_canon
+    canon = [{"chapter": 4, "subject": "散修乙", "fact": "被逼退，骑马逃走报信",
+              "kind": "other"}]
+    _, added = merge_canon(list(canon), [{"subject": "散修乙",
+                                          "fact": "散修乙已死亡，尸体藏于迷离林",
+                                          "kind": "death"}], 5)
+    assert added == 0, "活着的人被写死，应当拒收"
+    # 反向也要拦：台账说死了，新事实说他跑了
+    canon2 = [{"chapter": 4, "subject": "周横", "fact": "被一拳打死", "kind": "death"}]
+    _, a2 = merge_canon(list(canon2), [{"subject": "周横", "fact": "趁乱逃走报信",
+                                        "kind": "other"}], 6)
+    assert a2 == 0
+    # 不相干的事实照常收
+    _, a3 = merge_canon(list(canon), [{"subject": "狐媚", "fact": "献出虚弥戒认主",
+                                       "kind": "other"}], 5)
+    assert a3 == 1
