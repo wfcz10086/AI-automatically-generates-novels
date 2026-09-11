@@ -38,10 +38,10 @@ def test_plan_queries_strips_column_labels():
     """
     from server.retrieval import Retriever
     rt = Retriever.__new__(Retriever)
+    rt.enable_web = True      # 这些用例测「查什么」的解析，与外搜开关无关
     rt.plan = lambda q: ("刑名|检索式：宋刑统 告事不实 反坐\n"
                          "主题：制度|宋代 进纳授官 纳粟\n"
                          "地理|宋代 东平府 建制")
-    rt.enable_web = True      # 这些用例测的是「查什么」的解析，与外搜开关无关
     rt.era = "北宋"
     rt.facts = {}
     rt.topics = {}
@@ -62,6 +62,7 @@ def test_plan_queries_strips_boolean_syntax():
     """
     from server.retrieval import Retriever
     rt = Retriever.__new__(Retriever)
+    rt.enable_web = True      # 这些用例测「查什么」的解析，与外搜开关无关
     rt.plan = lambda q: '职权|"通判" "知县" "侵越" 或 "通判" "县事"'
     rt.era, rt.facts, rt.topics, rt.shared = "北宋", {}, {}, {}
     got = rt.plan_queries(stage="chapter", context="正文" * 20, k=3)
@@ -79,6 +80,7 @@ def test_plan_queries_shows_existing_topics():
     """
     from server.retrieval import Retriever
     rt = Retriever.__new__(Retriever)
+    rt.enable_web = True      # 这些用例测「查什么」的解析，与外搜开关无关
     seen = {}
     rt.plan = lambda q: seen.setdefault("p", q) or "地理|宋代 东平府 位置"
     rt.era, rt.shared, rt.topics = "北宋", {}, {}
@@ -115,6 +117,7 @@ def test_existing_topics_picked_by_relevance():
     """
     from server.retrieval import Retriever
     rt = Retriever.__new__(Retriever)
+    rt.enable_web = True      # 这些用例测「查什么」的解析，与外搜开关无关
     seen = {}
     rt.plan = lambda q: seen.setdefault("p", q) or "地理|某某"
     rt.era, rt.shared, rt.topics = "北宋", {}, {}
@@ -133,6 +136,7 @@ def test_cover_hit_uses_bigrams_not_fixed_chunks():
     """
     from server.retrieval import Retriever
     rt = Retriever.__new__(Retriever)
+    rt.enable_web = True      # 这些用例测「查什么」的解析，与外搜开关无关
     rt.facts = {
         "宋代仵作验尸流程与洗冤集录": {
             "card": "宋代验尸有报检初检复检免检等程序，验尸格目源于淳熙元年，"
@@ -155,6 +159,7 @@ def test_plan_queries_dedupes_within_one_round():
     """
     from server.retrieval import Retriever
     rt = Retriever.__new__(Retriever)
+    rt.enable_web = True      # 这些用例测「查什么」的解析，与外搜开关无关
     rt.plan = lambda q: ("边贸|宋代 榷场 禁约 私贩 越界\n"
                          "边贸|宋代 榷场 私贩 越界 禁约\n"
                          "地点|宋金 榷场 地点 分布\n"
@@ -176,6 +181,7 @@ def test_cover_hit_survives_concurrent_mutation():
     """
     from server.retrieval import Retriever
     rt = Retriever.__new__(Retriever)
+    rt.enable_web = True      # 这些用例测「查什么」的解析，与外搜开关无关
 
     class Racy(dict):
         def items(self):                     # 模拟遍历途中被改
