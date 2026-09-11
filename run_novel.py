@@ -198,6 +198,19 @@ def cmd_run(a):
             b = min(batch, max(1, lead)) if lead else batch
             print(f"  → 生成第 {n}-{n+b-1} 章细纲")
             nv.step_chapter_outlines(n, b)
+            # 一批排 5 章可能只收回 2 章（字段缺失／与已排章撞车都会被丢）。
+            # 实测第 13 章就这么漏掉，step_chapter 直接抛异常，而长跑的重试
+            # 重跑的是**整个流程**、还是同一个错，连撞 5 次就停了三个小时。
+            # 补排那一章就行：单章批次产出率最高，丢了也只丢这一章。
+            for attempt in range(2):
+                if str(n) in nv.p._load("chapter_outlines.json", {}):
+                    break
+                print(f"  !! 第 {n} 章没收到细纲，单章补排（第 {attempt + 1} 次）")
+                nv.step_chapter_outlines(n, 1)
+            outlines = nv.p._load("chapter_outlines.json", {})
+            if str(n) not in outlines:
+                print(f"!! 第 {n} 章细纲补排两次都没成功，本轮退出交由守护重试")
+                break
         if _code_stamp() != stamp:
             print("!! 代码或配置已更新，本进程退出交由守护以新版本续跑")
             sys.exit(3)

@@ -136,6 +136,18 @@ def audit(text: str, extra_blacklist: List[str] | None = None,
                        "samples": [f"{k}×{v}" for k, v in
                                    sorted(pat_hits.items(), key=lambda x: -x[1])[:5]]})
 
+    # 3.15 接缝重复 —— 续写/扩写把接口处的半句重写一遍。
+    # 实测第7章:「她要是能捞，她早就她要是能捞，她早就自己捞了」。
+    # 这是续写机制的固有失败模式(把上次结尾喂回去, 模型从更早处接起),
+    # 源头已堵(正文禁续写), 但规则没有程序检查迟早会被违反 —— 今天已验证四次。
+    for m in re.finditer(r"(.{8,40}?)\1", text):
+        seg = m.group(1).strip()
+        if seg and not re.fullmatch(r"[\s。，、！？…—·\-]+", seg):
+            issues.append({"level": "high", "type": "接缝重复",
+                           "detail": "同一段文字连着出现两遍（多半是续写/扩写的接缝没对齐）",
+                           "sample": seg[:40]})
+            break
+
     # 3.2 口号式收尾 —— 只查结尾, 与正文中间的套话是两回事。
     # 实测 59 章里 4 章用了**同一句**「这只是开始／才刚刚开始」+「在这个人人
     # XX的世界里，他要做的就是…」。提示词早写了「不要在结尾进行总结」, 但那是
