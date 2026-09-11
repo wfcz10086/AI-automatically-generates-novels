@@ -355,7 +355,8 @@ CONTINUE_ROUNDS = 3
 
 def call(profile: str, prompt: str, on_delta: Optional[Callable[[str], None]] = None,
          system: str = "", max_tokens: Optional[int] = None,
-         _retry: bool = True, _cont: int = 0) -> GenResult:
+         _retry: bool = True, _cont: int = 0,
+         no_continue: bool = False) -> GenResult:
     """一次生成. 自动处理 reasoning/content 三种字段 + 空 content 兜底.
 
     实测坑: 开思考时模型可能把全部内容留在 reasoning 里 content 为空, 或思考
@@ -422,7 +423,7 @@ def call(profile: str, prompt: str, on_delta: Optional[Callable[[str], None]] = 
     # 实测第6章: 撞上 2625 tok 上限后续写, 最终 5655 字 —— 目标 2400-3200,
     # 超 77%。续写机制把字数上限整个废掉了。
     # 结构化产物(细纲/角色档案/评审 JSON)才需要续写, 那里截断是真的坏。
-    if (out and _cont < CONTINUE_ROUNDS and profile != "drafting"
+    if (out and _cont < CONTINUE_ROUNDS and profile != "drafting" and not no_continue
             and getattr(provider, "last_finish", "") == "length"):
         print(f"  [call] {profile} 撞上输出上限（{kw.get('max_tokens')} tok，"
               f"已出 {len(out)} 字），第 {_cont + 1} 次续写", flush=True)
@@ -4888,7 +4889,12 @@ class Novelist:
                     + grow_style
                     + f"禁用套话：{'、'.join(self.blacklist()[:40])}\n"
                     f"直接输出扩写后的完整正文，无前言。\n\n{text}")
-            r3 = call("polishing", grow, on_delta, max_tokens=8192)
+            # 上限只写在提示词里没人执法 —— 实测第10章 2066→3683 字,
+            # 超上限(2800×1.15=3220) 15%。用 max_tokens 把天花板做实,
+            # 并禁续写(续写会把天花板整个废掉, 正文那边刚踩过)。
+            _cap3 = int(target * 1.15 * 0.75 * 1.1)
+            r3 = call("polishing", grow, on_delta, max_tokens=_cap3,
+                      no_continue=True)
             t3 = clean(r3.text)
             cn3 = len(re.findall(r"[一-鿿]", t3))
             if not t3 or cn3 <= was * 1.05:
