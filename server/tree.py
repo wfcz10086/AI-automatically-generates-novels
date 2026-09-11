@@ -315,6 +315,10 @@ def p_repair(node: "Node", errs: List[str], last: str) -> str:
 {last[:6000]}"""
 
 
+def nd_id(node: "Node", i: int) -> str:
+    return f"{node.id}.{i+1}"
+
+
 def parse_children(raw: str, node: "Node") -> List["Node"]:
     """把模型给的 JSON 变成子节点，并把进口按「上一块出口」串好。"""
     import json as _j
@@ -331,13 +335,29 @@ def parse_children(raw: str, node: "Node") -> List["Node"]:
     for i, c in enumerate(data.get("children") or []):
         if not isinstance(c, dict):
             continue
+        ex = Contract.from_dict(c.get("exit"))
+        # 「已定死的事实」只增不减, 由**程序**并进去, 不指望模型每次原样带着。
+        # 实测老做法的后果: canon 300 条按章号排队, 只有最近 40 条(13%)进得了
+        # 提示词, 第1-145章确立的 260 条模型完全看不到 —— 其中包括「戒空已死」
+        # (师父)、「金钟罩第一层报废」(核心功法)、阿绣的 12 条状态。于是出现
+        # 「金钟罩已坏却生效」「右臂突然恢复」这类硬伤: 不是模型忘了, 是没看见。
+        # 永久事实和一次性事件混在一条时间队列里, 永久的必然被一次性的挤掉。
+        _seen = {_norm(x) for x in prev_exit.facts}
+        ex.facts = list(prev_exit.facts) + [f for f in ex.facts
+                                            if _norm(f) not in _seen]
+        # 没收的线同理: 只能在 due 指定的那一块里消失, 中途不许掉
+        _open = {str(t.get("id") or ""): t for t in prev_exit.open_threads}
+        _out = {str(t.get("id") or ""): t for t in ex.open_threads}
+        for tid, t in _open.items():
+            if tid not in _out and str(t.get("due") or "") != nd_id(node, i):
+                ex.open_threads.append(t)
         nd = Node(
             id=f"{node.id}.{i+1}", level=lvl,
             title=str(c.get("title") or "")[:40],
             line=str(c.get("line") or "")[:120],
             start=int(c.get("start") or 0), end=int(c.get("end") or 0),
             entry=prev_exit,                      # ← 进口不许模型写，程序串
-            exit=Contract.from_dict(c.get("exit")),
+            exit=ex,
         )
         out.append(nd)
         prev_exit = nd.exit

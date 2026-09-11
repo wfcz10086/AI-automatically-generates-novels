@@ -216,3 +216,38 @@ def test_分解不合法就把违约清单打回去():
     assert errs == [] and len(kids) == 2
     assert len(calls) == 2, "第一版违约后应该打回去修一次"
     assert "处违约" in calls[1] and "没盖住父节点" in calls[1]
+
+
+# ───────────── 已定死的事实：只增不减，程序保证 ─────────────
+
+def test_模型漏写的旧事实由程序补回来():
+    """实测老做法: canon 300 条按章号排队，只有最近 40 条(13%)进得了提示词，
+    第1-145章确立的 260 条模型完全看不到——其中有「戒空已死」「金钟罩第一层报废」
+    「阿绣的 12 条状态」。于是出现「金钟罩已坏却生效」「右臂突然恢复」。
+    所以事实必须由程序并进去，不能指望模型每次原样带着。"""
+    from server.tree import parse_children
+    node = N("R", 1, 20, entry=C(facts=["戒空已死", "金钟罩第一层报废"]))
+    raw = ('{"children":[{"title":"甲","line":"x","start":1,"end":10,'
+           '"exit":{"hero":{"位置":"码头"},"facts":["阿绣接手账房"]}},'
+           '{"title":"乙","line":"y","start":11,"end":20,'
+           '"exit":{"hero":{"位置":"缥缈阁"},"facts":[]}}]}')   # ← 模型全漏了
+    k1, k2 = parse_children(raw, node)
+    assert "戒空已死" in k1.exit.facts and "金钟罩第一层报废" in k1.exit.facts
+    assert "阿绣接手账房" in k1.exit.facts
+    # 第二块模型一条没写，也必须全带着
+    for f in ("戒空已死", "金钟罩第一层报废", "阿绣接手账房"):
+        assert f in k2.exit.facts, f"{f} 在第二块丢了"
+    assert check_seam(k1, k2) == []
+
+
+def test_没收的线中途不许掉_除非到期():
+    from server.tree import parse_children
+    t_late = {"id": "t1", "what": "武字疤是谁刻的", "due": "R.2"}
+    node = N("R", 1, 20, entry=C(open_threads=[t_late]))
+    raw = ('{"children":[{"title":"甲","line":"x","start":1,"end":10,'
+           '"exit":{"hero":{"位置":"A"},"open_threads":[]}},'      # 模型漏了
+           '{"title":"乙","line":"y","start":11,"end":20,'
+           '"exit":{"hero":{"位置":"B"},"open_threads":[]}}]}')    # 到期，可以掉
+    k1, k2 = parse_children(raw, node)
+    assert any(x.get("id") == "t1" for x in k1.exit.open_threads), "没到期就掉了"
+    assert not any(x.get("id") == "t1" for x in k2.exit.open_threads), "到期该收掉"
