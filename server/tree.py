@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 #: 合同的字段。改这张表要同时改 diff()/merge()，所以字段要少而稳。
 #: 原则：只放**下一块必须知道**的东西。人物的性格、外貌、口癖不在这里
@@ -203,11 +203,30 @@ def check_threads(root: Node, nodes: Dict[str, Node]) -> List[str]:
     return errs
 
 
+def check_progress(nd: Node) -> List[str]:
+    """这一块必须真的把状态推动了 —— 出口不能和进口一模一样。
+
+    「原地打转」不是文笔问题, 是**合同没变**: 读者读完一整卷, 主角还是那个身份、
+    还在那个地方、手里还是那些东西。实测 163 章的书里战斗全走同一套流程,
+    根子就在这里 —— 没有任何机制要求一块结束时世界得不一样。
+    """
+    a, b = nd.entry, nd.exit
+    same_hero = all(_norm(a.hero.get(k)) == _norm(b.hero.get(k))
+                    for k in set(a.hero) | set(b.hero))
+    same_asset = all(_norm(a.assets.get(k)) == _norm(b.assets.get(k))
+                     for k in set(a.assets) | set(b.assets))
+    if same_hero and same_asset:
+        return [f"{nd.id}「{nd.title}」原地打转：主角的身份/位置/能力/伤没变，"
+                f"资源也没变 —— 这一块读完，世界还是老样子"]
+    return []
+
+
 def audit_tree(nodes: Dict[str, Node]) -> List[str]:
     """全树体检。这是**唯一**判定树合不合法的地方，其余都不许自己判。"""
     errs: List[str] = []
     for nid, nd in sorted(nodes.items()):
         kids = [nodes[c] for c in nd.children if c in nodes]
+        errs += check_progress(nd) if nd.id != "R" else []
         if kids:
             errs += [f"[{nid}] {e}" for e in check_parent(nd, kids)]
             for i in range(len(kids) - 1):
@@ -242,3 +261,110 @@ def decomposition_context(node: Node, parent: Optional[Node],
                    + right.entry.brief(400)
                    + "\n　↑ 这一块的出口必须正好接上它。埋伏笔就往这个方向埋。")
     return "\n".join(x for x in out if x)
+
+
+# ─────────────────────── 分解：模型提方案，程序判合法 ───────────────────────
+# 模型不判断咬不咬合 —— 它只管提方案，audit_tree/check_* 判合法，
+# 不合法就把**违约清单**打回去让它只修这几处。这是「程序能查，不用模型判断」
+# 落地的样子：模型永远不会被问「你觉得这两块接得上吗」。
+
+SCHEMA_HINT = """{"children":[{
+  "title":"这一块叫什么（六到十四字，不许用书名）",
+  "line":"这一块的主线一句话：谁在解决什么",
+  "start":起始章号, "end":结束章号,
+  "exit":{
+    "hero":{"身份":"…","位置":"…","能力上限":"…","伤":"…"},
+    "people":{"某人":"他此刻在哪、是什么状态"},
+    "assets":{"灵石":"…","地盘":"…"},
+    "open_threads":[{"id":"t1","what":"还没揭开的那件事","due":"该在哪个节点内了结"}],
+    "facts":["这一块坐实、以后不许翻的事"]}
+}]}"""
+
+
+def p_decompose(node: "Node", parent, left, right, k: int,
+                extra: str = "") -> str:
+    """拆一个节点。输入只有爹和左右兄弟，与全书长度无关。"""
+    return f"""把下面这一块拆成 {k} 个连续的子块。
+
+{decomposition_context(node, parent, left, right)}
+
+规矩（这几条是程序会逐条查的，不是建议）：
+1. 第一个子块的**进口**就是上面「它进来时的状态」，最后一个子块的**出口**
+   必须**逐字段等于**上面「它出去时必须是这个状态」。
+2. 每个子块只写 exit（进口由上一块的出口自动接上，你不用写）。
+   相邻两块之间：前一块的 exit 就是后一块的进口，所以 exit 要写全，
+   不许只写「变化的那部分」。
+3. 章号连续且不重叠，合起来正好盖满 {node.start}-{node.end}。
+4. open_threads 里每条都要有 id 和 due。**一条线只能在 due 指定的那一块里了结**；
+   在它之前的每一块 exit 里都要原样带着它，不许中途消失。
+5. 每一块的 exit 要和它的进口**真的不一样** —— 至少主角的身份、位置、
+   能力上限、伤里有一样变了，或者资源变了。原地打转的块不算数。
+{extra}
+只输出 JSON，不要代码围栏，不要解释：
+{SCHEMA_HINT}"""
+
+
+def p_repair(node: "Node", errs: List[str], last: str) -> str:
+    return f"""你刚才给的拆法有 {len(errs)} 处违约。程序逐字段核对的结果：
+
+{chr(10).join('· ' + e for e in errs[:20])}
+
+只修这几处，别的不要动。仍然只输出 JSON，格式同前。
+
+── 你上一版 ──
+{last[:6000]}"""
+
+
+def parse_children(raw: str, node: "Node") -> List["Node"]:
+    """把模型给的 JSON 变成子节点，并把进口按「上一块出口」串好。"""
+    import json as _j
+    m = re.search(r"\{.*\}", raw or "", re.S)
+    if not m:
+        return []
+    try:
+        data = _j.loads(m.group(0))
+    except Exception:
+        return []
+    lvl = child_level(node.level)
+    out: List[Node] = []
+    prev_exit = node.entry
+    for i, c in enumerate(data.get("children") or []):
+        if not isinstance(c, dict):
+            continue
+        nd = Node(
+            id=f"{node.id}.{i+1}", level=lvl,
+            title=str(c.get("title") or "")[:40],
+            line=str(c.get("line") or "")[:120],
+            start=int(c.get("start") or 0), end=int(c.get("end") or 0),
+            entry=prev_exit,                      # ← 进口不许模型写，程序串
+            exit=Contract.from_dict(c.get("exit")),
+        )
+        out.append(nd)
+        prev_exit = nd.exit
+    return out
+
+
+def decompose(node: Node, parent, left, right, k: int, call,
+              rounds: int = 3, log=None) -> Tuple[List[Node], List[str]]:
+    """拆一块：模型提方案 → 程序验 → 把违约清单打回去让它只修这几处。
+
+    模型永远不会被问「你觉得这两块接得上吗」—— 那是程序的活。
+    返回 (子节点, 仍未解决的违约)。违约非空时由调用方决定是留下还是重来。
+    """
+    raw = call(p_decompose(node, parent, left, right, k))
+    for i in range(rounds):
+        kids = parse_children(raw, node)
+        if not kids:
+            errs = ["没解析出子节点"]
+        else:
+            errs = check_parent(node, kids)
+            for kid in kids:
+                errs += check_progress(kid)
+        if not errs:
+            return kids, []
+        if log:
+            log(f"  拆 {node.id} 第 {i+1} 轮有 {len(errs)} 处违约，打回重修")
+        if i == rounds - 1:
+            return (kids if kids else []), errs
+        raw = call(p_repair(node, errs, raw))
+    return [], ["超出修复轮数"]

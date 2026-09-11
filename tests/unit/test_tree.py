@@ -150,3 +150,69 @@ def test_全树体检把所有违约一次报出来():
     }
     errs = audit_tree(nodes)
     assert errs and any("R.1→R.2" in e for e in errs)
+
+
+# ───────────── 原地打转：合同没变就是没推进 ─────────────
+
+def test_出口和进口一样就是原地打转():
+    """「原地打转」不是文笔问题，是合同没变：读者读完一整卷，主角还是那个身份、
+    还在那个地方、手里还是那些东西。163 章那本书战斗全走同一套流程，根子在这。"""
+    from server.tree import check_progress
+    s = C(hero={"身份": "苦役", "位置": "相国寺"}, assets={"灵石": "3"})
+    nd = N("R.1", 1, 10, entry=s, exit=s, title="又打了一架")
+    errs = check_progress(nd)
+    assert errs and "原地打转" in errs[0]
+
+
+def test_位置变了就算推进():
+    from server.tree import check_progress
+    a = C(hero={"身份": "苦役", "位置": "相国寺"}, assets={"灵石": "3"})
+    b = C(hero={"身份": "苦役", "位置": "罗刹海"}, assets={"灵石": "3"})
+    assert check_progress(N("R.1", 1, 10, entry=a, exit=b)) == []
+
+
+def test_只有资源变了也算推进():
+    from server.tree import check_progress
+    a = C(hero={"位置": "码头"}, assets={"灵石": "3"})
+    b = C(hero={"位置": "码头"}, assets={"灵石": "300", "地盘": "七号栈桥"})
+    assert check_progress(N("R.1", 1, 10, entry=a, exit=b)) == []
+
+
+# ───────────── 分解：模型提方案，程序判，违约打回去 ─────────────
+
+def test_进口由程序串_模型写错也不会让兄弟接缝违约():
+    """进口不许模型写 —— 它只写 exit，进口一律取上一块的 exit。
+    于是兄弟接缝在构造上就不可能违约，程序只需查父子边界和章号。"""
+    from server.tree import parse_children
+    node = N("R", 1, 20, entry=C(hero={"位置": "狐寨"}))
+    raw = ('{"children":[{"title":"甲","line":"x","start":1,"end":10,'
+           '"exit":{"hero":{"位置":"码头"}}},'
+           '{"title":"乙","line":"y","start":11,"end":20,'
+           '"exit":{"hero":{"位置":"缥缈阁"}}}]}')
+    kids = parse_children(raw, node)
+    assert len(kids) == 2
+    assert kids[0].entry.hero["位置"] == "狐寨"        # 取自父进口
+    assert kids[1].entry.hero["位置"] == "码头"        # 取自左兄弟出口
+    assert check_seam(kids[0], kids[1]) == []
+
+
+def test_分解不合法就把违约清单打回去():
+    from server.tree import decompose
+    node = N("R", 1, 20, entry=C(hero={"位置": "A"}), exit=C(hero={"位置": "C"}))
+    calls = []
+
+    bad = ('{"children":[{"title":"甲","line":"x","start":1,"end":10,'
+           '"exit":{"hero":{"位置":"B"}}}]}')                  # 只盖到 10，父到 20
+    good = ('{"children":[{"title":"甲","line":"x","start":1,"end":10,'
+            '"exit":{"hero":{"位置":"B"}}},'
+            '{"title":"乙","line":"y","start":11,"end":20,'
+            '"exit":{"hero":{"位置":"C"}}}]}')
+
+    def fake_call(prompt):
+        calls.append(prompt)
+        return bad if len(calls) == 1 else good
+
+    kids, errs = decompose(node, None, None, None, 2, fake_call)
+    assert errs == [] and len(kids) == 2
+    assert len(calls) == 2, "第一版违约后应该打回去修一次"
+    assert "处违约" in calls[1] and "没盖住父节点" in calls[1]
