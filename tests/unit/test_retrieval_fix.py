@@ -41,6 +41,7 @@ def test_plan_queries_strips_column_labels():
     rt.plan = lambda q: ("刑名|检索式：宋刑统 告事不实 反坐\n"
                          "主题：制度|宋代 进纳授官 纳粟\n"
                          "地理|宋代 东平府 建制")
+    rt.enable_web = True      # 这些用例测的是「查什么」的解析，与外搜开关无关
     rt.era = "北宋"
     rt.facts = {}
     rt.topics = {}
