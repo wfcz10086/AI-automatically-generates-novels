@@ -5363,9 +5363,22 @@ class Novelist:
             pass
         r = _R(); r.elapsed = elapsed
 
-        cn, added = critic_mod.merge_canon(self.canon(), d.get("new_facts"), n)
-        if added:
-            self.p.write("canon.json", json.dumps(cn, ensure_ascii=False, indent=2))
+        # 本章被判出矛盾, 本章的「不可逆事实」就不许固化 ——
+        # 正文本身是错的, 从错正文抽出来的事实必然是错的。实测第5章:
+        # 正文把第4章骑马跑掉的散修乙写死了, 评审报了 4 条矛盾, 可
+        # 「散修乙已死亡, 尸体藏于迷离林」照样进了 canon, 和第4章那条
+        # 「逼退散修乙, 故意放其去报信」并排躺着 —— 往后每章都被这条毒害。
+        # 这就是上一本「金钟罩已坏却生效」那类硬伤的制造机制。
+        bad = d.get("contradictions") or []
+        if bad:
+            self._log(f"  第{n}章有 {len(bad)} 条矛盾, 本章 "
+                      f"{len(d.get('new_facts') or [])} 条新事实**不入台账**"
+                      f"（重写通过后再收）")
+            added = 0
+        else:
+            cn, added = critic_mod.merge_canon(self.canon(), d.get("new_facts"), n)
+            if added:
+                self.p.write("canon.json", json.dumps(cn, ensure_ascii=False, indent=2))
         self.p.write(f"audit/{n:03d}.critique.json",
                      json.dumps(d, ensure_ascii=False, indent=2))
         self._log(f"评审第{n}章 {d.get('overall')}分 "

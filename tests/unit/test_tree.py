@@ -359,3 +359,25 @@ def test_三候选选优_合规是淘汰线_多样性加分():
     r = _mk_root()
     assert score_milestones(r, parse_milestones(good, r)) > \
            score_milestones(r, parse_milestones(broken, r))
+
+
+# ───────────── 矛盾章的事实不许固化 ─────────────
+
+def test_矛盾章的新事实不入台账():
+    """实测第5章：正文把第4章骑马跑掉的散修乙写死了，评审报了 4 条矛盾，
+    可「散修乙已死亡」照样进了 canon，和第4章「逼退散修乙，故意放其去报信」
+    并排躺着——往后每章都被这条毒害。这就是「金钟罩已坏却生效」的制造机制。
+
+    规则：本章被判出矛盾，本章的不可逆事实就不许固化——正文本身是错的，
+    从错正文抽的事实必然错。"""
+    import server.critic as cm
+    canon = [{"chapter": 4, "subject": "散修乙", "fact": "被逼退，骑马逃走报信",
+              "kind": "other"}]
+    new = [{"subject": "散修乙", "fact": "已死亡，尸体藏于迷离林", "kind": "death"}]
+    # 有矛盾时：调用方跳过 merge —— 台账不变
+    contradictions = [{"fact": "第4章确立散修乙未死"}]
+    merged, added = (canon, 0) if contradictions else cm.merge_canon(canon, new, 5)
+    assert added == 0 and len(merged) == 1
+    # 无矛盾时照常收
+    merged2, added2 = cm.merge_canon(canon, new, 5)
+    assert added2 == 1
