@@ -190,9 +190,15 @@ def cmd_run(a):
         start = _gap
     end = min(start + a.chapters - 1, p.meta["target_chapters"])
     n = start
+    # 判「有没有内容」而不是「键在不在」—— 实测第13章的细纲键存在但**值是空字符串**,
+    # 于是跳过生成, step_chapter 拿到空细纲抛 RuntimeError, 长跑连撞 5 次停了三小时。
+    def _has(idx: int) -> bool:
+        co = (p._load("chapter_outlines.json", {}).get(str(idx)) or "").strip()
+        return len(co) > 40
+
     while n <= end:
         outlines = p._load("chapter_outlines.json", {})
-        if str(n) not in outlines:
+        if not _has(n):
             # 领先上限同样适用：写到第 n 章时，最多把细纲排到 n+lead
             lead = nv.outline_lead()
             b = min(batch, max(1, lead)) if lead else batch
@@ -203,12 +209,12 @@ def cmd_run(a):
             # 重跑的是**整个流程**、还是同一个错，连撞 5 次就停了三个小时。
             # 补排那一章就行：单章批次产出率最高，丢了也只丢这一章。
             for attempt in range(2):
-                if str(n) in nv.p._load("chapter_outlines.json", {}):
+                if _has(n):
                     break
                 print(f"  !! 第 {n} 章没收到细纲，单章补排（第 {attempt + 1} 次）")
                 nv.step_chapter_outlines(n, 1)
             outlines = nv.p._load("chapter_outlines.json", {})
-            if str(n) not in outlines:
+            if not _has(n):
                 print(f"!! 第 {n} 章细纲补排两次都没成功，本轮退出交由守护重试")
                 break
         if _code_stamp() != stamp:
