@@ -4687,6 +4687,48 @@ class Novelist:
                           + "；".join(["台账对不上"] * len(hard) + kinds[:3]))
         return parts
 
+    def reconcile_outline(self, n: int, co: str) -> str:
+        """细纲定稿（写正文前的最后一步）：拿上一章**实际正文**对表。
+
+        细纲是批量排的（草稿），正文会越线 —— 实测第1章细纲止于「铁钉对峙」，
+        正文把仗打完了；第2章细纲还等着接对峙。这不是细纲过期的老病，
+        是它的镜像：正文超纲。批量排纲改不了这个，只有写前对表能。
+        改完回写 chapter_outlines.json —— 后续排纲/评审看到的是定稿。
+        """
+        if n <= 1 or not co:
+            return co
+        prev = self.p.chapter(n - 1)
+        if not prev:
+            return co
+        tail = prev[-900:]
+        prompt = (
+            f"下面是长篇小说第 {n} 章的细纲草稿，和第 {n-1} 章**实际写出来的结尾**。\n"
+            f"草稿是提前排的，正文可能已经越过或改变了它的假设。请对表修订：\n"
+            f"- 「承接」栏改成接住下面这个实际结尾（从它的**结果**起笔，不许重演）\n"
+            f"- 正文里**已经发生过**的事，从剧情条里删掉；空出的篇幅让后面的剧情条展开\n"
+            f"- 其余栏目（视角/标题/账目/误读/代价/钩子）没冲突就**原样保留**\n"
+            f"- 保持原有栏目格式输出完整细纲，无前言\n\n"
+            f"── 第 {n-1} 章实际结尾 ──\n{tail}\n\n"
+            f"── 第 {n} 章细纲草稿 ──\n{co}")
+        try:
+            r = call("planning", prompt, max_tokens=2500)
+            new_co = clean(r.text)
+        except Exception as e:
+            self._log(f"  细纲对表跳过(第{n}章): {e}")
+            return co
+        need = outline_required(self.style)
+        have = sum(1 for f in need
+                   if re.search(rf"^\s*{f}\s*[:：]", new_co, re.M))
+        if len(new_co) < len(co) * 0.5 or have < max(1, len(need) - 2):
+            self._log(f"  细纲对表产物残缺(第{n}章, 栏目{have}/{len(need)}), 保留草稿")
+            return co
+        outlines = self.p._load("chapter_outlines.json", {})
+        outlines[str(n)] = new_co
+        self.p.write("chapter_outlines.json",
+                     json.dumps(outlines, ensure_ascii=False, indent=2))
+        self._log(f"  细纲定稿: 第{n}章已按第{n-1}章实际正文对表")
+        return new_co
+
     def step_chapter(self, n: int, on_delta=None, retry_on_low: int | None = None) -> Dict[str, Any]:
         self._check_budget()
         retry_on_low = retry_on_low if retry_on_low is not None else self.q["audit_pass_score"]
@@ -4702,6 +4744,7 @@ class Novelist:
         # 直接 IndexError —— 四个内容类型里有一个从来跑不起来。
         lvl = self.type["levels"][-1]
 
+        co = self.reconcile_outline(n, co)
         ctx = self.base_ctx()
         asm = self.build_context(n, co)     # ★ 五层记忆 + 预算分配
         L = asm["layers"]
