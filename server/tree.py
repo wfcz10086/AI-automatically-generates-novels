@@ -430,3 +430,52 @@ def decompose(node: Node, parent, left, right, k: int, call,
             return (kids if kids else []), errs
         raw = call(p_repair(node, errs, raw))
     return [], ["超出修复轮数"]
+
+
+# ─────────────────────── 种子 → 根节点合同 ───────────────────────
+# 「种子扩散」就是拆节点。但种子必须是**带进出口的节点**, 不能是几个关键词 ——
+# 关键词不说明「某某那时候在不在」, 扩散出来的东西自然接不上。
+
+def p_root(seed: str, chapters: int) -> str:
+    return f"""下面是一本长篇小说的种子。把它变成**全书这一个节点**的合同。
+
+全书共 {chapters} 章。
+
+── 种子 ──
+{seed}
+
+合同要写两头：开篇时世界是什么样（entry），全书写完时世界是什么样（exit）。
+两头都写成**表**，不是描述。规矩：
+
+· hero：主角的身份、位置、能力上限、伤。开篇和结尾必须明显不同。
+· people：开篇就已存在、且全书都要用的关键人物 —— 每人一句「他此刻在哪、什么状态」。
+  最多 6 个。结尾那一栏要写清他们各自落到哪儿。
+· assets：主角手里的东西（钱、地盘、人手、凭证、名分）。开篇通常接近于零。
+· open_threads：开篇就埋下、要在全书之内了结的大线。3-6 条，每条带 id 和 what。
+  due 一律先写 "R"（拆到下面几层时再落到具体哪一块）。
+· facts：开篇就已经坐实、全书不许翻的事（世界的规矩、主角的来历、
+  已经发生过的不可逆的事）。
+
+**不许出现现代专有名词**（地名、品牌、器物名）。主角的前世只能写成意象。
+**不许出现章号**（「第N章」这种）。
+
+只输出 JSON，不要代码围栏：
+{{"title":"书名（八字以内）",
+  "line":"全书一句话：谁用什么办法对付什么",
+  "entry":{{"hero":{{}},"people":{{}},"assets":{{}},"open_threads":[],"facts":[]}},
+  "exit":{{"hero":{{}},"people":{{}},"assets":{{}},"open_threads":[],"facts":[]}}}}"""
+
+
+def parse_root(raw: str, chapters: int) -> Optional["Node"]:
+    import json as _j
+    m = re.search(r"\{.*\}", raw or "", re.S)
+    if not m:
+        return None
+    try:
+        d = _j.loads(m.group(0))
+    except Exception:
+        return None
+    return Node(id="R", level="book", title=str(d.get("title") or "")[:40],
+                line=str(d.get("line") or "")[:160], start=1, end=chapters,
+                entry=Contract.from_dict(d.get("entry")),
+                exit=Contract.from_dict(d.get("exit")))
