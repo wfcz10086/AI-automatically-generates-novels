@@ -4189,6 +4189,81 @@ class Novelist:
         self._log(f"细纲审阅完成 {len(keys)} 章 → {len(issues)} 条问题")
         return {"verdict": verdict, "issues": issues, "strong": strong}
 
+    @staticmethod
+    def _title_norm(t: str) -> str:
+        return re.sub(r"[\s，,。.！!？?、·「」『』“”\"']+", "", t or "")
+
+    def _title_of(self, body: str) -> str:
+        m = re.search(r"第\s*\d+\s*章\s*(.+)", body or "")
+        return (m.group(1).strip() if m else "").split("\n")[0]
+
+    def polish_titles(self, ids: List[int], on_delta=None) -> int:
+        """标题选优：程序执法大罗罗的章名规矩，不合格的一章重起 5 个候选再挑。
+
+        规矩全部来自 2833 个原作标题的统计(见文风包·章标题模板库), 但原来只写在
+        提示词里当**建议** —— 实测 165 章里 16 章重复(10%), 书名本身被当标题用了
+        4 次。建议没人执法就等于没有:
+          · 不许用书名当章名
+          · 不许与非相邻章重复(相邻重复=同题连章, 是原作手法, 放行)
+          · 长度 4~16 字
+        """
+        co = self.p._load("chapter_outlines.json", {})
+        book = self._title_norm(self.p.meta.get("title", ""))
+        # 全书标题账: 归一化标题 → 章号列表
+        ledger: Dict[str, List[int]] = {}
+        for k, v in co.items():
+            if str(k).isdigit():
+                ledger.setdefault(self._title_norm(self._title_of(v)), []).append(int(k))
+        fixed = 0
+        for n in ids:
+            body = co.get(str(n)) or ""
+            t = self._title_of(body)
+            tn = self._title_norm(t)
+            dup_at = [x for x in ledger.get(tn, []) if abs(x - n) > 1 and x != n]
+            bad = (not t or len(t) < 4 or len(t) > 16
+                   or (book and book in tn) or bool(dup_at))
+            if not bad:
+                continue
+            why = ("与书名相同" if book and book in tn else
+                   f"与第{dup_at[0]}章重复" if dup_at else "长度不合规")
+            spec = sc.sc_title_examples(self.style)
+            hint = re.search(r"^\s*一句话\s*[:：]\s*(.+)$", body, re.M)
+            recent = [self._title_of(co.get(str(i), "")) for i in
+                      range(max(1, n - 30), n) if co.get(str(i))]
+            # 原作的招牌起法: 标题往往是**章内有人真的说出的一句话**。
+            # 《如果金兵不肯退走呢？》就是秦桧在章末问的原话, 主角答不上。
+            hook = re.search(r"^\s*章末钩子\s*[:：]\s*(.+)$", body, re.M)
+            prompt = (f"给这一章重起标题。原标题「{t}」不能用（{why}）。\n"
+                      f"本章内容：{hint.group(1)[:80] if hint else body[:120]}\n"
+                      + (f"章末钩子：{hook.group(1)[:60]}\n" if hook else "")
+                      + f"{spec}\n"
+                      f"优先从钩子或章内台词里拿那句最扎人的话当标题——"
+                      f"标题是有人开口, 不是内容概括。\n"
+                      f"最近已用（不许重复）：{'、'.join(x for x in recent[-24:] if x)}\n"
+                      f"给 5 个候选，一行一个，只要标题本身。")
+            try:
+                r = call("polishing", prompt, on_delta, max_tokens=200)
+                cands = [x.strip().lstrip("12345.、- ") for x in
+                         (r.text or "").splitlines() if x.strip()]
+            except Exception as e:
+                self._log(f"  标题重起失败(第{n}章): {e}")
+                continue
+            for cand in cands:
+                cn2 = self._title_norm(cand)
+                if (4 <= len(cand) <= 16 and cn2 and cn2 not in ledger
+                        and not (book and book in cn2)):
+                    co[str(n)] = re.sub(r"^(第\s*\d+\s*章\s*).*",
+                                        lambda m: m.group(1) + cand,
+                                        body, count=1, flags=re.M)
+                    ledger.setdefault(cn2, []).append(n)
+                    self._log(f"  标题选优: 第{n}章「{t}」({why}) → 「{cand}」")
+                    fixed += 1
+                    break
+        if fixed:
+            self.p.write("chapter_outlines.json",
+                         json.dumps(co, ensure_ascii=False, indent=2))
+        return fixed
+
     def step_chapter_outlines(self, start: int, count: int, on_delta=None) -> List[str]:
         """分批生成章节细纲。批量由 outline_batch() 按输出上限算。"""
         count = self.outline_batch(count)
@@ -4477,6 +4552,10 @@ class Novelist:
                 except Exception:
                     pass
         self.p.write("chapter_outlines.json", json.dumps(outlines, ensure_ascii=False, indent=2))
+        try:
+            self.polish_titles(list(range(start, end + 1)), on_delta)
+        except Exception as e:
+            self._log(f"  标题选优跳过: {e}")
         note = ""
         if truncated:
             note += f"，丢弃残缺 {len(truncated)} 章（{truncated[:12]}）"

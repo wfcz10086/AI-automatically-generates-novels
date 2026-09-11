@@ -26,7 +26,7 @@ def N(nid, start, end, entry=None, exit=None, **kw):
 # ───────────── 相邻兄弟：出口 == 进口 ─────────────
 
 def test_出口等于进口就放行():
-    st = {"hero": {"身份": "苦役", "位置": "相国寺"}, "assets": {"灵石": "3"}}
+    st = {"accounts": {"名分": "苦役", "位置": "相国寺", "灵石": "3"}}
     a = N("R.1", 1, 10, exit=C(**st))
     b = N("R.2", 11, 20, entry=C(**st))
     assert check_seam(a, b) == []
@@ -35,22 +35,22 @@ def test_出口等于进口就放行():
 def test_只是标点不同也放行():
     """模型总会换标点，归一化只去标点空白 —— 但不做同义词匹配，
     一旦允许模糊，等式就退回成告警。"""
-    a = N("R.1", 1, 10, exit=C(hero={"身份": "相国寺，苦役"}))
-    b = N("R.2", 11, 20, entry=C(hero={"身份": "相国寺苦役"}))
+    a = N("R.1", 1, 10, exit=C(accounts={"名分": "相国寺，苦役"}))
+    b = N("R.2", 11, 20, entry=C(accounts={"名分": "相国寺苦役"}))
     assert check_seam(a, b) == []
 
 
 def test_主角身份对不上要报():
-    a = N("R.1", 1, 10, exit=C(hero={"身份": "苦役"}))
-    b = N("R.2", 11, 20, entry=C(hero={"身份": "执事"}))
+    a = N("R.1", 1, 10, exit=C(accounts={"名分": "苦役"}))
+    b = N("R.2", 11, 20, entry=C(accounts={"名分": "执事"}))
     errs = check_seam(a, b)
-    assert len(errs) == 1 and "主角「身份」" in errs[0]
+    assert len(errs) == 1 and "账目「名分」" in errs[0]
 
 
 def test_人物凭空挪位置要报():
-    a = N("R.1", 1, 10, exit=C(people={"阿绣": "被押在戒律堂"}))
-    b = N("R.2", 11, 20, entry=C(people={"阿绣": "在商路码头记账"}))
-    assert any("人物「阿绣」" in e for e in check_seam(a, b))
+    a = N("R.1", 1, 10, exit=C(accounts={"阿绣": "押在戒律堂"}))
+    b = N("R.2", 11, 20, entry=C(accounts={"阿绣": "码头记账"}))
+    assert any("账目「阿绣」" in e for e in check_seam(a, b))
 
 
 def test_已定死的事实不许在进口丢掉():
@@ -76,10 +76,10 @@ def test_线凭空出现在进口要报():
 # ───────────── 父子：包住、覆盖、连续 ─────────────
 
 def test_父进口必须等于长子进口():
-    p = N("R", 1, 20, entry=C(hero={"位置": "狐寨"}), exit=C(hero={"位置": "码头"}))
-    k1 = N("R.1", 1, 10, entry=C(hero={"位置": "相国寺"}),  # ← 对不上
-           exit=C(hero={"位置": "半路"}))
-    k2 = N("R.2", 11, 20, entry=C(hero={"位置": "半路"}), exit=C(hero={"位置": "码头"}))
+    p = N("R", 1, 20, entry=C(accounts={"位置": "狐寨"}), exit=C(accounts={"位置": "码头"}))
+    k1 = N("R.1", 1, 10, entry=C(accounts={"位置": "相国寺"}),  # ← 对不上
+           exit=C(accounts={"位置": "半路"}))
+    k2 = N("R.2", 11, 20, entry=C(accounts={"位置": "半路"}), exit=C(accounts={"位置": "码头"}))
     errs = check_parent(p, [k1, k2])
     assert any("父进口 vs 长子进口" in e for e in errs)
 
@@ -99,9 +99,9 @@ def test_子节点没盖住父区间要报():
 
 
 def test_合法的父子树零违约():
-    s0 = C(hero={"位置": "狐寨"})
-    s1 = C(hero={"位置": "半路"})
-    s2 = C(hero={"位置": "码头"})
+    s0 = C(accounts={"位置": "狐寨"})
+    s1 = C(accounts={"位置": "半路"})
+    s2 = C(accounts={"位置": "码头"})
     p = N("R", 1, 20, entry=s0, exit=s2)
     k1 = N("R.1", 1, 10, entry=s0, exit=s1)
     k2 = N("R.2", 11, 20, entry=s1, exit=s2)
@@ -131,10 +131,10 @@ def test_due指向不存在的节点要报():
 def test_拆节点只看爹和左右兄弟_且字数恒定():
     """这是整棵树成立的理由：不管全书 100 章还是 1 万章，拆任一块的输入都是这几千字。"""
     parent = N("R", 1, 9000, line="破军从鼎炉走到掀翻六圣")
-    left = N("R.1", 1, 3000, line="活命", exit=C(hero={"位置": "码头"}))
+    left = N("R.1", 1, 3000, line="活命", exit=C(accounts={"位置": "码头"}))
     me = N("R.2", 3001, 6000, line="立足",
-           entry=C(hero={"位置": "码头"}), exit=C(hero={"位置": "缥缈阁"}))
-    right = N("R.3", 6001, 9000, line="掀桌", entry=C(hero={"位置": "缥缈阁"}))
+           entry=C(accounts={"位置": "码头"}), exit=C(accounts={"位置": "缥缈阁"}))
+    right = N("R.3", 6001, 9000, line="掀桌", entry=C(accounts={"位置": "缥缈阁"}))
     ctx = decomposition_context(me, parent, left, right)
     assert "下一块要从哪开始" in ctx      # 知道未来，伏笔才有方向
     assert "缥缈阁" in ctx
@@ -142,7 +142,7 @@ def test_拆节点只看爹和左右兄弟_且字数恒定():
 
 
 def test_全树体检把所有违约一次报出来():
-    s0, s1, s2 = C(hero={"位置": "A"}), C(hero={"位置": "B"}), C(hero={"位置": "C"})
+    s0, s1, s2 = C(accounts={"位置": "A"}), C(accounts={"位置": "B"}), C(accounts={"位置": "C"})
     nodes = {
         "R": N("R", 1, 20, entry=s0, exit=s2, children=["R.1", "R.2"]),
         "R.1": N("R.1", 1, 10, entry=s0, exit=s1),
@@ -158,7 +158,7 @@ def test_出口和进口一样就是原地打转():
     """「原地打转」不是文笔问题，是合同没变：读者读完一整卷，主角还是那个身份、
     还在那个地方、手里还是那些东西。163 章那本书战斗全走同一套流程，根子在这。"""
     from server.tree import check_progress
-    s = C(hero={"身份": "苦役", "位置": "相国寺"}, assets={"灵石": "3"})
+    s = C(accounts={"名分": "苦役", "位置": "相国寺", "灵石": "3"})
     nd = N("R.1", 1, 10, entry=s, exit=s, title="又打了一架")
     errs = check_progress(nd)
     assert errs and "原地打转" in errs[0]
@@ -166,15 +166,15 @@ def test_出口和进口一样就是原地打转():
 
 def test_位置变了就算推进():
     from server.tree import check_progress
-    a = C(hero={"身份": "苦役", "位置": "相国寺"}, assets={"灵石": "3"})
-    b = C(hero={"身份": "苦役", "位置": "罗刹海"}, assets={"灵石": "3"})
+    a = C(accounts={"名分": "苦役", "位置": "相国寺", "灵石": "3"})
+    b = C(accounts={"名分": "苦役", "位置": "罗刹海", "灵石": "3"})
     assert check_progress(N("R.1", 1, 10, entry=a, exit=b)) == []
 
 
 def test_只有资源变了也算推进():
     from server.tree import check_progress
-    a = C(hero={"位置": "码头"}, assets={"灵石": "3"})
-    b = C(hero={"位置": "码头"}, assets={"灵石": "300", "地盘": "七号栈桥"})
+    a = C(accounts={"位置": "码头", "灵石": "3"})
+    b = C(accounts={"位置": "码头", "灵石": "300", "地盘": "七号栈桥"})
     assert check_progress(N("R.1", 1, 10, entry=a, exit=b)) == []
 
 
@@ -184,29 +184,29 @@ def test_进口由程序串_模型写错也不会让兄弟接缝违约():
     """进口不许模型写 —— 它只写 exit，进口一律取上一块的 exit。
     于是兄弟接缝在构造上就不可能违约，程序只需查父子边界和章号。"""
     from server.tree import parse_children
-    node = N("R", 1, 20, entry=C(hero={"位置": "狐寨"}))
+    node = N("R", 1, 20, entry=C(accounts={"位置": "狐寨"}))
     raw = ('{"children":[{"title":"甲","line":"x","start":1,"end":10,'
-           '"exit":{"hero":{"位置":"码头"}}},'
+           '"exit":{"accounts":{"位置":"码头"}}},'
            '{"title":"乙","line":"y","start":11,"end":20,'
-           '"exit":{"hero":{"位置":"缥缈阁"}}}]}')
+           '"exit":{"accounts":{"位置":"缥缈阁"}}}]}')
     kids = parse_children(raw, node)
     assert len(kids) == 2
-    assert kids[0].entry.hero["位置"] == "狐寨"        # 取自父进口
-    assert kids[1].entry.hero["位置"] == "码头"        # 取自左兄弟出口
+    assert kids[0].entry.accounts["位置"] == "狐寨"        # 取自父进口
+    assert kids[1].entry.accounts["位置"] == "码头"        # 取自左兄弟出口
     assert check_seam(kids[0], kids[1]) == []
 
 
 def test_分解不合法就把违约清单打回去():
     from server.tree import decompose
-    node = N("R", 1, 20, entry=C(hero={"位置": "A"}), exit=C(hero={"位置": "C"}))
+    node = N("R", 1, 20, entry=C(accounts={"位置": "A"}), exit=C(accounts={"位置": "C"}))
     calls = []
 
     bad = ('{"children":[{"title":"甲","line":"x","start":1,"end":10,'
-           '"exit":{"hero":{"位置":"B"}}}]}')                  # 只盖到 10，父到 20
+           '"exit":{"accounts":{"位置":"B"}}}]}')                  # 只盖到 10，父到 20
     good = ('{"children":[{"title":"甲","line":"x","start":1,"end":10,'
-            '"exit":{"hero":{"位置":"B"}}},'
+            '"exit":{"accounts":{"位置":"B"}}},'
             '{"title":"乙","line":"y","start":11,"end":20,'
-            '"exit":{"hero":{"位置":"C"}}}]}')
+            '"exit":{"accounts":{"位置":"C"}}}]}')
 
     def fake_call(prompt):
         calls.append(prompt)
@@ -228,9 +228,9 @@ def test_模型漏写的旧事实由程序补回来():
     from server.tree import parse_children
     node = N("R", 1, 20, entry=C(facts=["戒空已死", "金钟罩第一层报废"]))
     raw = ('{"children":[{"title":"甲","line":"x","start":1,"end":10,'
-           '"exit":{"hero":{"位置":"码头"},"facts":["阿绣接手账房"]}},'
+           '"exit":{"accounts":{"位置":"码头"},"facts":["阿绣接手账房"]}},'
            '{"title":"乙","line":"y","start":11,"end":20,'
-           '"exit":{"hero":{"位置":"缥缈阁"},"facts":[]}}]}')   # ← 模型全漏了
+           '"exit":{"accounts":{"位置":"缥缈阁"},"facts":[]}}]}')   # ← 模型全漏了
     k1, k2 = parse_children(raw, node)
     assert "戒空已死" in k1.exit.facts and "金钟罩第一层报废" in k1.exit.facts
     assert "阿绣接手账房" in k1.exit.facts
@@ -245,9 +245,9 @@ def test_没收的线中途不许掉_除非到期():
     t_late = {"id": "t1", "what": "武字疤是谁刻的", "due": "R.2"}
     node = N("R", 1, 20, entry=C(open_threads=[t_late]))
     raw = ('{"children":[{"title":"甲","line":"x","start":1,"end":10,'
-           '"exit":{"hero":{"位置":"A"},"open_threads":[]}},'      # 模型漏了
+           '"exit":{"accounts":{"位置":"A"},"open_threads":[]}},'      # 模型漏了
            '{"title":"乙","line":"y","start":11,"end":20,'
-           '"exit":{"hero":{"位置":"B"},"open_threads":[]}}]}')    # 到期，可以掉
+           '"exit":{"accounts":{"位置":"B"},"open_threads":[]}}]}')    # 到期，可以掉
     k1, k2 = parse_children(raw, node)
     assert any(x.get("id") == "t1" for x in k1.exit.open_threads), "没到期就掉了"
     assert not any(x.get("id") == "t1" for x in k2.exit.open_threads), "到期该收掉"
@@ -260,9 +260,9 @@ def test_每块都只挪位置就是同一套流程():
     全走一套（轻视→硬扛→打脸→交账），读单章很爽，连读就疲劳。"""
     from server.tree import check_variety
     kids = []
-    prev = C(hero={"位置": "A", "身份": "苦役"})
+    prev = C(accounts={"位置": "A", "身份": "苦役"})
     for i, loc in enumerate("BCDE"):
-        ex = C(hero={"位置": loc, "身份": "苦役"})
+        ex = C(accounts={"位置": loc, "身份": "苦役"})
         kids.append(N(f"R.{i+1}", i * 10 + 1, i * 10 + 10, entry=prev, exit=ex))
         prev = ex
     errs = check_variety(kids)
@@ -271,10 +271,10 @@ def test_每块都只挪位置就是同一套流程():
 
 def test_动的格子有变化就放行():
     from server.tree import check_variety
-    c0 = C(hero={"位置": "A", "身份": "苦役"}, assets={"灵石": "3"})
-    c1 = C(hero={"位置": "B", "身份": "苦役"}, assets={"灵石": "3"})
-    c2 = C(hero={"位置": "B", "身份": "执事"}, assets={"灵石": "3"})
-    c3 = C(hero={"位置": "B", "身份": "执事"}, assets={"灵石": "300"})
+    c0 = C(accounts={"位置": "A", "身份": "苦役"}, assets={"灵石": "3"})
+    c1 = C(accounts={"位置": "B", "身份": "苦役"}, assets={"灵石": "3"})
+    c2 = C(accounts={"位置": "B", "身份": "执事"}, assets={"灵石": "3"})
+    c3 = C(accounts={"位置": "B", "身份": "执事"}, assets={"灵石": "300"})
     kids = [N("R.1", 1, 10, entry=c0, exit=c1),
             N("R.2", 11, 20, entry=c1, exit=c2),
             N("R.3", 21, 30, entry=c2, exit=c3)]
@@ -288,15 +288,74 @@ def test_幼子的出口由程序赋值_不让模型复述():
     能由程序定死的，就不要问模型（和进口同一个道理）。"""
     from server.tree import parse_children
     node = N("R", 1, 20,
-             entry=C(hero={"位置": "狐寨"}, facts=["世界规矩甲"]),
-             exit=C(hero={"身份": "天下之主", "位置": "缥缈阁", "能力上限": "大成"},
-                    assets={"地盘": "天下"}, facts=["世界规矩甲", "轮回已终结"]))
+             entry=C(accounts={"位置": "狐寨"}, facts=["世界规矩甲"]),
+             exit=C(accounts={"名分": "天下之主", "位置": "缥缈阁",
+                              "金钟罩": "大成", "地盘": "天下"},
+                    facts=["世界规矩甲", "轮回已终结"]))
     raw = ('{"children":[{"title":"甲","line":"x","start":1,"end":10,'
-           '"exit":{"hero":{"位置":"码头"}}},'
+           '"exit":{"accounts":{"位置":"码头"}}},'
            '{"title":"乙","line":"y","start":11,"end":20,'
-           '"exit":{"hero":{"位置":"随便写的"}}}]}')     # ← 模型瞎写
+           '"exit":{"accounts":{"位置":"随便写的"}}}]}')     # ← 模型瞎写
     k1, k2 = parse_children(raw, node)
-    assert k2.exit.hero["身份"] == "天下之主"        # 程序按父出口填
-    assert k2.exit.hero["位置"] == "缥缈阁"
-    assert k2.exit.assets["地盘"] == "天下"
+    assert k2.exit.accounts["名分"] == "天下之主"        # 程序按父出口填
+    assert k2.exit.accounts["位置"] == "缥缈阁"
+    assert k2.exit.accounts["地盘"] == "天下"
     assert check_parent(node, [k1, k2]) == [], "幼子出口应当在构造上就等于父出口"
+
+
+# ───────────── 里程碑链（方案乙主体）─────────────
+
+def _mk_root():
+    return N("R", 1, 30, level="book",
+             entry=C(accounts={"灵石": "0", "名分": "鼎炉"},
+                     open_threads=[{"id": "t1", "what": "武字疤", "due": "R"}]),
+             exit=C(accounts={"灵石": "万", "名分": "天下之主"}))
+
+
+def test_但是链断了要报_且判定是照抄不是相似():
+    from server.tree import parse_milestones, check_milestones
+    raw = ('{"milestones":['
+           '{"title":"甲","solves":"活命","exposes":"名头传开了","start":1,"end":15,'
+           '"accounts":{"名分":"自由身"},"close":["t1"],"open":[],"miscalc":"x"},'
+           '{"title":"乙","solves":"名声太大被盯上","exposes":"y","start":16,"end":30,'
+           '"accounts":{"灵石":"万","名分":"天下之主"},"close":[],"open":[],"miscalc":"z"}]}')
+    ms = parse_milestones(raw, _mk_root())
+    errs = check_milestones(_mk_root(), ms)
+    assert any("但是链断了" in e for e in errs)   # 「名声太大被盯上」≠「名头传开了」
+
+
+def test_合法里程碑链零违约():
+    from server.tree import parse_milestones, check_milestones
+    raw = ('{"milestones":['
+           '{"title":"甲","solves":"活命","exposes":"名头传开了","start":1,"end":15,'
+           '"accounts":{"名分":"自由身"},"close":["t1"],"open":[],"miscalc":"x"},'
+           '{"title":"乙","solves":"名头传开了","exposes":"y","start":16,"end":30,'
+           '"accounts":{"灵石":"万","名分":"天下之主"},"close":[],"open":[],"miscalc":"z"}]}')
+    ms = parse_milestones(raw, _mk_root())
+    assert check_milestones(_mk_root(), ms) == []
+
+
+def test_开局的线没人收要报():
+    from server.tree import parse_milestones, check_milestones
+    raw = ('{"milestones":['
+           '{"title":"甲","solves":"活命","exposes":"名头传开了","start":1,"end":15,'
+           '"accounts":{"名分":"自由身"},"close":[],"open":[],"miscalc":"x"},'
+           '{"title":"乙","solves":"名头传开了","exposes":"y","start":16,"end":30,'
+           '"accounts":{"灵石":"万","名分":"天下之主"},"close":[],"open":[],"miscalc":"z"}]}')
+    ms = parse_milestones(raw, _mk_root())
+    # t1 没有任何一节 close，幼子出口被根出口覆盖后线仍在链上暴露
+    assert any("没人收" in e or "还开着" in e
+               for e in check_milestones(_mk_root(), ms))
+
+
+def test_三候选选优_合规是淘汰线_多样性加分():
+    from server.tree import parse_milestones, score_milestones
+    good = ('{"milestones":['
+            '{"title":"甲","solves":"活命","exposes":"名头传开了","start":1,"end":15,'
+            '"accounts":{"名分":"自由身"},"close":["t1"],"open":[],"miscalc":"x"},'
+            '{"title":"乙","solves":"名头传开了","exposes":"y","start":16,"end":30,'
+            '"accounts":{"灵石":"万","名分":"天下之主"},"close":[],"open":[],"miscalc":"z"}]}')
+    broken = good.replace('"solves":"名头传开了"', '"solves":"完全接不上的话"')
+    r = _mk_root()
+    assert score_milestones(r, parse_milestones(good, r)) > \
+           score_milestones(r, parse_milestones(broken, r))

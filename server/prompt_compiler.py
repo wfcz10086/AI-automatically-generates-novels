@@ -206,7 +206,10 @@ SLOT_RULES: List[tuple] = [
     ("#反向提示词库", "纪律", 45), ("#正向提示词库", "纪律", 35),
 ]
 #: 槽位字符定额。任务槽不设限 —— 那是「这一章要写什么」，挤掉它等于不写。
-SLOT_BUDGET = {"任务": 0, "燃料": 2600, "调子": 4200, "纪律": 3000}
+# 纪律槽 3000→1600: 用户明确要「限制尽可能少」。被砍的规矩没有消失 ——
+# 万金油结尾/口号收尾/黑名单/元语言全在**验收端**由程序查, 写坏了照样过不了,
+# 只是不再事先占提示词。限制越少, 留下的每条越有分量。
+SLOT_BUDGET = {"任务": 0, "燃料": 2600, "调子": 4200, "纪律": 1600}
 
 
 def _slot_of(block: str) -> tuple:
@@ -332,7 +335,8 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
               ("心理怎么写", "人物心里的算计怎么写"),
               ("段落与转场", "段落形态与切镜头"),
               ("狠劲", "这个调子最狠的一手"))
-    for key, head in [_craft[(index * 3 + i) % len(_craft)] for i in range(3)]:
+    # 每章 2 块手艺(原 3): 一次给的「重点」越少, 每个越是重点。三章覆盖全部六块。
+    for key, head in [_craft[(index * 2 + i) % len(_craft)] for i in range(2)]:
         v = sp.get(key)
         if not isinstance(v, dict):
             continue

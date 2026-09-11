@@ -33,23 +33,33 @@ import re
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional, Tuple
 
-#: 合同的字段。改这张表要同时改 diff()/merge()，所以字段要少而稳。
-#: 原则：只放**下一块必须知道**的东西。人物的性格、外貌、口癖不在这里
-#: （那是人物卡，不随节点变），只有「他现在在哪、是什么身份」才在。
-HERO_FIELDS = ("身份", "位置", "能力上限", "伤")
+#: 账目值必须是**短的、离散的**记号(「3000人」「河北兵马元帅」), 不是描述。
+#: 这是从原著反推出来的形态: 账本带计量单位, 数字比数字。
+#: 一旦允许写成「狐寨石室中的鼎炉, 元阳已被吸过两次, 行尸预备」这种散文,
+#: 精确匹配就必然失败 —— 实测让模型复述 28 个散文字段, 连着两轮 25 处违约。
+ACCOUNT_MAX = 20
 
 
 @dataclass
 class Contract:
-    """一个节点的进口或出口状态。固定大小，不随书变长。"""
+    """一个节点的进口或出口状态。
 
-    hero: Dict[str, str] = field(default_factory=dict)      # 主角：身份/位置/能力上限/伤
-    people: Dict[str, str] = field(default_factory=dict)    # 关键人物 → 位置与状态（一句话）
-    assets: Dict[str, str] = field(default_factory=dict)    # 资源：灵石/地盘/人手/凭证
+    分成**可数的**和**散文的**两堆, 只有可数的进不变式:
+
+      accounts  可数的账(兵力/钱粮/名分/地盘/人手)。短记号, 精确匹配。
+                原著里就是这个形态: 「9人→3000人」「40万贯→330万」
+                「郓王→河北兵马元帅」。
+      threads   有 id 的线。按 id 查生死, 不比文字。
+      facts     已定死不许翻的事。只增不减。
+      notes     主角在哪、谁是什么状态这类散文。**给模型看的上下文, 不做等值判断。**
+                原来把它当不变式是根本性的错: 散文的任何改写都不相等。
+    """
+
+    accounts: Dict[str, str] = field(default_factory=dict)
     open_threads: List[Dict[str, Any]] = field(default_factory=list)
-    #   每条 {"id": "t3", "what": "残碑上的武字疤是谁刻的", "due": "C2"}
-    #   due = 该在哪个节点之内收掉。程序据此查「线有没有在它该死的地方死掉」。
-    facts: List[str] = field(default_factory=list)          # 已定死、不可翻的事
+    #   每条 {"id": "t3", "what": "残碑上的武字疤是谁刻的", "due": "V7"}
+    facts: List[str] = field(default_factory=list)
+    notes: Dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -57,24 +67,31 @@ class Contract:
     @staticmethod
     def from_dict(d: Optional[Dict[str, Any]]) -> "Contract":
         d = d or {}
+        # 兼容早先的 hero/people/assets 三栏: 一律并进 notes(散文, 不比对),
+        # 但 assets 里短到像账目的挪进 accounts。
+        notes = dict(d.get("notes") or {})
+        acc = dict(d.get("accounts") or {})
+        for old_key in ("hero", "people", "assets"):
+            for k, v in (d.get(old_key) or {}).items():
+                if old_key == "assets" and len(str(v)) <= ACCOUNT_MAX:
+                    acc.setdefault(k, str(v))
+                else:
+                    notes.setdefault(f"{k}", str(v))
         return Contract(
-            hero=dict(d.get("hero") or {}),
-            people=dict(d.get("people") or {}),
-            assets=dict(d.get("assets") or {}),
+            accounts={k: str(v) for k, v in acc.items()},
             open_threads=[dict(x) for x in (d.get("open_threads") or [])
                           if isinstance(x, dict)],
             facts=[str(x) for x in (d.get("facts") or [])],
+            notes=notes,
         )
 
     def brief(self, cap: int = 900) -> str:
         """给模型看的紧凑写法。**不带章号** —— 章号是 31 处正文自指的唯一来源。"""
         out = []
-        if self.hero:
-            out.append("主角：" + "｜".join(f"{k}={v}" for k, v in self.hero.items() if v))
-        if self.people:
-            out.append("人在哪：" + "；".join(f"{k}={v}" for k, v in self.people.items()))
-        if self.assets:
-            out.append("手里有：" + "；".join(f"{k}={v}" for k, v in self.assets.items()))
+        if self.accounts:
+            out.append("账本：" + "；".join(f"{k}={v}" for k, v in self.accounts.items()))
+        if self.notes:
+            out.append("；".join(f"{k}：{v}" for k, v in self.notes.items()))
         if self.open_threads:
             out.append("没收的线：" + "；".join(
                 f"{t.get('what', '')}（须了结于 {t.get('due', '?')}）"
@@ -98,6 +115,11 @@ class Node:
     entry: Contract = field(default_factory=Contract)
     exit: Contract = field(default_factory=Contract)
     children: List[str] = field(default_factory=list)
+    # 但是链两字段 —— 从两本原著反推出的形态: 每节就这两句。
+    # solves: 这一块把什么问题按下去了; exposes: **解法本身**生出了什么新问题。
+    # 程序查: 下一块的 solves 必须**原样**是上一块的 exposes(照抄, 不许换说法)。
+    solves: str = ""
+    exposes: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -114,6 +136,8 @@ class Node:
             entry=Contract.from_dict(d.get("entry")),
             exit=Contract.from_dict(d.get("exit")),
             children=list(d.get("children") or []),
+            solves=str(d.get("solves") or ""),
+            exposes=str(d.get("exposes") or ""),
         )
 
 
@@ -146,9 +170,9 @@ def check_seam(prev: Node, nxt: Node) -> List[str]:
     """相邻兄弟：上一块的出口必须等于下一块的进口。返回违约清单（空=咬合）。"""
     a, b = prev.exit, nxt.entry
     errs: List[str] = []
-    errs += _diff_map(a.hero, b.hero, "主角")
-    errs += _diff_map(a.people, b.people, "人物")
-    errs += _diff_map(a.assets, b.assets, "资源")
+    # 只比**可数的账**。notes 是散文, 散文的任何改写都不相等 —— 实测按散文
+    # 做等值判断, 连着两轮 25 处违约且模型修不了。
+    errs += _diff_map(a.accounts, b.accounts, "账目")
     ta = {str(t.get("id") or ""): t for t in a.open_threads}
     tb = {str(t.get("id") or ""): t for t in b.open_threads}
     for tid in sorted(set(ta) | set(tb)):
@@ -211,28 +235,25 @@ def check_progress(nd: Node) -> List[str]:
     根子就在这里 —— 没有任何机制要求一块结束时世界得不一样。
     """
     a, b = nd.entry, nd.exit
-    same_hero = all(_norm(a.hero.get(k)) == _norm(b.hero.get(k))
-                    for k in set(a.hero) | set(b.hero))
-    same_asset = all(_norm(a.assets.get(k)) == _norm(b.assets.get(k))
-                     for k in set(a.assets) | set(b.assets))
-    if same_hero and same_asset:
-        return [f"「{nd.title or nd.id}」原地打转：主角的身份/位置/能力/伤没变，"
-                f"资源也没变 —— 这一块读完，世界还是老样子"]
+    same_acc = all(_norm(a.accounts.get(k)) == _norm(b.accounts.get(k))
+                   for k in set(a.accounts) | set(b.accounts))
+    closed = {str(t.get("id")) for t in a.open_threads} -              {str(t.get("id")) for t in b.open_threads}
+    if same_acc and not closed and len(b.facts) <= len(a.facts):
+        return [f"「{nd.title or nd.id}」原地打转：账本一格没动、一条线没收、"
+                f"没坐实任何新事实 —— 这一块读完，世界还是老样子"]
     return []
 
 
 def changed_fields(nd: Node) -> frozenset:
     """这一块到底动了哪几格。用来判「是不是每块都在做同一件事」。"""
     out = set()
-    for k in set(nd.entry.hero) | set(nd.exit.hero):
-        if _norm(nd.entry.hero.get(k)) != _norm(nd.exit.hero.get(k)):
-            out.add("主角." + k)
-    for k in set(nd.entry.assets) | set(nd.exit.assets):
-        if _norm(nd.entry.assets.get(k)) != _norm(nd.exit.assets.get(k)):
-            out.add("资源." + k)
-    for k in set(nd.entry.people) | set(nd.exit.people):
-        if _norm(nd.entry.people.get(k)) != _norm(nd.exit.people.get(k)):
-            out.add("人物." + k)
+    for k in set(nd.entry.accounts) | set(nd.exit.accounts):
+        if _norm(nd.entry.accounts.get(k)) != _norm(nd.exit.accounts.get(k)):
+            out.add("账." + k)
+    ea = {str(t.get("id")) for t in nd.entry.open_threads}
+    xa = {str(t.get("id")) for t in nd.exit.open_threads}
+    if ea - xa:
+        out.add("收线")
     if len(nd.exit.facts) > len(nd.entry.facts):
         out.add("新定死的事实")
     return frozenset(out)
@@ -315,12 +336,12 @@ SCHEMA_HINT = """{"children":[{
   "line":"这一块的主线一句话：谁在解决什么",
   "start":起始章号, "end":结束章号,
   "exit":{
-    "hero":{"身份":"…","位置":"…","能力上限":"…","伤":"…"},
-    "people":{"某人":"他此刻在哪、是什么状态"},
-    "assets":{"灵石":"…","地盘":"…"},
+    "accounts":{"金钟罩":"第二层","灵石":"300","名分":"苦役","人手":"3","左臂":"废"},
     "open_threads":[{"id":"t1","what":"还没揭开的那件事","due":"该在哪个节点内了结"}],
-    "facts":["这一块坐实、以后不许翻的事"]}
-}]}"""
+    "facts":["这一块坐实、以后不许翻的事"],
+    "notes":{"处境":"他此刻在哪、和谁在一起、压着什么事（散文，随便写）"}}
+}]}
+账目值必须是**短记号**（20字以内，像记账），不许写成描述句。"""
 
 
 def p_decompose(node: "Node", parent, left, right, k: int,
@@ -460,14 +481,15 @@ def p_root(seed: str, chapters: int) -> str:
 合同要写两头：开篇时世界是什么样（entry），全书写完时世界是什么样（exit）。
 两头都写成**表**，不是描述。规矩：
 
-· hero：主角的身份、位置、能力上限、伤。开篇和结尾必须明显不同。
-· people：开篇就已存在、且全书都要用的关键人物 —— 每人一句「他此刻在哪、什么状态」。
-  最多 6 个。结尾那一栏要写清他们各自落到哪儿。
-· assets：主角手里的东西（钱、地盘、人手、凭证、名分）。开篇通常接近于零。
+· accounts：**可数的账**，像记账一样写短记号（每格 20 字以内）。
+  必须包含：主角的功法层数、名分、伤（哪只手能用就写哪只）、钱、人手。
+  这是全书要反复动的那几格 —— 原著的形态就是「9人→3000人」「郓王→兵马元帅」。
+  开篇和结尾的数必须明显不同。
 · open_threads：开篇就埋下、要在全书之内了结的大线。3-6 条，每条带 id 和 what。
   due 一律先写 "R"（拆到下面几层时再落到具体哪一块）。
 · facts：开篇就已经坐实、全书不许翻的事（世界的规矩、主角的来历、
   已经发生过的不可逆的事）。
+· notes：主角此刻的处境、关键人物各在哪（散文，随便写，最多 6 人）。
 
 **不许出现现代专有名词**（地名、品牌、器物名）。主角的前世只能写成意象。
 **不许出现章号**（「第N章」这种）。
@@ -475,8 +497,8 @@ def p_root(seed: str, chapters: int) -> str:
 只输出 JSON，不要代码围栏：
 {{"title":"书名（八字以内）",
   "line":"全书一句话：谁用什么办法对付什么",
-  "entry":{{"hero":{{}},"people":{{}},"assets":{{}},"open_threads":[],"facts":[]}},
-  "exit":{{"hero":{{}},"people":{{}},"assets":{{}},"open_threads":[],"facts":[]}}}}"""
+  "entry":{{"accounts":{{}},"open_threads":[],"facts":[],"notes":{{}}}},
+  "exit":{{"accounts":{{}},"open_threads":[],"facts":[],"notes":{{}}}}}}"""
 
 
 def parse_root(raw: str, chapters: int) -> Optional["Node"]:
@@ -492,3 +514,135 @@ def parse_root(raw: str, chapters: int) -> Optional["Node"]:
                 line=str(d.get("line") or "")[:160], start=1, end=chapters,
                 entry=Contract.from_dict(d.get("entry")),
                 exit=Contract.from_dict(d.get("exit")))
+
+
+# ─────────────────────── 里程碑链（方案乙的主体） ───────────────────────
+# 不建四层树。全书 = 根合同 + 一条 30 节的里程碑链。
+# 每节的形状**直接抄真书**: 从两本原著反推的分窗分析(L2_win)长这样 ——
+# 段旗/入口/解法/反噬/账目/错算。反噬(exposes)必须是解法自身生出的新问题,
+# 不是外部又来了敌人; 下一节的 solves 原样等于上一节的 exposes。
+
+#: 真书里的一节, 当口味锚点用(大宋有种 L2 分窗实测产物, 非编造)。
+MILESTONE_EXAMPLE = """\
+解决：用信息差抢下「河北兵马元帅」名分, 拿钱买马带兵北上
+但是：给胜捷军发双份钱粮的烧钱解法, 被点破家底撑不了一年
+账目变动：名分 郓王→河北兵马元帅；兵力 9人→3000人；钱粮 40万贯→330万贯
+错算：主角凭「红脸大胡子站在使者身边」把刘彦宗错当成郭药师射杀, 金军认定宋人设局, 彻底翻脸"""
+
+
+def p_milestones(root: "Node", k: int) -> str:
+    return f"""全书要拆成 {k} 节里程碑。这是整本书的推进链, 不是目录。
+
+【全书】《{root.title}》{root.line}
+共 {root.end} 章。
+
+【开局账本】
+{root.entry.brief(700)}
+
+【终局账本】
+{root.exit.brief(700)}
+
+每一节写六样（口味参考, 这是从同类名作里实测反推的一节——
+{MILESTONE_EXAMPLE}
+）：
+
+严格输出 JSON（不要围栏），格式：
+{{"milestones":[{{
+  "title":"这一节叫什么（6-14字, 不许用书名）",
+  "solves":"这一节把什么问题按下去了（一句话）",
+  "exposes":"**解法本身**生出了什么新问题（一句话。必须是解法的代价/副作用/它惊动了谁, 不许写「又来了个更强的敌人」）",
+  "start":起始章, "end":结束章,
+  "accounts":{{"要动的那几格账": "这一节结束时的新值(短记号,20字内)"}},
+  "close":["这一节要收掉的线id"], "open":[{{"id":"新线id","what":"新埋的线"}}],
+  "miscalc":"这一节最重要的一次错算：谁把什么看成了什么, 因此做了什么"
+}}]}}
+
+硬规矩（程序逐条核对）：
+1. 第 1 节的 solves 接开局危机；第 {k} 节结束时账本必须**逐格等于**终局账本。
+2. **第 i+1 节的 solves 必须原样照抄第 i 节的 exposes**，一个字都不许换。
+3. 章号连续盖满 1-{root.end}。
+4. 每节至少动一格账（accounts 非空）, 且**不许连着三节都只动同一格**。
+5. 开局账本里的线（{('、'.join(t.get('id','') for t in root.entry.open_threads)) or '无'}）
+   每条都要被某一节 close 掉；close 与 open 的 id 不许凭空出现。"""
+
+
+def parse_milestones(raw: str, root: "Node") -> List["Node"]:
+    import json as _j
+    m = re.search(r"\{.*\}", raw or "", re.S)
+    if not m:
+        return []
+    try:
+        data = _j.loads(m.group(0))
+    except Exception:
+        return []
+    out: List[Node] = []
+    prev = root.entry
+    open_pool = {str(t.get("id")): t for t in root.entry.open_threads}
+    for i, c in enumerate(data.get("milestones") or []):
+        if not isinstance(c, dict):
+            continue
+        ex = Contract(accounts=dict(prev.accounts), facts=list(prev.facts),
+                      open_threads=[dict(t) for t in prev.open_threads],
+                      notes=dict(prev.notes))
+        for kk, vv in (c.get("accounts") or {}).items():
+            ex.accounts[str(kk)] = str(vv)[:ACCOUNT_MAX + 10]
+        closed = {str(x) for x in (c.get("close") or [])}
+        ex.open_threads = [t for t in ex.open_threads
+                           if str(t.get("id")) not in closed]
+        for t in (c.get("open") or []):
+            if isinstance(t, dict) and t.get("id"):
+                t.setdefault("due", "R")
+                ex.open_threads.append(dict(t))
+                open_pool[str(t["id"])] = t
+        nd = Node(id=f"R.{i+1}", level="volume",
+                  title=str(c.get("title") or "")[:30],
+                  line=str(c.get("miscalc") or "")[:140],
+                  start=int(c.get("start") or 0), end=int(c.get("end") or 0),
+                  entry=prev, exit=ex,
+                  solves=str(c.get("solves") or "")[:120],
+                  exposes=str(c.get("exposes") or "")[:120])
+        out.append(nd)
+        prev = ex
+    if out:
+        # 幼子出口的账目/事实 = 根出口(程序定死)。但**线不覆盖** —— 线取链自己
+        # 算出的结果: 若覆盖成根出口的线, 链上没人收的线会被一起洗掉,
+        # 「开局埋的线没人收」就查不出来了(实测这个 bug 让该测试假绿转假红)。
+        last = out[-1]
+        merged = Contract.from_dict(root.exit.to_dict())
+        seen = {_norm(x) for x in merged.facts}
+        merged.facts += [f for f in last.exit.facts if _norm(f) not in seen]
+        merged.open_threads = [dict(t) for t in last.exit.open_threads]
+        last.exit = merged
+    return out
+
+
+def check_milestones(root: "Node", ms: List["Node"]) -> List[str]:
+    """里程碑链体检: 但是链咬合(照抄判定) + 覆盖 + 变化多样性 + 线收干净。"""
+    errs = check_parent(root, ms)
+    for i in range(len(ms) - 1):
+        if _norm(ms[i + 1].solves) != _norm(ms[i].exposes):
+            errs.append(f"{ms[i].id}→{ms[i+1].id} 但是链断了："
+                        f"上节暴露「{ms[i].exposes[:24]}」, "
+                        f"下节解决的却是「{ms[i+1].solves[:24]}」(必须原样照抄)")
+    errs += check_variety(ms)
+    for nd in ms:
+        errs += check_progress(nd)
+    # 开局的线必须都有归宿
+    left = {str(t.get("id")) for t in (ms[-1].exit.open_threads if ms else [])}
+    for t in root.entry.open_threads:
+        if str(t.get("id")) in left:
+            errs.append(f"开局埋的线「{t.get('what','')[:20]}」到终局还开着, 没人收")
+    return errs
+
+
+def score_milestones(root: "Node", ms: List["Node"]) -> float:
+    """三候选选优的打分器。程序打分, 不问模型。
+
+    合规是淘汰线不是加分项(违约越多分越低), 加分给**多样性**:
+    动的账格种类越多越好 —— 温度拉满生三个候选, 谁不套路谁赢。
+    """
+    if not ms:
+        return -1e9
+    errs = check_milestones(root, ms)
+    kinds = {changed_fields(nd) for nd in ms if changed_fields(nd)}
+    return -10.0 * len(errs) + 2.0 * len(kinds) + 0.5 * len(ms)

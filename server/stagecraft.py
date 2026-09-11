@@ -1296,3 +1296,18 @@ def reshell_prompt(vol: Dict[str, Any], shell: str, left: int, n: int) -> str:
         f"（例如从杂役升执事不算换壳，从宗门跑去做商队护卫才算）。\n"
         f"- 换壳这件事要有人**看错**：至少一方以为他是被赶走的丧家犬，"
         f"因此对他做出错误的动作。")
+
+
+def sc_title_examples(style_pack) -> str:
+    """标题重起时给模型看的口味样例——取功能类各一例, 短。"""
+    tl = (style_pack or {}).get("章标题模板库") or {}
+    fc = tl.get("功能类") or []
+    exs = []
+    for t in fc[:6]:
+        e = (t.get("例") or [None])[0]
+        if e:
+            exs.append(str(e))
+    if not exs:
+        return "口味：像说书人在喊话，念出来能听出是谁在开口；多点对手的名字。"
+    return ("口味（各功能类一例，换着来）：" + "｜".join(exs)
+            + "\n念出来必须能听出是谁在开口；目录里对手的名字要比主角多。")
