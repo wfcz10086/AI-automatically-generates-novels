@@ -428,7 +428,9 @@ class Retriever:
         "养生茶注册非遗""LPL 春季赛 BP 规则"就完全抓不到。判断该查什么本身就是
         个理解任务, 应该交给模型。
         """
-        if not self.plan:
+        # 外搜关掉时不必再问「该查什么」—— 问完没地方查, 白烧一次模型调用。
+        # 实测架空书每章都在问, 然后 fact_for 一条都取不回。
+        if not self.plan or not self.enable_web:
             return []
         hint_line = ("参考方向（可以不用）：" + "、".join(hints[:8])) if hints else ""
         # 把**同时代查成过的检索式**当范例给它看。凭空想检索式的命中率不稳，

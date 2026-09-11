@@ -831,9 +831,22 @@ class Novelist:
                 era = self._ask_era(src)
             if not era:
                 era = self.genre.get("name", "")     # 实在捞不到才拿题材名兜底
+            # 架空世界不外搜。**架空里「考据」没有权威来源** —— 一炷香多久、
+            # 罗刹出自哪部佛经, 在这本书里是我们自己定的规矩, 不是历史事实;
+            # 而这类常识模型本来就有, 搜不搜结果一样。
+            # 实证: 上一本 163 章、这本 12 章, 外部召回全程「外0」, 评审均分
+            # 76.3 / 81 都没因此崩; 而 bocha 已连续 3421 次 403, 没人发现 ——
+            # 每章十几次注定失败的请求, 拖慢速度还淹掉日志。
+            # 真正需要外搜的是**真实历史**题材(锚定具体人名/官职/数字, 模型爱编),
+            # 所以按 history_mode 开关, 不一刀切。
+            _mode = (self.p.meta.get("history_mode") or "").lower()
+            _web = bool(self.mcfg.get("web_search", True)) and _mode != "invented"
+            if not _web and _mode == "invented":
+                print("[retrieval] 架空世界, 外部检索已关 —— "
+                      "考据靠模型常识 + canon 一致性, 不靠外搜")
             self._retriever = Retriever(
                 self.p.mem, self.p.dir, era=era,
-                enable_web=bool(self.mcfg.get("web_search", True)),
+                enable_web=_web,
                 summarize=lambda q: clean(call("polishing", q, max_tokens=800).text),
                 topics=self.genre.get("research_topics"),
                 plan=lambda q: clean(call("planning", q, max_tokens=500).text))
