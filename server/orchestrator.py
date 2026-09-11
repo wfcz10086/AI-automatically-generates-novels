@@ -4543,10 +4543,31 @@ class Novelist:
                     f"- {h['title']}：{h['text'][:220]}" for h in hits)
         except Exception as e:
             print(f"[outline] 事实召回跳过: {e}")
+        # 伏笔回收必须在**排纲**安排 —— 正文没法凭空造一个兑现。
+        # 原来这句写的是「本批**可择机**兑现」: 建议不是判据, 实测 67 章
+        # 151 条真伏笔只收 30 条(80% 未收)。改成点名 + 硬要求 + 程序核对。
         pend = self.p.mem.pending_foreshadow()
         if pend:
-            established += "\n【未回收伏笔，本批可择机兑现】" + "；".join(
-                f"第{f['planted']}章「{f['text'][:36]}」" for f in pend[:8])
+            _fd = self.style.get("foreshadowDue") or {}
+            _due = int(_fd.get("章数") or 12)
+            _need = int(_fd.get("每批至少收") or 2)
+            overdue = [f for f in pend if start - int(f["planted"]) >= _due]
+            if overdue:
+                k = min(_need, len(overdue))
+                self._overdue_names = [f["text"][:36] for f in overdue[:6]]
+                established += (
+                    f"\n【到期伏笔·本批必须收掉其中至少 {k} 条】\n"
+                    + "\n".join(f"　· 第{f['planted']}章埋的：「{f['text'][:46]}」"
+                                f"（已过 {start - int(f['planted'])} 章）"
+                                for f in overdue[:6])
+                    + f"\n　收的方式：在某一章的剧情条里**正面交代**它的结果"
+                      f"（那个人回来了／那件事被揭穿／那笔账被算清），"
+                      f"并在该章「一句话」里写明收的是哪一条。\n"
+                      f"　⚠ 这是验收项：本批 {count} 章里一条都没收，会被打回重排。")
+            rest = [f for f in pend if f not in overdue][:6]
+            if rest:
+                established += "\n【还没到期的伏笔（心里有数即可）】" + "；".join(
+                    f"第{f['planted']}章「{f['text'][:30]}」" for f in rest)
         if established:
             cons.append("【已确立的事实，不得推翻或给出不同结论】\n" + established[:2500])
 
@@ -4616,6 +4637,19 @@ class Novelist:
                 except Exception:
                     pass
         self.p.write("chapter_outlines.json", json.dumps(outlines, ensure_ascii=False, indent=2))
+        # 到期伏笔有没有真被收 —— 只喊「必须收」而不查, 和以前的「可择机兑现」
+        # 没有区别。按关键词核对: 到期那几条的字面有没有出现在本批细纲里。
+        names = getattr(self, "_overdue_names", None)
+        if names:
+            blob = "".join(outlines.get(str(i), "") for i in range(start, end + 1))
+            hit = [t for t in names
+                   if any(w and w in blob for w in re.findall(r"[一-鿿]{3,}", t)[:4])]
+            if hit:
+                self._log(f"  到期伏笔本批安排了 {len(hit)}/{len(names)} 条")
+            else:
+                self._log(f"  ⚠ 到期伏笔 {len(names)} 条，本批细纲一条都没碰 —— "
+                          f"回收率上不去就是这么来的")
+            self._overdue_names = None
         try:
             self.polish_titles(list(range(start, end + 1)), on_delta)
         except Exception as e:
