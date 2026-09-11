@@ -4738,8 +4738,11 @@ class Novelist:
             # 覆盖文风包的通用版本 —— 越贴题材越管用
             style_pack=({**st, "pleasureBeats": self.genre["pleasureBeats"]}
                         if self.genre.get("pleasureBeats") else st),
+            # 里程碑合同正文也要看 —— 只喂排纲的话, 正文只知道本章剧情,
+            # 不知道本节要走到哪、下一节从哪接(实测第1章提示词 🧭 出现 0 次)。
             extra_directive=((self.prompt_override("content_extra") or "")
-                             + self.asset_conflicts()),
+                             + self.asset_conflicts()
+                             + (("\n" + self.milestone_ctx(n)) if self.milestone_ctx(n) else "")),
             global_rules=self.cfg.get("anti_ai_rules") or [],
             directives=self.cfg.get("chapter_directives") or [],
             character_rules=((self.cfg.get("character_rules") or [])
