@@ -17,7 +17,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
@@ -567,6 +567,39 @@ def project_ledgers(slug: str):
                     for i, m in enumerate(st.get("methods") or [])
                     if isinstance(m, dict)],
     })
+
+
+@app.get("/api/projects/<slug>/tree")
+def project_tree(slug: str):
+    """节点树 + 逐条违约。
+
+    树的全部价值在于「程序能查」—— 查出来的东西必须看得见, 否则和以前那套
+    「只写日志给人看, 不阻断生成」的告警一样, 没人看就等于没有。
+    """
+    from server import tree as tr
+    p = Project(slug)
+    raw = p._load("tree.json", {}) or {}
+    nodes = {k: tr.Node.from_dict(v) for k, v in raw.items()
+             if isinstance(v, dict) and v.get("id")}
+    errs = tr.audit_tree(nodes) if nodes else []
+    # 违约按节点归堆, 让前端能把红点打在具体那一块上
+    by_node: Dict[str, List[str]] = {}
+    for e in errs:
+        m = re.match(r"\[([^\]]+)\]\s*(.*)", e)
+        by_node.setdefault(m.group(1) if m else "_", []).append(
+            m.group(2) if m else e)
+    out = []
+    for nid in sorted(nodes, key=lambda x: (len(x.split(".")), x)):
+        nd = nodes[nid]
+        d = nd.to_dict()
+        d["depth"] = len(nid.split(".")) - 1
+        d["errors"] = by_node.get(nid, [])
+        d["brief_entry"] = nd.entry.brief(400)
+        d["brief_exit"] = nd.exit.brief(400)
+        d["changed"] = sorted(tr.changed_fields(nd))
+        out.append(d)
+    return jsonify({"nodes": out, "errors": errs, "ok": not errs,
+                    "count": len(nodes)})
 
 
 @app.route("/api/projects/<slug>/dials", methods=["GET", "PUT"])

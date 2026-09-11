@@ -251,3 +251,31 @@ def test_没收的线中途不许掉_除非到期():
     k1, k2 = parse_children(raw, node)
     assert any(x.get("id") == "t1" for x in k1.exit.open_threads), "没到期就掉了"
     assert not any(x.get("id") == "t1" for x in k2.exit.open_threads), "到期该收掉"
+
+
+# ───────────── 剧情太标：每块都在动同一格 ─────────────
+
+def test_每块都只挪位置就是同一套流程():
+    """「剧情太标」不是文笔问题，是每一块推动的是同一格。163 章那本书正面冲突
+    全走一套（轻视→硬扛→打脸→交账），读单章很爽，连读就疲劳。"""
+    from server.tree import check_variety
+    kids = []
+    prev = C(hero={"位置": "A", "身份": "苦役"})
+    for i, loc in enumerate("BCDE"):
+        ex = C(hero={"位置": loc, "身份": "苦役"})
+        kids.append(N(f"R.{i+1}", i * 10 + 1, i * 10 + 10, entry=prev, exit=ex))
+        prev = ex
+    errs = check_variety(kids)
+    assert errs and "同一格" in errs[0]
+
+
+def test_动的格子有变化就放行():
+    from server.tree import check_variety
+    c0 = C(hero={"位置": "A", "身份": "苦役"}, assets={"灵石": "3"})
+    c1 = C(hero={"位置": "B", "身份": "苦役"}, assets={"灵石": "3"})
+    c2 = C(hero={"位置": "B", "身份": "执事"}, assets={"灵石": "3"})
+    c3 = C(hero={"位置": "B", "身份": "执事"}, assets={"灵石": "300"})
+    kids = [N("R.1", 1, 10, entry=c0, exit=c1),
+            N("R.2", 11, 20, entry=c1, exit=c2),
+            N("R.3", 21, 30, entry=c2, exit=c3)]
+    assert check_variety(kids) == []

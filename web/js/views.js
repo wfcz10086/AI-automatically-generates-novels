@@ -289,7 +289,14 @@ const TabRender = {
   },
   structure(p) {
     return `<div class="card"><div class="card-head">
-        <div class="card-title">故事骨架</div>
+        <div class="card-title">合同树</div>
+        <div class="card-sub" id="tr-sub">全书 → 阶段 → 卷 → 单元 → 章。
+          每块写清进来时什么状态、出去时什么状态；上一块的出口必须等于下一块的进口。
+          这些是**程序**逐字段核对的，红条就是违约。</div>
+        <div class="card-actions"><button class="btn btn-sm" id="tr-reload">刷新</button></div>
+      </div><div id="tr-body"><div class="card-sub">读取中…</div></div></div>
+      <div class="card"><div class="card-head">
+        <div class="card-title">故事骨架（旧）</div>
         <div class="card-sub" id="st-sub">读取中…</div>
         <div class="card-actions">
           <button class="btn btn-sm" id="st-build">生成骨架</button>
@@ -737,6 +744,48 @@ const TabMount = {
              [['角色','140px'],['出场章数','90px'],['首–末','110px'],['最大空档','90px']],
              cast, '还没有出场数据');
     };
+    // ── 合同树 ──
+    const drawTree = (d) => {
+      const box = $('#tr-body'); if (!box) return;
+      if (!d.count) {
+        box.innerHTML = '<div class="empty">还没有合同树。'
+          + '种子定下来之后，从根节点往下拆。</div>';
+        $('#tr-sub').innerHTML += ` <span class="badge badge-neutral">未建树</span>`;
+        return;
+      }
+      $('#tr-sub').innerHTML = d.ok
+        ? `${d.count} 个节点 <span class="badge badge-ok">全部咬合</span>`
+        : `${d.count} 个节点 <span class="badge badge-err">${d.errors.length} 处违约</span>`;
+      box.innerHTML = d.nodes.map(n => {
+        const bad = (n.errors || []).length;
+        return `<div style="margin:6px 0 6px ${n.depth * 18}px;padding:8px 10px;
+             border-left:3px solid var(--${bad ? 'err' : 'ok'});background:var(--bg-2);
+             border-radius:0 6px 6px 0">
+          <div style="display:flex;gap:8px;align-items:baseline">
+            <span class="badge badge-neutral">${esc(n.id)}</span>
+            <b>${esc(n.title || '(未命名)')}</b>
+            <span class="card-sub">第 ${n.start}-${n.end} 章 · ${esc(n.level)}</span>
+            ${bad ? `<span class="badge badge-err">${bad} 违约</span>` : ''}
+          </div>
+          ${n.line ? `<div style="font-size:13px;margin-top:3px">${esc(n.line)}</div>` : ''}
+          <div class="card-sub" style="margin-top:4px">这一块动了：${
+            (n.changed || []).length ? esc(n.changed.join('、'))
+              : '<span style="color:var(--err)">什么都没动（原地打转）</span>'}</div>
+          <details style="margin-top:4px"><summary class="card-sub">进／出口合同</summary>
+            <div class="mono-log" style="white-space:pre-wrap;font-size:12px">进：${
+              esc(n.brief_entry || '（无）')}\n\n出：${esc(n.brief_exit || '（无）')}</div>
+          </details>
+          ${bad ? `<div style="margin-top:4px;font-size:12px;color:var(--err)">`
+            + n.errors.map(e => '· ' + esc(e)).join('<br>') + '</div>' : ''}
+        </div>`;
+      }).join('');
+    };
+    const loadTree = async () => {
+      try { drawTree(await API.get(`/api/projects/${slug}/tree`)); }
+      catch (e) { $('#tr-body').innerHTML = '<div class="empty">读不到合同树</div>'; }
+    };
+    if ($('#tr-body')) { $('#tr-reload').onclick = loadTree; loadTree(); }
+
     if ($('#st-body')) {
       $('#st-reload').onclick = load;
       $('#st-build').onclick = async () => {

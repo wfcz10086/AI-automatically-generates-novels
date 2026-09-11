@@ -216,8 +216,47 @@ def check_progress(nd: Node) -> List[str]:
     same_asset = all(_norm(a.assets.get(k)) == _norm(b.assets.get(k))
                      for k in set(a.assets) | set(b.assets))
     if same_hero and same_asset:
-        return [f"{nd.id}「{nd.title}」原地打转：主角的身份/位置/能力/伤没变，"
+        return [f"「{nd.title or nd.id}」原地打转：主角的身份/位置/能力/伤没变，"
                 f"资源也没变 —— 这一块读完，世界还是老样子"]
+    return []
+
+
+def changed_fields(nd: Node) -> frozenset:
+    """这一块到底动了哪几格。用来判「是不是每块都在做同一件事」。"""
+    out = set()
+    for k in set(nd.entry.hero) | set(nd.exit.hero):
+        if _norm(nd.entry.hero.get(k)) != _norm(nd.exit.hero.get(k)):
+            out.add("主角." + k)
+    for k in set(nd.entry.assets) | set(nd.exit.assets):
+        if _norm(nd.entry.assets.get(k)) != _norm(nd.exit.assets.get(k)):
+            out.add("资源." + k)
+    for k in set(nd.entry.people) | set(nd.exit.people):
+        if _norm(nd.entry.people.get(k)) != _norm(nd.exit.people.get(k)):
+            out.add("人物." + k)
+    if len(nd.exit.facts) > len(nd.entry.facts):
+        out.add("新定死的事实")
+    return frozenset(out)
+
+
+def check_variety(kids: List[Node], min_kinds: int = 2) -> List[str]:
+    """兄弟之间不许每块都在做同一件事。
+
+    「剧情太标」不是文笔问题, 是**每一块推动的是同一格**。实测那本 163 章的书,
+    正面冲突全走一套流程(轻视→硬扛→打脸→交账), 读单章很爽, 连读就疲劳。
+    根子是没有任何机制要求「这一块推动的东西和上一块不一样」。
+    """
+    if len(kids) < 3:
+        return []
+    sigs = [changed_fields(k) for k in kids]
+    kinds = {s for s in sigs if s}
+    if len(kinds) < min_kinds:
+        only = "、".join(sorted(next(iter(kinds)))) if kinds else "什么都没动"
+        return [f"{len(kids)} 块推动的是同一格（{only}）—— 连着读就是同一套流程"]
+    # 连着三块签名完全一样也算
+    for i in range(len(sigs) - 2):
+        if sigs[i] and sigs[i] == sigs[i + 1] == sigs[i + 2]:
+            return [f"{kids[i].id}~{kids[i+2].id} 连着三块动的是同一格"
+                    f"（{'、'.join(sorted(sigs[i]))}）"]
     return []
 
 
@@ -226,9 +265,12 @@ def audit_tree(nodes: Dict[str, Node]) -> List[str]:
     errs: List[str] = []
     for nid, nd in sorted(nodes.items()):
         kids = [nodes[c] for c in nd.children if c in nodes]
-        errs += check_progress(nd) if nd.id != "R" else []
+        # 违约要能归到具体节点上, 否则前端的红点会打错地方 ——
+        # audit 的输出既是给人看的, 也是前端定位用的, 格式必须统一成 [nid]。
+        errs += [f"[{nid}] {e}" for e in (check_progress(nd) if nd.id != "R" else [])]
         if kids:
             errs += [f"[{nid}] {e}" for e in check_parent(nd, kids)]
+            errs += [f"[{nid}] {e}" for e in check_variety(kids)]
             for i in range(len(kids) - 1):
                 errs += [f"[{kids[i].id}→{kids[i+1].id}] {e}"
                          for e in check_seam(kids[i], kids[i + 1])]
@@ -377,7 +419,7 @@ def decompose(node: Node, parent, left, right, k: int, call,
         if not kids:
             errs = ["没解析出子节点"]
         else:
-            errs = check_parent(node, kids)
+            errs = check_parent(node, kids) + check_variety(kids)
             for kid in kids:
                 errs += check_progress(kid)
         if not errs:
