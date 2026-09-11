@@ -510,10 +510,15 @@ def parse_root(raw: str, chapters: int) -> Optional["Node"]:
         d = _j.loads(m.group(0))
     except Exception:
         return None
+    entry = Contract.from_dict(d.get("entry"))
+    exit_ = Contract.from_dict(d.get("exit"))
+    # facts 只增不减对根自己也成立: 链会把 entry.facts 一路带到幼子出口,
+    # 根出口若不含它们, 父子核对必然报「已定死的事实丢了」(实测 7 处全是这个)。
+    seen = {_norm(x) for x in exit_.facts}
+    exit_.facts = [f for f in entry.facts if _norm(f) not in seen] + exit_.facts
     return Node(id="R", level="book", title=str(d.get("title") or "")[:40],
                 line=str(d.get("line") or "")[:160], start=1, end=chapters,
-                entry=Contract.from_dict(d.get("entry")),
-                exit=Contract.from_dict(d.get("exit")))
+                entry=entry, exit=exit_)
 
 
 # ─────────────────────── 里程碑链（方案乙的主体） ───────────────────────

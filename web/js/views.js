@@ -1297,7 +1297,9 @@ const SettingsView = {
           <input class="input" id="g-ctx" value="${esc(String(g.context_budget))}">
           <div class="hint">填 <code>auto</code> 按网关窗口自动推导；或填数字。限定 ${fmtNum(g.min_context_budget)}–${fmtNum(g.max_context_budget)}</div></div></div>
         <div class="row">${num('g-td','正文温度',g.temperature_draft)}
-          ${num('g-tp','规划温度',g.temperature_plan)}</div></div>
+          ${num('g-tp','规划温度',g.temperature_plan)}
+          ${num('g-cand','并发候选数',g.candidates||3,
+            '多发散选优：里程碑/细纲/正文各生成几个候选，程序打分选最好的。温度拉满时 3 个足够拉开差距')}</div></div>
       <div class="card"><div class="card-head"><div class="card-title">质量闸</div></div>
         <div class="row">${num('q-pass','AI 味合格线 (0-100)',q.audit_pass_score,'低于此分自动重写')}
           ${num('q-rw','每章最多重写次数',q.max_rewrites)}</div></div>
@@ -1389,7 +1391,8 @@ const SettingsView = {
         outline_batch:v('#g-batch'),
         context_budget: ($('#g-ctx').value.trim().toLowerCase() === 'auto'
                          ? 'auto' : (+$('#g-ctx').value || 'auto')),
-        temperature_draft:v('#g-td'), temperature_plan:v('#g-tp')});
+        temperature_draft:v('#g-td'), temperature_plan:v('#g-tp'),
+        candidates:v('#g-cand')});
       Object.assign(s.limits, {max_chapters:v('#l-ch'), max_total_words:v('#l-w')});
       Object.assign(s.quality, {audit_pass_score:v('#q-pass'), max_rewrites:v('#q-rw')});
       Object.assign(s.memory, {top_k:v('#m-k'), recent_chapters:v('#m-rec'), l2_every:v('#m-l2')});

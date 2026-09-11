@@ -20,9 +20,17 @@ def say(m):
 def one_candidate(tag: str, root, k: int):
     t = time.time()
     try:
-        r = call("planning", tr.p_milestones(root, k), max_tokens=16000)
-        ms = tr.parse_milestones((r.text or ""), root)
-        errs = tr.check_milestones(root, ms) if ms else ["没解析出来"]
+        # 失败重试 2 次(用户要求): 空输出/解析不出都算失败。温度拉满时
+        # 偶发空输出是常态, 一次失败就弃权等于白白少一个候选。
+        ms, r = [], None
+        for attempt in range(3):
+            r = call("planning", tr.p_milestones(root, k), max_tokens=16000)
+            ms = tr.parse_milestones((r.text or ""), root)
+            if ms:
+                break
+            say(f"  候选{tag}: 第{attempt+1}次没解析出来"
+                f"({'空输出' if not (r.text or '').strip() else '非JSON'}), 重试")
+        errs = tr.check_milestones(root, ms) if ms else ["三次都没解析出来"]
         # 违约打回去修一轮(只修不重来)
         if ms and errs:
             r2 = call("planning", tr.p_repair(root, errs, r.text), max_tokens=16000)
@@ -44,8 +52,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tree", required=True)
     ap.add_argument("--k", type=int, default=30)
-    ap.add_argument("--n", type=int, default=3)
+    ap.add_argument("--n", type=int, default=0, help="0=读配置 generation.candidates")
     a = ap.parse_args()
+    if not a.n:
+        import yaml
+        cfg = yaml.safe_load((ROOT / "config/settings.yaml").read_text(encoding="utf-8"))
+        a.n = int((cfg.get("generation") or {}).get("candidates") or 3)
     d = Path(a.tree)
     nodes = {k: tr.Node.from_dict(v) for k, v in
              json.loads((d / "tree.json").read_text(encoding="utf-8")).items()}

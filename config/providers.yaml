@@ -153,7 +153,11 @@ search:
 #   drafting/planning 要野 —— 温度低会把「剧情太标」坐实(每块都走同一套流程)
 #   judging 必须低 —— 它是尺子, 尺子自己会飘就没法比较章与章
 profiles:
-  planning:   {gateway: gw6, thinking: false, temperature: 1.0}
+  # planning 开思考(2026-09-11 用户要求): 规划/拆里程碑最吃推理 —— 候选A 的
+  # 14 处违约就是不思考的 flash 干规划的产物。旧的「开思考4分钟超时」测量
+  # 条件已变: 那是聚合网关+6万字提示词; 现在自建实例+树式短提示词(三四千字)。
+  # drafting 仍关: 正文输出长, 思考会挤掉正文额度。
+  planning:   {gateway: gw6, thinking: true, temperature: 1.0}
   drafting:   {gateway: gw6, thinking: false, temperature: 1.0}
   polishing:  {gateway: gw6, thinking: false, temperature: 0.95}
   # judging 原来关着思考，理由是「推理与答案共用 max_tokens，2000 的判定任务
