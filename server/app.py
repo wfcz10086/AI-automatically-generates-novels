@@ -956,7 +956,11 @@ def export(slug: str):
         return jsonify({"error": f"不支持的格式 {fmt}"}), 400
     name = f"{p.meta.get('title', 'novel')}.{EXT[fmt]}"
     # 中文文件名必须按 RFC 5987 百分号编码, 否则 WSGI 写 header 时 latin-1 编码失败
-    mime = MIME[fmt] + ("" if fmt in BINARY_EXPORTERS else "; charset=utf-8")
+    # MIME 表里若已带 charset 就别再追一遍 —— 实测响应头是
+    # "text/plain; charset=utf-8; charset=utf-8"
+    mime = MIME[fmt]
+    if fmt not in BINARY_EXPORTERS and "charset" not in mime.lower():
+        mime += "; charset=utf-8"
     return Response(body, mimetype=mime, headers={
         "Content-Disposition": "attachment; filename=\"export.%s\"; filename*=UTF-8''%s"
                                % (EXT[fmt], quote(name, safe=""))})

@@ -521,3 +521,23 @@ def test_任务槽不设限():
     """「这一章要写什么」挤掉了就等于不写。"""
     from server.prompt_compiler import SLOT_BUDGET
     assert SLOT_BUDGET["任务"] == 0
+
+
+def test_文风包与全局纪律不许互相打架():
+    """同一件事被几处各说一遍、说法还不一样，模型只能各取一半 ——
+    实测表现就是「文体漂移 27%」。扫出来过 10 处：句长(manner 说短句 vs
+    sentenceChars 说别切碎)、段落(包说两三句一段 vs 手艺块说大量单句成段
+    vs 全局说一段只写一个动作)、环境描写限额两个数。"""
+    import importlib.util as _il
+    from pathlib import Path as _P
+    root = _P(__file__).resolve().parents[2]
+    spec = _il.spec_from_file_location("pc", root / "scripts/pack_conflicts.py")
+    pc = _il.module_from_spec(spec); spec.loader.exec_module(pc)
+    import json as _j
+    glob = pc.load_global()
+    bad = []
+    for f in sorted((root / "packs/style").glob("*.json")):
+        bad += pc.check(_j.loads(f.read_text(encoding="utf-8")), glob)
+    high = [b for b in bad if b[0] == "高"]
+    assert not high, f"高危冲突: {high}"
+    assert not bad, f"还有冲突: {bad}"
