@@ -199,7 +199,11 @@ def parse(raw: str) -> Dict[str, Any]:
 #: 生死是伤害最大的一类事实 —— 死了的人又活了、活着的人被写死, 一旦固化就
 #: 一路错到底。这两组词互斥, 用程序判得了, 不该只靠评审(它是概率性的:
 #: 实测第5章第一遍抓到 4 条矛盾, 重写后同样的错误一条没抓到, 脏事实照样入账)。
-_DEAD = ("已死", "死亡", "身亡", "被杀", "毙命", "尸体", "咽气", "断气")
+#: 死亡词要覆盖词根而不是固定搭配 —— 实测「被一拳打死」不含上面任何一个词,
+#: 反向检测直接漏掉。用「死」字兜底, 再排除「拼死/生死/死死/不死心」这类干扰。
+_DEAD = ("已死", "死亡", "身亡", "被杀", "杀死", "打死", "毙命", "尸体",
+         "咽气", "断气", "死了", "丧命", "殒命")
+_DEAD_FALSE = ("拼死", "生死", "死死", "不死心", "死战", "死守", "该死", "死活")
 _ALIVE = ("逃走", "逃脱", "跑了", "逃跑", "被逼退", "退走", "撤离", "未死",
           "活口", "生还", "报信", "逃离")
 
@@ -208,7 +212,10 @@ def _alive_dead_conflict(canon: List[Dict[str, Any]], subj: str,
                          fact: str) -> Optional[Dict[str, Any]]:
     """新事实说他死了, 而台账里有条说他跑了(或反过来) —— 返回冲突的那一条。"""
     def pol(t: str) -> int:
-        d = any(w in t for w in _DEAD)
+        clean_t = t
+        for w in _DEAD_FALSE:
+            clean_t = clean_t.replace(w, "")
+        d = any(w in clean_t for w in _DEAD)
         a = any(w in t for w in _ALIVE)
         return 1 if (d and not a) else (-1 if (a and not d) else 0)
 

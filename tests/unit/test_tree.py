@@ -378,8 +378,10 @@ def test_矛盾章的新事实不入台账():
     contradictions = [{"fact": "第4章确立散修乙未死"}]
     merged, added = (canon, 0) if contradictions else cm.merge_canon(canon, new, 5)
     assert added == 0 and len(merged) == 1
-    # 无矛盾时照常收
-    merged2, added2 = cm.merge_canon(canon, new, 5)
+    # 无矛盾时照常收（换个与生死无关的事实——原例恰好撞上生死冲突检测）
+    _, added2 = cm.merge_canon(list(canon),
+                               [{"subject": "狐媚", "fact": "献出虚弥戒认主",
+                                 "kind": "other"}], 5)
     assert added2 == 1
 
 
