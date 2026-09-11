@@ -2019,6 +2019,48 @@ class Novelist:
         self._log(f"换壳令: 第{cur['index']}卷还剩 {left} 章, 卷末要收走「{shell or '当前位置'}」")
         return sc.reshell_prompt(cur, shell, left, n)
 
+    def milestone_ctx(self, n: int) -> str:
+        """本章所属里程碑的合同 + 左右节 —— 排纲的主供料。
+
+        这是树式分解的全部收益落地点: 与全书长度无关的几千字, 既有「从哪来」
+        (本节进口), 也有「必须走到哪」(本节出口)和「下一节从哪开始」——
+        伏笔有方向了(上一本 496 条埋、197 条没人收, 就是因为没有方向)。
+        """
+        f = self.p.dir / "tree.json"
+        if not f.exists():
+            return ""
+        try:
+            import server.tree as tr
+            nodes = {k: tr.Node.from_dict(v) for k, v in
+                     json.loads(f.read_text(encoding="utf-8")).items()}
+        except Exception as e:
+            self._log(f"[tree] 读取失败: {e}")
+            return ""
+        ms = sorted((x for x in nodes.values() if x.id != "R"),
+                    key=lambda x: x.start)
+        cur = next((m for m in ms if m.start <= n <= m.end), None)
+        if not cur:
+            return ""
+        i = ms.index(cur)
+        left = ms[i - 1] if i > 0 else None
+        right = ms[i + 1] if i + 1 < len(ms) else None
+        out = [f"🧭【本节里程碑·第{cur.start}-{cur.end}章「{cur.title}」】",
+               f"　本节解决：{cur.solves}",
+               f"　但是（本节的解法必须生出这个新问题）：{cur.exposes}",
+               (f"　本节关键错算：{cur.line}" if cur.line else ""),
+               f"　进这节时：{cur.entry.brief(400)}",
+               f"　出这节时必须是：{cur.exit.brief(400)}"]
+        if left:
+            out.append(f"　上一节「{left.title}」刚解决了：{left.solves[:40]}")
+        if right:
+            out.append(f"　下一节「{right.title}」要解决的是：{right.solves[:40]} —— "
+                       f"本节埋的伏笔往这个方向埋。")
+        pos = n - cur.start + 1
+        total = cur.end - cur.start + 1
+        out.append(f"　本章是本节的第 {pos}/{total} 章"
+                   + ("，**该开始收口对齐出口账本了**。" if pos > total * 0.7 else "。"))
+        return "\n".join(x for x in out if x)
+
     def world_turn(self, n: int) -> str:
         """每隔几章让各势力各走一步 —— 完全不管主角在干什么。
 
@@ -4395,6 +4437,9 @@ class Novelist:
         lm = self.live_misreads(start)
         if lm:
             cons.insert(0, "🔥【正在发酵的误会·本批的情节燃料】\n" + lm)
+        mc = self.milestone_ctx(start)
+        if mc:
+            cons.insert(0, mc)
         # 世界自转 —— 横向扩散。放在最前面, 让排纲先看见「世界自己变成了什么样」,
         # 再决定主角撞上哪一条。没有这一块, 各势力就只是背景板。
         wt = self.world_turn(start)
