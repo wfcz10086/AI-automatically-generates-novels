@@ -279,3 +279,24 @@ def test_动的格子有变化就放行():
             N("R.2", 11, 20, entry=c1, exit=c2),
             N("R.3", 21, 30, entry=c2, exit=c3)]
     assert check_variety(kids) == []
+
+
+def test_幼子的出口由程序赋值_不让模型复述():
+    """根节点 exit 有 28 个字段。原来要求「幼子出口逐字段等于父出口」，
+    等于让模型一字不差抄 28 条字符串 —— 实测连着两轮都是 25 处违约、
+    数字一模一样，它不是没修，是这根本不是它能修的。
+    能由程序定死的，就不要问模型（和进口同一个道理）。"""
+    from server.tree import parse_children
+    node = N("R", 1, 20,
+             entry=C(hero={"位置": "狐寨"}, facts=["世界规矩甲"]),
+             exit=C(hero={"身份": "天下之主", "位置": "缥缈阁", "能力上限": "大成"},
+                    assets={"地盘": "天下"}, facts=["世界规矩甲", "轮回已终结"]))
+    raw = ('{"children":[{"title":"甲","line":"x","start":1,"end":10,'
+           '"exit":{"hero":{"位置":"码头"}}},'
+           '{"title":"乙","line":"y","start":11,"end":20,'
+           '"exit":{"hero":{"位置":"随便写的"}}}]}')     # ← 模型瞎写
+    k1, k2 = parse_children(raw, node)
+    assert k2.exit.hero["身份"] == "天下之主"        # 程序按父出口填
+    assert k2.exit.hero["位置"] == "缥缈阁"
+    assert k2.exit.assets["地盘"] == "天下"
+    assert check_parent(node, [k1, k2]) == [], "幼子出口应当在构造上就等于父出口"

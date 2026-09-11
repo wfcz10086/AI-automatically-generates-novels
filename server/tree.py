@@ -336,6 +336,8 @@ def p_decompose(node: "Node", parent, left, right, k: int,
 2. 每个子块只写 exit（进口由上一块的出口自动接上，你不用写）。
    相邻两块之间：前一块的 exit 就是后一块的进口，所以 exit 要写全，
    不许只写「变化的那部分」。
+   **最后一块的 exit 不用你操心** —— 它必然等于上面「它出去时必须是这个状态」，
+   程序会直接填。你只要保证倒数第二块的 exit 离那个状态**只差最后一步**。
 3. 章号连续且不重叠，合起来正好盖满 {node.start}-{node.end}。
 4. open_threads 里每条都要有 id 和 due。**一条线只能在 due 指定的那一块里了结**；
    在它之前的每一块 exit 里都要原样带着它，不许中途消失。
@@ -403,6 +405,17 @@ def parse_children(raw: str, node: "Node") -> List["Node"]:
         )
         out.append(nd)
         prev_exit = nd.exit
+    if out:
+        # 幼子的出口**就是**父节点的出口 —— 这是定义, 不是要求。
+        # 原来让模型自己复述一遍: 根节点 exit 有 28 个字段(hero4+people6+
+        # assets7+线6+facts5), 等于要它一字不差抄 28 条字符串。实测连着两轮
+        # 都是 25 处违约、数字一模一样 —— 它不是没修, 是这根本不是它能修的。
+        # 和进口同一个道理: 能由程序定死的, 就不要问模型。
+        last = out[-1]
+        merged = Contract.from_dict(node.exit.to_dict())
+        _seen = {_norm(x) for x in merged.facts}
+        merged.facts += [f for f in last.exit.facts if _norm(f) not in _seen]
+        last.exit = merged
     return out
 
 
