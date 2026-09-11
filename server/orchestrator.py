@@ -417,7 +417,12 @@ def call(profile: str, prompt: str, on_delta: Optional[Callable[[str], None]] = 
     # 逐个调用去猜 max_tokens 是猜不完的（加一栏字段就得改一处预算，
     # 这个坑已经踩了三次：细纲批量、细纲审阅、角色档案）。
     # API 本来就给了 finish_reason=length 这个信号，接住它，从根上不截断。
-    if (out and _cont < CONTINUE_ROUNDS
+    # drafting 例外: 正文的 max_tokens 是**按目标字数算出来的意图**
+    # (cap = 目标字 × 0.75 × 1.25), 撞上它意味着「写够了, 停」, 不是被切断。
+    # 实测第6章: 撞上 2625 tok 上限后续写, 最终 5655 字 —— 目标 2400-3200,
+    # 超 77%。续写机制把字数上限整个废掉了。
+    # 结构化产物(细纲/角色档案/评审 JSON)才需要续写, 那里截断是真的坏。
+    if (out and _cont < CONTINUE_ROUNDS and profile != "drafting"
             and getattr(provider, "last_finish", "") == "length"):
         print(f"  [call] {profile} 撞上输出上限（{kw.get('max_tokens')} tok，"
               f"已出 {len(out)} 字），第 {_cont + 1} 次续写", flush=True)
