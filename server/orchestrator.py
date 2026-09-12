@@ -2589,6 +2589,18 @@ class Novelist:
         cached = self.p._load("volumes.json", None)
         if cached:
             return cached
+        # 树在的话, 卷**就是**树上的里程碑节 —— 不另外再生成一套。
+        # 实测这本重开时两套同时存在: 树上 8 节(照种子的八条但是链拆的, 每节
+        # solves 逐字等于上节 exposes, 程序验过 0 违约), 而这里又让模型另生
+        # 9 卷, 链还咬不上(日志连报三处「另起炉灶了」)。两个真相源, 用的是
+        # 差的那个。树是照种子拆的, 它说了算。
+        from_tree = self._volumes_from_tree()
+        if from_tree:
+            self.p.write("volumes.json",
+                         json.dumps(from_tree, ensure_ascii=False, indent=2))
+            self._log(f"分卷 {len(from_tree)} 卷（直接取自合同树的里程碑链，"
+                      f"但是链已由程序验过，不再另生成一套）")
+            return from_tree
         total = self.p.meta.get("target_chapters", 0)
         per = max(20, min(50, total // max(3, round(total / 40)) if total else 40))
         n_vol = max(2, round(total / per)) if total else 4
@@ -2644,6 +2656,47 @@ class Novelist:
             self.p.mem.index_document("world", "volumes", r.text)
         self._log(f"分卷 {len(vols)} 卷 / {r.elapsed:.1f}s")
         return vols
+
+    def _volumes_from_tree(self) -> List[Dict[str, Any]]:
+        """合同树的里程碑链 → 卷。没有树就返回空，由调用方退回模型生成。
+
+        卷名、起止章、本卷解决什么、解决之后暴露什么，四样树上全有，而且
+        「下一节的 solves 逐字等于上一节的 exposes」是**程序验过**的，
+        比这里用重合系数 0.40 模糊判一遍可靠得多。
+        """
+        f = self.p.dir / "tree.json"
+        if not f.exists():
+            return []
+        try:
+            import server.tree as tr
+            nodes = {k: tr.Node.from_dict(v) for k, v in
+                     json.loads(f.read_text(encoding="utf-8")).items()}
+        except Exception as e:
+            self._log(f"[tree] 分卷读取失败: {type(e).__name__}: {e}")
+            return []
+        ms = sorted((x for x in nodes.values() if x.id != "R"),
+                    key=lambda x: x.start)
+        if len(ms) < 2:
+            return []
+        out = []
+        for i, m in enumerate(ms):
+            nxt = ms[i + 1] if i + 1 < len(ms) else None
+            out.append({
+                "index": i + 1, "name": m.title[:30],
+                "start": m.start, "end": m.end,
+                "solves": m.solves[:80], "exposes": m.exposes[:80],
+                "text": "\n".join(x for x in [
+                    f"卷名：{m.title}",
+                    f"本卷主线：{m.line}" if m.line else "",
+                    f"本卷解决：{m.solves}",
+                    f"解决之后暴露：{m.exposes}",
+                    f"进这一卷时：{m.entry.brief(500)}",
+                    f"出这一卷时必须是：{m.exit.brief(500)}",
+                    (f"下一卷要解决的正是本卷暴露的那个问题：{nxt.solves[:60]}"
+                     if nxt else "本卷是全书最后一卷"),
+                ] if x),
+            })
+        return out
 
     @staticmethod
     def _check_volume_chain(vols: List[Dict[str, Any]]) -> List[str]:

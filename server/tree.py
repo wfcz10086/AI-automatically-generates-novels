@@ -779,6 +779,8 @@ def p_milestones(root: "Node", k: int, seed_chain: str = "") -> str:
   "start":起始章, "end":结束章,
   "accounts":{{"要动的那几格账": "这一节结束时的新值(短记号,20字内)"}},
   "close":["这一节要收掉的线id"], "open":[{{"id":"新线id","what":"新埋的线"}}],
+  "notes":{{"位置":"这一节结束时主角人在哪", "身边":"谁跟着他、谁在盯他",
+           "处境":"此刻最要命的是什么"}},
   "miscalc":"这一节最重要的一次错算：谁把什么看成了什么, 因此做了什么"
 }}]}}
 
@@ -811,6 +813,13 @@ def parse_milestones(raw: str, root: "Node") -> List["Node"]:
                       notes=dict(prev.notes))
         for kk, vv in (c.get("accounts") or {}).items():
             ex.accounts[str(kk)] = str(vv)[:ACCOUNT_MAX + 10]
+        # notes 也要读。原来这一栏**从头到尾没人读过**: 提示词没问, 解析不取,
+        # 只有上面那句 notes=dict(prev.notes) 一路往下抄 —— 于是第 1 到第 7 卷
+        # 的「此刻主角在哪」全是根节点那句「曼哈顿某废弃大楼顶层」。
+        # 排纲拿它当「进这一卷时」的处境, 读到的是一句彻头彻尾的假话。
+        # 程序替模型编它没说过的话, 比留空危险得多。
+        for kk, vv in Contract._as_map(c.get("notes")).items():
+            ex.notes[str(kk)] = str(vv)
         closed = {str(x) for x in (c.get("close") or [])}
         ex.open_threads = [t for t in ex.open_threads
                            if str(t.get("id")) not in closed]
@@ -852,6 +861,14 @@ def check_milestones(root: "Node", ms: List["Node"]) -> List[str]:
     errs += check_variety(ms)
     for nd in ms:
         errs += check_progress(nd)
+        # 「此刻主角在哪」必须每节自己写。不写的话程序只能把上一节的原样抄
+        # 下来, 于是第 1 到第 7 卷都写着开篇那句「曼哈顿某废弃大楼顶层」——
+        # 排纲把它当「进这一卷时」的处境读, 读到的是假话。
+        # 末节除外: 它的出口**就是**根出口, 由程序赋值, 不归模型写。
+        if nd.exit.notes == nd.entry.notes and (not ms or nd.id != ms[-1].id):
+            errs.append(f"{nd.id}「{nd.title[:10]}」没写 notes："
+                        f"出这一节时主角在哪、身边有谁、最要命的是什么，"
+                        f"跟进这一节时一字不差")
     # 开局的线必须都有归宿
     left = {str(t.get("id")) for t in (ms[-1].exit.open_threads if ms else [])}
     for t in root.entry.open_threads:

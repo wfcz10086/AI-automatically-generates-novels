@@ -328,11 +328,40 @@ def test_合法里程碑链零违约():
     from server.tree import parse_milestones, check_milestones
     raw = ('{"milestones":['
            '{"title":"甲","solves":"活命","exposes":"名头传开了","start":1,"end":15,'
-           '"accounts":{"名分":"自由身"},"close":["t1"],"open":[],"miscalc":"x"},'
+           '"accounts":{"名分":"自由身"},"close":["t1"],"open":[],'
+           '"notes":{"位置":"城南破庙"},"miscalc":"x"},'
            '{"title":"乙","solves":"名头传开了","exposes":"y","start":16,"end":30,'
-           '"accounts":{"灵石":"万","名分":"天下之主"},"close":[],"open":[],"miscalc":"z"}]}')
+           '"accounts":{"灵石":"万","名分":"天下之主"},"close":[],"open":[],'
+           '"notes":{"位置":"金銮殿"},"miscalc":"z"}]}')
     ms = parse_milestones(raw, _mk_root())
     assert check_milestones(_mk_root(), ms) == []
+
+
+def test_没写notes的那一节要报():
+    """notes 这一栏原来从头到尾没人读: 提示词没问, 解析不取, 只有链在往下抄。
+
+    后果是第 1 到第 7 卷的「此刻主角在哪」全是开篇那句「曼哈顿废楼顶层」,
+    而排纲把它当「进这一卷时」的处境读 —— 一句彻头彻尾的假话。
+    """
+    from server.tree import parse_milestones, check_milestones
+    # 三节: 甲不写 notes(该报), 乙写了(不该报), 丙是末节 —— 它的出口就是
+    # 根出口, 由程序赋值, 不归模型写, 所以一律不报。
+    raw = ('{"milestones":['
+           '{"title":"甲","solves":"活命","exposes":"名头传开了","start":1,"end":10,'
+           '"accounts":{"名分":"自由身"},"close":["t1"],"open":[],"miscalc":"x"},'
+           '{"title":"乙","solves":"名头传开了","exposes":"招人惦记","start":11,"end":20,'
+           '"accounts":{"灵石":"千"},"close":[],"open":[],'
+           '"notes":{"位置":"城南破庙"},"miscalc":"z"},'
+           '{"title":"丙","solves":"招人惦记","exposes":"y","start":21,"end":30,'
+           '"accounts":{"灵石":"万","名分":"天下之主"},"close":[],"open":[],'
+           '"miscalc":"w"}]}')
+    ms = parse_milestones(raw, _mk_root())
+    errs = check_milestones(_mk_root(), ms)
+    assert any("没写 notes" in e and "R.1" in e for e in errs)
+    assert not any("没写 notes" in e and "R.2" in e for e in errs)
+    assert not any("没写 notes" in e and "R.3" in e for e in errs)
+    assert ms[0].exit.notes == ms[0].entry.notes          # 没写只能照抄上一节
+    assert ms[1].exit.notes.get("位置") == "城南破庙"      # 写了的就读进来
 
 
 def test_开局的线没人收要报():
