@@ -5592,13 +5592,22 @@ class Novelist:
             a2 = audit(t2, extra_blacklist=self.blacklist(), target_words=target)
             # 长度守卫 —— 重写只为改语言, 内容大幅缩水说明模型把剧情写丢了。
             # 实测新书第 5 章原稿正常, 重写只剩 1231 字(目标 5750)却因为分数高被采纳。
-            too_short = len(re.findall(r"[一-鿿]", t2)) < max(
-                int(target * 0.6), int(a["stats"]["cn"] * 0.6))
-            if t2 and a2["score"] > a["score"] and not too_short:
+            _cn2 = len(re.findall(r"[一-鿿]", t2))
+            too_short = _cn2 < max(int(target * 0.6), int(a["stats"]["cn"] * 0.6))
+            # 原稿已经达标, 重写却掉回下限以下 —— 那是把扩写的成果抹掉。
+            # 实测第 5 章: 扩写 2238 → 3163 达标, 低分重写一把砍回 2070,
+            # 而旧守卫的门槛是 max(目标×0.6, 原稿×0.6)=1897, 2070 高于它,
+            # 于是「分数高」就被采纳了, 最后落盘 2070 字、低于下限 2400。
+            # 旧守卫防的是腰斩(实测过 1231 字那种), 防不住这种「掉回线下」。
+            undo_expand = (a["stats"]["cn"] >= floor > _cn2)
+            if t2 and a2["score"] > a["score"] and not too_short and not undo_expand:
                 text, a = t2, a2
                 a["rewritten"] = True
+            elif t2 and undo_expand:
+                self._log(f"第{n}章重写把字数从 {a['stats']['cn']} 砍到 {_cn2}"
+                          f"（下限 {floor}），会抹掉扩写成果，弃用")
             elif t2 and too_short:
-                self._log(f"第{n}章重写结果过短({len(re.findall(chr(0x4e00)+'-'+chr(0x9fff), t2))}字)，弃用")
+                self._log(f"第{n}章重写结果过短({_cn2}字)，弃用")
 
         text = self.normalize_body(text)     # 落盘前统一格式，别让格式错进成稿
         # 英文残留必须当场改掉, 不能靠分数管 —— 实测第 5 章「若是都头 private

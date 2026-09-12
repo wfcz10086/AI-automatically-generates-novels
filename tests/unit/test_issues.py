@@ -290,3 +290,19 @@ def test_评审判定该拦就不许报完成():
     L = I.Ledger()
     L.record("critique_blocking", "严重问题 3 条；扣分合计 65")
     assert L.status() == I.STATUS_NEEDS_USER
+
+
+def test_重写不许把扩写的成果抹掉():
+    """实测第 5 章：扩写 2238 → 3163 达标，低分重写一把砍回 2070。
+
+    旧守卫的门槛是 max(目标×0.6, 原稿×0.6) = 1897，2070 高于它，于是
+    「分数高」就被采纳了，最后落盘 2070 字、低于下限 2400 —— 扩写白做。
+    旧守卫防的是腰斩（实测过 1231 字那种），防不住这种「掉回线下」。
+    """
+    import inspect
+    from server import orchestrator as o
+    src = inspect.getsource(o.Novelist.step_chapter)
+    assert "undo_expand" in src, "没有防「重写把字数打回下限以下」的守卫"
+    assert 'a["stats"]["cn"] >= floor > _cn2' in src, \
+        "判据要写成「原稿达标 且 重写掉到下限以下」"
+    assert "not undo_expand" in src, "守卫算出来了但没接进采纳条件"
