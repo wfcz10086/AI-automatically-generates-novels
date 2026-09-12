@@ -302,11 +302,59 @@ class Retriever:
                 best, bestr = k, r
         return best if bestr >= self.COVER else ""
 
+    def p_model_card(self, topic: str, ctx: str = "") -> str:
+        """让模型拿自己的知识当检索源, 产出和外搜同格式的考据卡。
+
+        **「模型脑子里有」和「写这一章时会想起来并用对」是两码事。**
+        它当然知道一炷香约半小时, 但写第 47 章时未必会主动把这个数字拿出来
+        用准 —— 关掉外搜后如果什么都不做, 就等于放任它现编。
+        所以检索这一步不能省, 省的只是**后端**: 把搜索引擎换成模型自己,
+        照样先问「这一章要查什么」, 照样产出考据卡, 照样落盘复用。
+        """
+        era = f"（时代/背景：{self.era}）" if self.era else ""
+        return (
+            f"你是考据编辑。就下面这个知识点{era}, 写一张**考据卡**给小说作者用。\n\n"
+            f"知识点：{topic}\n"
+            + (f"用处（写到这段时要用）：{ctx[:200]}\n" if ctx else "")
+            + f"\n要求：\n"
+            f"- 只写**你确实知道**的。不确定的写「说法不一」并给出常见的两三种,"
+            f"**不许编造具体数字和人名**\n"
+            f"- 要具体到能直接写进正文：数目、时辰、称呼、器物的样子、"
+            f"谁管这件事、办这件事的先后手续\n"
+            f"- 顺手写一条「写错了会穿帮的地方」\n"
+            f"- 200 字以内, 不要前言, 不要「根据资料」这类套话\n"
+            f"- 架空世界只要通用常识(一炷香多久、弓弩射几轮要歇、"
+            f"商队过关抽几成), 不要往真实朝代上硬靠")
+
+    def fact_from_model(self, need: Dict[str, str]) -> Optional[Dict[str, Any]]:
+        """外搜关掉时的检索后端 —— 模型自己。产出与 fact_for 同构的考据卡。"""
+        topic = need["topic"]
+        if not self.summarize:
+            return None
+        try:
+            card = (self.summarize(self.p_model_card(topic, need.get("why", ""))) or "").strip()
+        except Exception as e:
+            print(f"[retrieval] 模型考据失败 {topic}: {type(e).__name__}", flush=True)
+            return None
+        if len(card) < 20:
+            return None
+        rec = {"topic": topic, "card": card[:600], "sources": ["模型自身知识"],
+               "by_model": True}
+        self.facts[topic] = rec
+        self._save()
+        try:
+            self.mem.add("fact", f"fact-{topic}", f"考据·{topic}", rec["card"])
+        except Exception:
+            pass
+        return rec
+
     def fact_for(self, need: Dict[str, str], rounds: int = 3) -> Optional[Dict[str, Any]]:
         """一个知识点: 内部先查, 联网重试, 逐条过滤, 抓正文再摘, 落盘复用。"""
         topic = need["topic"]
         if topic in self.facts and self.facts[topic].get("card"):
             return self.facts[topic]
+        if not self.enable_web:
+            return self.fact_from_model(need)
         # 同义主题已经查过就直接复用, 不再重复联网
         twin = self._by_key().get(self._key(topic))
         if twin and twin != topic and (self.facts[twin] or {}).get("card"):
@@ -437,9 +485,10 @@ class Retriever:
         "养生茶注册非遗""LPL 春季赛 BP 规则"就完全抓不到。判断该查什么本身就是
         个理解任务, 应该交给模型。
         """
-        # 外搜关掉时不必再问「该查什么」—— 问完没地方查, 白烧一次模型调用。
-        # 实测架空书每章都在问, 然后 fact_for 一条都取不回。
-        if not self.plan or not self.enable_web:
+        # 外搜关掉**不等于**不查 —— 换成模型自己当检索源(见 fact_from_model)。
+        # 「模型脑子里有」和「写这一章时会想起来并用对」是两码事,
+        # 省掉这一步就是放任它现编。
+        if not self.plan:
             return []
         hint_line = ("参考方向（可以不用）：" + "、".join(hints[:8])) if hints else ""
         # 把**同时代查成过的检索式**当范例给它看。凭空想检索式的命中率不稳，

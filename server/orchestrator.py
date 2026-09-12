@@ -868,8 +868,8 @@ class Novelist:
             _mode = (self.p.meta.get("history_mode") or "").lower()
             _web = bool(self.mcfg.get("web_search", True)) and _mode != "invented"
             if not _web and _mode == "invented":
-                print("[retrieval] 架空世界, 外部检索已关 —— "
-                      "考据靠模型常识 + canon 一致性, 不靠外搜")
+                print("[retrieval] 架空世界：外搜关，**检索不关** —— "
+                      "照样问「这章要查什么」，答案由模型自身知识出考据卡")
             self._retriever = Retriever(
                 self.p.mem, self.p.dir, era=era,
                 enable_web=_web,
