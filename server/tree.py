@@ -40,6 +40,16 @@ from typing import Any, Dict, List, Optional, Tuple
 ACCOUNT_MAX = 20
 
 
+#: 模型给 due 写的「这条线已经收了」标记。它们不是节点 id。
+#: 出口里带这种标记的线**根本不该还挂在 open_threads 上** —— open_threads 的
+#: 意思就是「到这一刻还没收的线」。实测根出口三条线全带 due:"Closed",
+#: 于是全树体检报「due 指向不存在的节点 C」, 改指向治不了根: 它们该被删掉。
+#: 注意不含 "R" —— 根合同的线按提示词要求本来就写 due:"R"(全书之内收掉),
+#: 那是正经节点 id, 误当收线标记会把根节点的线全删光。
+_DUE_CLOSED = {"c", "closed", "close", "end", "done", "final", "-", "无",
+               "已收", "已闭", "已结", "结束", "完结", "收掉"}
+
+
 @dataclass
 class Contract:
     """一个节点的进口或出口状态。
@@ -117,7 +127,10 @@ class Contract:
         thr = []
         for x in (d.get("open_threads") or []):
             if isinstance(x, dict):
-                thr.append(dict(x))
+                y = dict(x)
+                if str(y.get("due") or "").strip().lower() in _DUE_CLOSED:
+                    continue            # 已经收了的线不算「没收的线」
+                thr.append(y)
             elif str(x).strip():                    # 模型只给了一句话的线
                 thr.append({"id": f"t{len(thr)+1}", "what": str(x).strip()})
         return Contract(
@@ -236,8 +249,17 @@ def check_parent(parent: Node, kids: List[Node]) -> List[str]:
     head, tail = kids[0], kids[-1]
     errs += [f"父进口 vs 长子进口 — {e}" for e in
              check_seam(Node(id="", level="", exit=parent.entry), head)]
+    # 幼子出口这一头**不能**照搬 check_seam。两条规矩本来就打架:
+    #   · facts 只增不减 → 子块理所当然会添新事实
+    #   · 父出口 == 幼子出口 → 父出口是在子块还不存在时写的, 不可能含有它们
+    # 照搬的后果实测到了: 书层拆完报 20 处「已定死的事实在进口丢了」, 每一条
+    # 都是子块新添的事实, **模型永远修不掉**, 白烧三轮重修 —— 跟当年让模型
+    # 一字不差抄 28 条合同字段是同一个错。
+    # 正确的方向是包含而不是相等: 父出口定死的事实, 幼子出口必须还留着;
+    # 幼子多出来的, 由 settle_facts() 回灌给父出口。
     errs += [f"父出口 vs 幼子出口 — {e}" for e in
-             check_seam(tail, Node(id="", level="", entry=parent.exit))]
+             check_seam(Node(id="", level="", exit=parent.exit),
+                        Node(id="", level="", entry=tail.exit))]
     if head.start != parent.start or tail.end != parent.end:
         errs.append(f"区间没盖住父节点：父 {parent.start}-{parent.end}，"
                     f"子 {head.start}-{tail.end}")
@@ -246,6 +268,46 @@ def check_parent(parent: Node, kids: List[Node]) -> List[str]:
             errs.append(f"{kids[i].id} 到 {kids[i+1].id} 章号断了："
                         f"{kids[i].end} → {kids[i+1].start}")
     return errs
+
+
+def settle_facts(nodes: Dict[str, Node]) -> int:
+    """把「事实只增不减」这条**由程序算死**，别拿它去问模型也别拿它报违约。
+
+    事实沿章号单向累积, 这是纯粹的程序运算: 叶子按章序走一遍, 见一条记一条,
+    每个叶子的进口 = 到它之前记下的全部, 出口 = 再加上它自己添的。内部节点的
+    两头则取首末后代叶子 —— 因为父节点的两头**就是**首子的进口和幼子的出口。
+
+    拆是自顶向下的, 子块添的事实回不到已经写好的父出口和右边兄弟的进口,
+    于是每拆一层就多出一批谁也修不掉的违约。这个函数在每层拆完后跑一遍,
+    把整棵树重新对齐。返回改动了几个节点。
+    """
+    root = nodes.get("R")
+    leaves = sorted([n for n in nodes.values() if not n.children],
+                    key=lambda x: (x.start, x.id))
+    if not leaves:
+        return 0
+    run = list(root.entry.facts) if root else []
+    seen = {_norm(x) for x in run}
+    touched = 0
+    for lf in leaves:
+        if lf.entry.facts != run:
+            lf.entry.facts, touched = list(run), touched + 1
+        for f in lf.exit.facts:
+            if _norm(f) not in seen:
+                seen.add(_norm(f))
+                run.append(f)
+        lf.exit.facts = list(run)
+    for nd in nodes.values():
+        if not nd.children:
+            continue
+        desc = [l for l in leaves if l.start >= nd.start and l.end <= nd.end]
+        if not desc:
+            continue
+        if nd.entry.facts != desc[0].entry.facts:
+            nd.entry.facts, touched = list(desc[0].entry.facts), touched + 1
+        if nd.exit.facts != desc[-1].exit.facts:
+            nd.exit.facts, touched = list(desc[-1].exit.facts), touched + 1
+    return touched
 
 
 def check_threads(root: Node, nodes: Dict[str, Node]) -> List[str]:

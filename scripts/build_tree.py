@@ -131,6 +131,12 @@ def main():
             flag = "✓" if not errs else f"⚠{len(errs)}处未消"
             say(f"  {nd.id}「{nd.title[:12]}」→ {len(kids)} 块 {flag} "
                 f"{time.time()-t:.0f}s")
+        # 子块新添的事实要回灌给父出口和右边兄弟的进口 —— 拆是自顶向下的,
+        # 不回灌的话每拆一层就多一批谁也修不掉的违约。程序算得出来的事。
+        n = tr.settle_facts(nodes)
+        if n:
+            save()
+            say(f"  事实回灌：对齐了 {n} 个节点的两头")
     errs = tr.audit_tree(nodes)
     say(f"全树 {len(nodes)} 节点，体检 {len(errs)} 处违约")
     for e in errs[:10]:
