@@ -23,7 +23,7 @@ from . import dials as dl
 from . import stagecraft as sc
 from . import distill as dst
 from .retrieval import Retriever
-from .prompt_compiler import (outline_required, outline_format_block, window_drift,
+from .prompt_compiler import (measure_text, outline_required, outline_format_block, window_drift,
                              render_item,
                              compile_chapter_prompt, compile_outline_prompt,
                                to_plot_list)
@@ -4906,6 +4906,103 @@ class Novelist:
         self._log(f"  细纲定稿: 第{n}章已按第{n-1}章实际正文对表")
         return new_co
 
+    def draft_best(self, prompt: str, cap: int, target: int, on_delta=None):
+        """正文多发散选优：并发写 N 稿，程序打分挑最好的。
+
+        温度拉满(1.0)时同一提示词能写出明显不同的三稿。选优分两级，
+        **合规只做淘汰线、不做加分项** —— 否则三选一会选出最平庸的那个：
+          硬闸（任一命中直接出局）：接缝重复／元语言泄漏／正文自指章号／
+                                  口号式收尾／黑名单穿帮词／字数离谱
+          文风闸（活下来的比这个）：过 profile 区间的指标数 + 正向词命中
+                                  + 独立反问句、叹号这些「爽」的来源
+        只发一稿时行为与从前完全一致，不增加任何开销。
+        """
+        cands = max(1, int(self.g.get("candidates") or 1))
+        if cands <= 1:
+            r = call("drafting", prompt, on_delta, max_tokens=cap)
+            r.text = re.sub(r"【字数标记[^】]*】\s*", "", r.text or "")
+            return r, clean(r.text)
+
+        import concurrent.futures as _cf
+
+        def _one(i: int):
+            try:
+                rr = call("drafting", prompt, on_delta if i == 0 else None,
+                          max_tokens=cap)
+                rr.text = re.sub(r"【字数标记[^】]*】\s*", "", rr.text or "")
+                return rr, clean(rr.text)
+            except Exception as e:
+                print(f"  [选优] 第{i+1}稿失败 {type(e).__name__}", flush=True)
+                return None, ""
+
+        with _cf.ThreadPoolExecutor(max_workers=cands) as ex:
+            outs = list(ex.map(_one, range(cands)))
+        outs = [(r, t) for r, t in outs if r is not None and len(t) > 200]
+        if not outs:
+            r = call("drafting", prompt, on_delta, max_tokens=cap)
+            r.text = re.sub(r"【字数标记[^】]*】\s*", "", r.text or "")
+            return r, clean(r.text)
+        if len(outs) == 1:
+            return outs[0]
+
+        scored = []
+        for r, t in outs:
+            kill, sc = self.draft_score(t, target)
+            scored.append((kill, sc, r, t))
+        alive = [x for x in scored if not x[0]]
+        pool = alive or scored          # 全被淘汰就矮子里拔将军
+        pool.sort(key=lambda x: -x[1])
+        best = pool[0]
+        brief = "、".join(f"{x[1]:.1f}{'✗' if x[0] else ''}" for x in scored)
+        print(f"  [选优] {len(outs)} 稿得分 {brief} → 取第 "
+              f"{scored.index(best)+1} 稿"
+              + (f"（{len(scored)-len(alive)} 稿被硬闸淘汰）" if len(alive) < len(scored) else ""),
+              flush=True)
+        return best[2], best[3]
+
+    def draft_score(self, text: str, target: int):
+        """返回 (是否被硬闸淘汰, 文风分)。合规是淘汰线, 加分只给「爽」的来源。"""
+        from . import evaluator as ev
+        kill = False
+        # ① 硬闸
+        if ev.SLOGAN_END.search(text.rstrip()[-180:]):
+            kill = True
+        if re.search(r"(.{8,40}?)\1", text):                 # 接缝重复
+            kill = True
+        if re.search(r"第\s*\d{1,3}\s*章", text):            # 正文自指章号
+            kill = True
+        if re.search(r"前文已确立|本章(中)?唯一|按细纲|细纲要求", text):
+            kill = True
+        for w in self.hard_blacklist():
+            if w and w in text:
+                kill = True
+                break
+        cn = len(re.findall(r"[一-鿿]", text))
+        if cn < target * 0.6 or cn > target * 1.6:
+            kill = True
+        # ② 文风闸: 过区间的指标数 + 爽点来源
+        try:
+            m = measure_text(text)
+        except Exception:
+            return kill, 0.0
+        prof = self.style.get("windowFeedback") or {}
+        mets = prof.get("metrics") or {}
+        hit = 0
+        for k, spec in mets.items():
+            v = m.get(k)
+            if v is None or not isinstance(spec, dict):
+                continue
+            lo, hi = spec.get("lo"), spec.get("hi")
+            if lo is not None and hi is not None and lo <= v <= hi:
+                hit += 1
+        score = hit * 2.0
+        score += min(6.0, m.get("独立反问句", 0) * 0.5)       # 人物心里那句问话
+        score += min(4.0, m.get("每千字叹号", 0) * 0.2)       # 喊出来的劲
+        score += min(4.0, m.get("解说体", 0) * 1.0)           # 把规矩讲透
+        pos = [w for w in (self.style.get("positive") or []) if w in text]
+        score += min(4.0, len(pos) * 0.5)
+        return kill, score
+
     def step_chapter(self, n: int, on_delta=None, retry_on_low: int | None = None) -> Dict[str, Any]:
         self._check_budget()
         retry_on_low = retry_on_low if retry_on_low is not None else self.q["audit_pass_score"]
@@ -4993,10 +5090,7 @@ class Novelist:
         # 按目标字数推导 max_tokens 硬上限。之前按 1 字≈1.43 token 估算, 对 Qwen
         # 中文严重高估(实际约 0.75 token/汉字), 于是上限根本不起作用, 章章超长。
         cap = min(self.g["max_tokens_draft"], int(ask * 0.75 * 1.25))
-        r = call("drafting", prompt, on_delta, max_tokens=cap)
-        # 去掉模型输出里的【字数标记】—— 它只是写作时的计数脚手架, 不进成稿
-        r.text = re.sub(r"【字数标记[^】]*】\s*", "", r.text)
-        text = clean(r.text)
+        r, text = self.draft_best(prompt, cap, target, on_delta)
 
         a = audit(text, extra_blacklist=self.hard_blacklist(), target_words=target,
                   check_modern=self.anachronism_check())

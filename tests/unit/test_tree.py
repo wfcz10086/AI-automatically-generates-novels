@@ -404,3 +404,46 @@ def test_生死矛盾由程序拒收_不靠评审():
     _, a3 = merge_canon(list(canon), [{"subject": "狐媚", "fact": "献出虚弥戒认主",
                                        "kind": "other"}], 5)
     assert a3 == 1
+
+
+# ───────────── 正文三选一：合规是淘汰线，不是加分项 ─────────────
+
+def _nv():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from server.orchestrator import Novelist, Project
+    return Novelist(Project("金钟镇天下"))
+
+
+def test_硬闸抓得住四类穿帮():
+    """合规只做淘汰线 —— 否则三选一会挑出最平庸那个。"""
+    nv = _nv()
+    base = "破军抬手，一拳砸在石壁上。" * 120           # 约 1560 字，先保证不被字数闸毙
+    ok, _ = nv.draft_score(base, 2000)
+    for bad, why in (
+        (base + "他知道，真正的游戏才刚刚开始。", "口号式收尾"),
+        (base + "她要是能捞，她早就她要是能捞，她早就自己捞了。", "接缝重复"),
+        (base + "第32章那记反噬让他记到现在。", "正文自指章号"),
+        (base + "这不是罡气外放——前文已确立铜皮过载失灵。", "元语言泄漏"),
+    ):
+        kill, _ = nv.draft_score(bad, 2000)
+        assert kill, f"{why} 应当被硬闸淘汰"
+
+
+def test_字数离谱直接出局():
+    nv = _nv()
+    assert nv.draft_score("短。" * 50, 2800)[0], "只写到两成应当出局"
+    assert nv.draft_score("长。" * 3000, 2800)[0], "写到两倍应当出局"
+
+
+def test_爽点来源才加分():
+    """加分给的是「爽」的来源（人物心里那句问话、喊出来的劲、把规矩讲透），
+    不是给合规。两稿都合规时，有爽点的那稿必须赢。"""
+    nv = _nv()
+    plain = "他走进屋子。他坐下。他看着桌子。" * 90
+    juicy = ("他凭什么敢来？\n\n「三十贯，一个子儿不能少！」他吼道。\n\n"
+             "码头的规矩是这样的：货过三关，每关抽一成，抽完才准卸。" ) * 30
+    _, s1 = nv.draft_score(plain, 2000)
+    _, s2 = nv.draft_score(juicy, 2000)
+    assert s2 > s1, f"有爽点的稿应当得分更高（{s2:.1f} vs {s1:.1f}）"
