@@ -281,7 +281,9 @@ def enforce_slots(seg: List[str], on_drop=None, index: int = 0) -> List[str]:
             if i in low:
                 # 末档内部按轮转位排序, 与原优先级脱钩
                 return (-1, (low.index(i) - off) % len(low), -ln)
-            return (0, -pri, -ln)      # 高优先级档: 分低的先走, 同分丢长的
+            # 高优先级档: **分低的先走**, 同分丢长的。
+            # 写成 -pri 就反了 —— 变成分最高的先被丢(单测当场抓到)。
+            return (0, pri, -ln)
 
         for i in sorted(idx, key=rank):
             if used <= budget:
