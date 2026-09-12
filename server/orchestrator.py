@@ -22,6 +22,7 @@ from .evaluator import audit, book_audit, window_audit
 from . import dials as dl
 from . import stagecraft as sc
 from . import distill as dst
+from . import issues as _iss
 
 
 def _soft(t: str, n: int, what: str = "") -> str:
@@ -574,6 +575,9 @@ class Novelist:
     """把 ContentType + GenrePack + StylePack 组装成可执行流水线."""
 
     def __init__(self, project: Project):
+        # 问题台账。step_chapter 每章换一本新的; 这里先备一本,
+        # 让排纲、建卷这些阶段的记账也有地方落。
+        self.iss = _iss.Ledger()
         self.p = project
         m = project.meta
         self.type = registry.types[m["type_id"]]
@@ -1615,6 +1619,7 @@ class Novelist:
                                                 max_tokens=8192).text))
         except Exception as e:
             self._log(f"第{n}章英文修复失败: {str(e)[:40]}")
+            self._ledger(e, "第章英文修复失败")
             return text, a
         c1 = len(re.findall(r"[一-鿿]", text))
         c2 = len(re.findall(r"[一-鿿]", t2))
@@ -2196,6 +2201,7 @@ class Novelist:
                      json.loads(f.read_text(encoding="utf-8")).items()}
         except Exception as e:
             self._log(f"[tree] 读取失败: {e}")
+            self._ledger(e, "[tree] 读取失败")
             return ""
         ms = sorted((x for x in nodes.values() if x.id != "R"),
                     key=lambda x: x.start)
@@ -2536,6 +2542,7 @@ class Novelist:
                               max_tokens=int(self.g.get("max_tokens_outline") or 8000)).text)
         except Exception as e:
             self._log(f"角色档案续写失败: {e}")
+            self._ledger(e, "角色档案续写失败")
             return ch
         merged = tail + "\n\n" + more.strip()
         if self._card_gaps(merged):
@@ -2679,6 +2686,7 @@ class Novelist:
                      json.loads(f.read_text(encoding="utf-8")).items()}
         except Exception as e:
             self._log(f"[tree] 分卷读取失败: {type(e).__name__}: {e}")
+            self._ledger(e, "[tree] 分卷读取失败")
             return []
         ms = sorted((x for x in nodes.values() if x.id != "R"),
                     key=lambda x: x.start)
@@ -2842,6 +2850,7 @@ class Novelist:
                                  "breaks")
         except Exception as e:
             self._log(f"接缝核对跳过: {e}")
+            self._ledger(e, "接缝核对跳过")
             return []
         out = []
         for b in (data.get("breaks") or [])[:limit]:
@@ -3362,6 +3371,7 @@ class Novelist:
                              max_tokens=int(self.g.get("max_tokens_outline") or 8000)).text)
         except Exception as e:
             self._log(f"剧情概要跳过: {e}")
+            self._ledger(e, "剧情概要跳过")
             return prev
         if len(out) < 200:
             return prev
@@ -3420,6 +3430,7 @@ class Novelist:
             out = clean(call("polishing", prompt, max_tokens=800).text)
         except Exception as e:
             self._log(f"排纲自审跳过: {e}")
+            self._ledger(e, "排纲自审跳过")
             return []
         tips = [re.sub(r"^[-•*\d.、\s]+", "", x).strip()
                 for x in out.splitlines() if len(x.strip()) > 8][:4]
@@ -3608,6 +3619,7 @@ class Novelist:
             jobs.extend(self._ledger_jobs())
         except Exception as e:
             self._log(f"台账工单跳过: {e}")
+            self._ledger(e, "台账工单跳过")
         # 落在同一批章节上的合并成一条 —— 否则同几章被重排多次，后一次覆盖前一次
         return sc.merge_repairs(jobs)
 
@@ -3728,6 +3740,7 @@ class Novelist:
                 out = clean(call("polishing", prompt, max_tokens=400).text)
             except Exception as e:
                 self._log(f"第{n}章英文修复失败: {e}")
+                self._ledger(e, "第章英文修复失败")
                 continue
             fixed, hit = raw, 0
             for line in out.splitlines():
@@ -4390,6 +4403,7 @@ class Novelist:
                 d = parse(call("judging", p, on_delta, max_tokens=int(self.g.get("max_tokens_outline") or 8000)).text)
             except Exception as e:
                 self._log(f"细纲审阅第{i}段失败: {str(e)[:40]}")
+                self._ledger(e, "细纲审阅第段失败")
                 continue
             got = d.get("issues") or []
             issues += got
@@ -4426,6 +4440,7 @@ class Novelist:
                     verdict = d.get("verdict", "")
             except Exception as e:
                 self._log(f"细纲审阅汇总失败: {str(e)[:40]}")
+                self._ledger(e, "细纲审阅汇总失败")
 
         lines = [f"# 细纲审阅（第 {keys[0]}-{keys[-1]} 章，共 {len(keys)} 章）", ""]
         if verdict:
@@ -4504,6 +4519,7 @@ class Novelist:
                          (r.text or "").splitlines() if x.strip()]
             except Exception as e:
                 self._log(f"  标题重起失败(第{n}章): {e}")
+                self._ledger(e, "标题重起失败(第章)")
                 continue
             for cand in cands:
                 cn2 = self._title_norm(cand)
@@ -4879,6 +4895,7 @@ class Novelist:
             self.polish_titles(list(range(start, end + 1)), on_delta)
         except Exception as e:
             self._log(f"  标题选优跳过: {e}")
+            self._ledger(e, "标题选优跳过")
         note = ""
         if truncated:
             note += f"，丢弃残缺 {len(truncated)} 章（{truncated[:12]}）"
@@ -4912,6 +4929,7 @@ class Novelist:
                     fn(last + 1, end) if span else fn(end)
                 except Exception as e:
                     self._log(f"{cfg} 跳过: {e}")
+                    self._ledger(e, "跳过")
                 st0 = self.p.state
                 st0[key] = end
                 self.p.save()
@@ -4993,6 +5011,7 @@ class Novelist:
             new_co = clean(r.text)
         except Exception as e:
             self._log(f"  细纲对表跳过(第{n}章): {e}")
+            self._ledger(e, "细纲对表跳过(第章)")
             return co
         need = outline_required(self.style)
         have = sum(1 for f in need
@@ -5201,8 +5220,25 @@ class Novelist:
         score += min(4.0, len(pos) * 0.5)
         return kill, score
 
+    def _ledger(self, e: BaseException, what: str) -> None:
+        """吞掉一个异常的同时记一笔。
+
+        这一步本身跳过不要紧(记 待确认), 但如果异常是 NameError/AttributeError/
+        TypeError/KeyError, record() 会把它**抬成必须处理** —— 那四类一定是我们
+        自己写错了, 跟模型无关。自检里那个 cons 未定义就是这么藏了几小时的:
+        它被 except 吞成一行「系统自检失败(不阻塞写作)」, 跟「模型这次没答好」
+        长得一模一样。
+        """
+        try:
+            self.iss.record("step_skipped", what, e)
+        except Exception:
+            pass
+
     def step_chapter(self, n: int, on_delta=None, retry_on_low: int | None = None) -> Dict[str, Any]:
         self._check_budget()
+        # 这一章的问题台账。「✓ 第N章」原来是**无条件**打的 —— 它不表示这一章
+        # 没出问题, 只表示没抛到最外层。状态改由程序从这本台账派生。
+        self.iss = _iss.Ledger()
         retry_on_low = retry_on_low if retry_on_low is not None else self.q["audit_pass_score"]
         outlines = self.p._load("chapter_outlines.json", {})
         co = outlines.get(str(n), "")
@@ -5441,6 +5477,7 @@ class Novelist:
                             self.p.write(self.p.chapter_path(n), text)
             except Exception as e:
                 self._log(f"评审失败(不阻塞写作): {e}")
+                self._ledger(e, "评审失败(不阻塞写作)")
 
         # 窗口体检: 本章 + 前 3 章贴在一起看
         done_now = sorted(set(self.p.state.get("done", [])) | {n})
@@ -5485,6 +5522,32 @@ class Novelist:
                   + f" / 记忆 {rep['used']}tok({rep['usage_pct']}%)"
                   + (f" 溢出:{','.join(rep['overflow'])}" if rep["overflow"] else "")
                   + ("（已重写）" if a.get("rewritten") else ""))
+        # 字数不在区间、到期伏笔没着落这类, 补记进台账(它们原来只打一行日志)
+        cw = self.style.get("chapterWords")
+        if isinstance(cw, (list, tuple)) and len(cw) == 2:
+            lo, hi = int(cw[0]), int(cw[1])
+        else:
+            lo, hi = self.g["chapter_words_min"], self.g["chapter_words_max"]
+        if not (lo <= a["stats"]["cn"] <= hi):
+            self.iss.record("words_off_target",
+                            f"{a['stats']['cn']} 字，区间 {lo}-{hi}")
+        st = self.iss.status(wrote_text=bool(a["stats"]["cn"]))
+        a["issues"] = self.iss.to_dict()
+        self.p.write(f"audit/{n:03d}.json", json.dumps(a, ensure_ascii=False,
+                                                       indent=2))
+        if st != _iss.STATUS_DONE:
+            self._log(f"第{n}章判定：{st}（{self.iss.brief()}）")
+            for ln in self.iss.lines():
+                self._log(ln)
+            # 需人工的一律进返修队列 —— 不许它只留一行日志就过去
+            if st in (_iss.STATUS_NEEDS_USER, _iss.STATUS_FAILED):
+                q = self.p._load("repair_queue.json", [])
+                if not any(x.get("ch") == n for x in q):
+                    q.append({"ch": n, "note": "；".join(
+                        i["title"] for i in self.iss.items
+                        if i["severity"] == _iss.MUST)[:300]})
+                    self.p.write("repair_queue.json",
+                                 json.dumps(q, ensure_ascii=False, indent=2))
         self.p.state["usage"] = self._usage_snapshot()
         self.p.save()
         self.p.write("PROJECT_BOARD.md", self.p.board())
@@ -5499,12 +5562,14 @@ class Novelist:
                 self.step_reflect()
             except Exception as e:
                 self._log(f"自审失败(不阻塞写作): {e}")
+                self._ledger(e, "自审失败(不阻塞写作)")
         heal = int(self.q.get("heal_every", 5) or 0)
         if heal and n % heal == 0:
             try:
                 self.step_heal()
             except Exception as e:
                 self._log(f"自愈失败(不阻塞写作): {e}")
+                self._ledger(e, "自愈失败(不阻塞写作)")
         sc = int(self.q.get("selfcheck_every", 20) or 0)
         if sc and n % sc == 0:
             try:
@@ -5519,7 +5584,8 @@ class Novelist:
                     self._log("  ↑ 这是代码 bug 不是模型问题：\n"
                               + "".join(_tb.format_exc().splitlines(True)[-4:]))
         return {"chapter": n, "chars": a["stats"]["cn"], "score": a["score"],
-                "elapsed": r.elapsed, "rewritten": a.get("rewritten", False)}
+                "elapsed": r.elapsed, "rewritten": a.get("rewritten", False),
+                "status": st, "issues": self.iss.brief()}
 
     # ---------------- 自我改进循环 ----------------
     def step_reflect(self, on_delta=None, sample: int = 3) -> Dict[str, Any]:

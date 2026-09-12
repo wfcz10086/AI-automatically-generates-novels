@@ -44,6 +44,10 @@ ALLOW = [
      "算 bigram 重合度用的，纯数值计算，不进提示词"),
     ("orchestrator.py", 'act.get("note", "")[:300]',
      "返修队列的备注字段上限，是结构化字段不是长文本"),
+    ("issues.py", 'str(detail)[:400]',
+     "问题台账的 detail 字段上限；它是给人看的一行说明，不回喂给模型"),
+    ("orchestrator.py", 'i["severity"] == _iss.MUST)[:300]',
+     "返修队列备注：把必须处理的问题标题拼成一行，同上，是字段不是长文本"),
 ]
 
 

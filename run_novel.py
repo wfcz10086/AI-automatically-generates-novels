@@ -221,8 +221,15 @@ def cmd_run(a):
             print("!! 代码或配置已更新，本进程退出交由守护以新版本续跑")
             sys.exit(3)
         r = nv.step_chapter(n)
-        print(f"  ✓ 第{r['chapter']}章 {r['chars']}字 得分{r['score']}"
-              f"{' [已重写]' if r['rewritten'] else ''} {r['elapsed']:.1f}s")
+        # 勾不是随便打的。原来这里**无条件**打 ✓ —— 它只表示「没抛到最外层」,
+        # 不表示这一章没出问题。细纲空壳、评审少半把尺子、自检 NameError 全都
+        # 藏在这个勾后面。状态现在由 issues.Ledger 按问题清单派生。
+        mark = {"完成": "✓", "部分完成": "◑", "需人工": "⚠", "失败": "✗"}.get(
+            r.get("status", "完成"), "?")
+        print(f"  {mark} 第{r['chapter']}章 {r['chars']}字 得分{r['score']}"
+              f"{' [已重写]' if r['rewritten'] else ''} {r['elapsed']:.1f}s"
+              + (f"  【{r['status']}：{r['issues']}】"
+                 if r.get("status") and r["status"] != "完成" else ""))
         n += 1
 
     done = len(p.state["done"])
