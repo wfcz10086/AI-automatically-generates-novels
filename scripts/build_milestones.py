@@ -69,7 +69,7 @@ def one_candidate(tag: str, root, k: int, chain: str = ""):
         ms, r = [], None
         for attempt in range(3):
             r = call("planning", tr.p_milestones(root, k, chain), max_tokens=16000)
-            ms = tr.parse_milestones((r.text or ""), root)
+            ms = tr.parse_milestones((r.text or ""), root, chain)
             if ms:
                 break
             say(f"  候选{tag}: 第{attempt+1}次没解析出来"
@@ -78,7 +78,7 @@ def one_candidate(tag: str, root, k: int, chain: str = ""):
         # 违约打回去修一轮(只修不重来)
         if ms and errs:
             r2 = call("planning", tr.p_repair(root, errs, r.text), max_tokens=16000)
-            ms2 = tr.parse_milestones((r2.text or ""), root)
+            ms2 = tr.parse_milestones((r2.text or ""), root, chain)
             if ms2:
                 e2 = tr.check_milestones(root, ms2, chain)
                 if len(e2) < len(errs):

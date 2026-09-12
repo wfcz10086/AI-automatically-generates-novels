@@ -749,6 +749,17 @@ def p_milestones(root: "Node", k: int, seed_chain: str = "") -> str:
     chain_seed = (("── 种子里的但是链（作者亲手写的主线骨架，必须逐条落地）──\n"
                    + seed_chain.strip()) if seed_chain.strip()
                   else "（种子里没给但是链，按下面的规矩自己拆）")
+    # 种子写了但是链时, 第 i 节的「解决/但是」**就是种子第 i 条**。
+    # 原来那条「第 i+1 节的 solves 原样照抄第 i 节的 exposes」跟作者种子的
+    # 真实形状(八对「事件 → 后果」, 相邻两对之间本来就不是照抄关系)物理冲突:
+    # 第 2 条的「解决：狐族被道门剿灭」并不等于第 1 条的「暴露：他能吸灵气
+    # 被狐妖看见」。两条规矩不可能同时满足, 实测逼得三个候选全把配对错开
+    # 一格 ——「解决：靠山把他当苦力」这种根本不是解决的句子就这么进来的。
+    # 不是模型笨, 那是那条规矩逼出来的唯一走法。
+    _rule2 = ("**第 i 节的 solves 和 exposes 就是种子【但是链】第 i 条的那两句**，"
+              "原样照抄，一个字不许换，也不许挪到别的节去。"
+              if parse_seed_chain(seed_chain) else
+              "**第 i+1 节的 solves 必须原样照抄第 i 节的 exposes**，一个字都不许换。")
     return f"""全书要拆成 {k} 节里程碑。这是整本书的推进链, 不是目录。
 
 【全书】《{root.title}》{root.line}
@@ -786,14 +797,14 @@ def p_milestones(root: "Node", k: int, seed_chain: str = "") -> str:
 
 硬规矩（程序逐条核对）：
 1. 第 1 节的 solves 接开局危机；第 {k} 节结束时账本必须**逐格等于**终局账本。
-2. **第 i+1 节的 solves 必须原样照抄第 i 节的 exposes**，一个字都不许换。
+2. {_rule2}
 3. 章号连续盖满 1-{root.end}。
 4. 每节至少动一格账（accounts 非空）, 且**不许连着三节都只动同一格**。
 5. 开局账本里的线（{('、'.join(t.get('id','') for t in root.entry.open_threads)) or '无'}）
    每条都要被某一节 close 掉；close 与 open 的 id 不许凭空出现。"""
 
 
-def parse_milestones(raw: str, root: "Node") -> List["Node"]:
+def parse_milestones(raw: str, root: "Node", chain: str = "") -> List["Node"]:
     import json as _j
     m = re.search(r"\{.*\}", raw or "", re.S)
     if not m:
@@ -844,6 +855,20 @@ def parse_milestones(raw: str, root: "Node") -> List["Node"]:
                   exposes=str(c.get("exposes") or "")[:120])
         out.append(nd)
         prev = ex
+    # 种子写了但是链, 这两栏就**由程序照抄种子**, 不问模型。
+    #
+    # 为什么: 提示词原来要求「第 i+1 节的 solves 原样照抄第 i 节的 exposes」,
+    # 而作者的种子根本不是那个形状 —— 它是八对(事件 → 后果), 第 2 条的
+    # 「解决：狐族被道门剿灭」并不等于第 1 条的「暴露：他能吸灵气被狐妖看见」。
+    # 两条规矩物理上不可能同时满足, 于是模型三个候选全把配对错开一格
+    # (解决上一条的暴露 → 暴露下一条的解决), 「解决：靠山把他当苦力」这种
+    # 根本不是解决的句子就这么进来了。不是模型笨, 那是那条规矩逼出来的唯一走法。
+    #
+    # 作者写了什么就是什么, 这是**程序抄得动**的事, 不该让模型转述。
+    pairs = parse_seed_chain(chain)
+    if pairs and len(out) == len(pairs):
+        for nd, (sv, ex_) in zip(out, pairs):
+            nd.solves, nd.exposes = sv[:120], ex_[:120]
     if out:
         # 幼子出口的账目/事实 = 根出口(程序定死)。但**线不覆盖** —— 线取链自己
         # 算出的结果: 若覆盖成根出口的线, 链上没人收的线会被一起洗掉,
@@ -906,12 +931,17 @@ def check_milestones(root: "Node", ms: List["Node"],
                      chain: str = "") -> List[str]:
     """里程碑链体检: 但是链咬合(照抄判定) + 覆盖 + 变化多样性 + 线收干净。"""
     errs = check_parent(root, ms)
-    errs += check_seed_pairs(ms, parse_seed_chain(chain))
-    for i in range(len(ms) - 1):
-        if _norm(ms[i + 1].solves) != _norm(ms[i].exposes):
-            errs.append(f"{ms[i].id}→{ms[i+1].id} 但是链断了："
-                        f"上节暴露「{ms[i].exposes[:24]}」, "
-                        f"下节解决的却是「{ms[i+1].solves[:24]}」(必须原样照抄)")
+    pairs = parse_seed_chain(chain)
+    errs += check_seed_pairs(ms, pairs)
+    # 相邻逐字咬合这条只在**没有种子但是链**时才查。种子在的话它说了算:
+    # 作者的链是八对(事件 → 后果), 相邻两对之间本来就不是照抄关系,
+    # 拿照抄去要求它, 等于要求模型把作者写的东西改掉。
+    if not pairs:
+        for i in range(len(ms) - 1):
+            if _norm(ms[i + 1].solves) != _norm(ms[i].exposes):
+                errs.append(f"{ms[i].id}→{ms[i+1].id} 但是链断了："
+                            f"上节暴露「{ms[i].exposes[:24]}」, "
+                            f"下节解决的却是「{ms[i+1].solves[:24]}」(必须原样照抄)")
     errs += check_variety(ms)
     for nd in ms:
         errs += check_progress(nd)
