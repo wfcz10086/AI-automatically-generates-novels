@@ -234,3 +234,38 @@ def test_专名不许被换成同义中文():
     assert nv.beat_names_missing(1, "FBI 破门")                    # CIA 还缺
     assert nv.beat_names_missing(1, "FBI 与 CIA 同时破门") == []   # 都在 → 放行
     assert nv.beat_names_missing(9, "随便写") == []                # 无落点的章不管
+
+
+def test_开局落点那一行由程序钉进去():
+    """让模型照抄，它做不到一字不改。
+
+    实测第 1 章抄出来的是「…被小弟出卖，**联邦调查局**围楼」，
+    而种子写的是「FBI 围楼」—— 它一边抄一边把专名换成中文同义说法。
+    这一行是纯拷贝，就该由程序写：能由程序定死的，不要问模型。
+    """
+    from server.orchestrator import Novelist
+
+    class _P:
+        meta = {"fields": {"premise":
+                           "【开局落点】\n一 纽约曼哈顿，FBI 围楼。\n二 玉佩崩碎。\n"}}
+
+    nv = Novelist.__new__(Novelist)
+    nv.p = _P()
+
+    # 模型改写了 → 程序换回原文
+    got = nv.pin_beat(1, "第1章 突围\n开局落点：纽约，联邦调查局围楼。\n一句话：…")
+    assert "FBI" in got and "联邦调查局" not in got
+    assert nv.beat_missed(1, got) == []
+
+    # 模型压根没写 → 程序插在标题行后面
+    got = nv.pin_beat(1, "第1章 突围\n一句话：…")
+    lines = got.split("\n")
+    assert lines[1].startswith("开局落点：") and "FBI" in lines[1]
+
+    # 写了两遍 → 只留一行
+    got = nv.pin_beat(1, "第1章\n开局落点：甲\n一句话：…\n开局落点：乙")
+    assert sum(1 for x in got.split("\n") if x.startswith("开局落点")) == 1
+
+    # 没有落点的章不动它
+    body = "第9章 别的事\n一句话：…"
+    assert nv.pin_beat(9, body) == body

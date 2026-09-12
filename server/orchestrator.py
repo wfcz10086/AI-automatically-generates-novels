@@ -2244,6 +2244,39 @@ class Novelist:
         return [f"第{n}章细纲里没有「开局落点：」那一行，或没照抄作者原文。"
                 f"应原样写上：{beat[:60]}"]
 
+    def pin_beat(self, n: int, body: str) -> str:
+        """把第 n 章的开局落点那一行**由程序钉进去**，不问模型。
+
+        让模型照抄, 它做不到一字不改: 实测第 1 章抄的是
+            开局落点：纽约曼哈顿，被小弟出卖，**联邦调查局**围楼。
+        种子写的是「FBI 围楼」。它一边抄一边把专名换成了中文同义说法 ——
+        题材包那条「不许用现代思维嘲笑古人」被泛化成了「别提现代词」。
+
+        既然这一行是**纯拷贝**, 就该由程序写。能由程序定死的, 不要问模型。
+        模型该管的是这一章其余十栏怎么编。
+        """
+        beat = self.beat_for(n)
+        if not beat:
+            return body
+        line = f"开局落点：{beat}"
+        out, seen = [], False
+        for ln in (body or "").split("\n"):
+            if ln.strip().startswith("开局落点"):
+                if not seen:
+                    out.append(line)
+                    seen = True
+                continue                      # 重复的丢掉
+            out.append(ln)
+        if not seen:                          # 模型压根没写 → 插在标题行后面
+            for i, ln in enumerate(out):
+                if re.match(r"\s*第\s*\d+\s*章", ln):
+                    out.insert(i + 1, line)
+                    seen = True
+                    break
+            if not seen:
+                out.insert(0, line)
+        return "\n".join(out)
+
     def beat_names_missing(self, n: int, text: str) -> List[str]:
         """开局落点里点名的**专名**，正文里必须原样出现。
 
@@ -3770,7 +3803,7 @@ class Novelist:
             if lack:                     # 残缺的不许换上去, 原稿还在
                 self._log(f"第{idx}章重排结果缺 {'、'.join(lack)}，不予采用")
                 continue
-            co[str(idx)] = body
+            co[str(idx)] = self.pin_beat(idx, body)
             done += 1
         if done:
             self.register_new_cast(parts)
@@ -4949,7 +4982,7 @@ class Novelist:
             if twin:
                 dupes.append((idx, twin))
                 continue
-            outlines[str(idx)] = body
+            outlines[str(idx)] = self.pin_beat(idx, body)
             kept += 1
         self.register_new_cast(parts)
         # 章末钩子逐章入伏笔库。钩子本来就是「明写的待兑现项」，可原来只有巡检
