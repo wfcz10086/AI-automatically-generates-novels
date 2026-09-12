@@ -10,8 +10,20 @@ SLUG=$(python3 -c "import sys;sys.path.insert(0,'.');from server.orchestrator im
 LOG="reports/guard.log"; mkdir -p reports
 
 # 守护自己也要互斥，否则开两个哨兵会各拉一个长跑
-exec 8>".guard.$(printf %s "$TITLE" | md5sum | cut -c1-8).lock"
-flock -n 8 || { echo "已有哨兵在守《$TITLE》" >&2; exit 1; }
+LOCKF=".guard.$(printf %s "$TITLE" | md5sum | cut -c1-8).lock"
+exec 8>"$LOCKF"
+if ! flock -n 8; then
+  # 报清楚是谁占着 —— 「已有哨兵在守」这一句把「真有哨兵」和「上一个哨兵
+  # 死了但它的 sleep 子进程还攥着锁」混成了一种情况, 后者查起来毫无线索。
+  HOLD=$(fuser "$LOCKF" 2>/dev/null | tr -d ' ')
+  if [ -n "$HOLD" ] && ! ps -o cmd= -p $HOLD 2>/dev/null | grep -q guard.sh; then
+    echo "锁被残留进程占着(pid=$HOLD: $(ps -o cmd= -p $HOLD 2>/dev/null))，" \
+         "不是哨兵。kill 掉它再重试。" >&2
+  else
+    echo "已有哨兵在守《$TITLE》(pid=$HOLD)" >&2
+  fi
+  exit 1
+fi
 
 count() { python3 -c "
 import json;print(len(json.load(open('projects/$SLUG/state.json',encoding='utf-8')).get('done',[])))" 2>/dev/null || echo 0; }
@@ -31,7 +43,7 @@ while :; do
   pgrep -f "run_novel.py run --title $TITLE" >/dev/null 2>&1 && ALIVE=1
   if [ "$ALIVE" -eq 0 ]; then
     echo "[$(date '+%T')] 长跑不在，拉起（当前 $NOW/$TGT）" | tee -a "$LOG"
-    setsid bash scripts/run_until.sh "$TITLE" "$TGT" "$BATCH" >> "$LOG" 2>&1 < /dev/null &
+    setsid bash scripts/run_until.sh "$TITLE" "$TGT" "$BATCH" >> "$LOG" 2>&1 < /dev/null 8>&- &
     disown
   else
     # 活着但长时间不涨章 —— 只报警不重启，免得把正在写的那一章打断
@@ -45,5 +57,8 @@ while :; do
     fi
   fi
   LAST=$NOW
-  sleep "$EVERY"
+  # sleep 必须**关掉锁的 fd** 再跑。否则它继承 fd 8, 而 kill 掉哨兵本体时
+  # 这个 sleep 会活下来变成孤儿, 攥着 flock 不放 —— 之后每一次重启哨兵都被
+  # 拒绝, 而且只留下一句「已有哨兵在守」, 最长堵 EVERY 秒。实测踩过。
+  sleep "$EVERY" 8>&-
 done
