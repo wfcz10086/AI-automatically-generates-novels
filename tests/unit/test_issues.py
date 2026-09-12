@@ -389,3 +389,39 @@ def test_返修之后必须复审并按结果决定出队():
     assert "json.dumps(rest" in sh, "出队结果要按复审状态重算，不是照搬 q[2:]"
     assert "tries" in sh and "不再自动重试" in sh, \
         "要么会无限重修同一章，要么没有次数上限"
+
+
+def test_台账窗口不许把开篇的根基事实挤掉():
+    """原来是 cn[-40:] —— 纯取最近的，台账一长最老的那批最先掉出去。
+
+    而它们恰恰是最容易被后文推翻的：开篇定死的东西（主角怎么来的、什么
+    东西毁了、谁死了）会被反复回忆、反复提及；中段那些「某人答应某事」的
+    临时约定反而没人会去推翻它。
+
+    实测第 10、16 章连着两次写出「玉佩残片」，而第 1 章白纸黑字写着它
+    彻底崩碎消失。当时 canon 才 24 条、窗口还没开始丢东西，但按每章两条的
+    速度第 30 章就会越过 40 —— 那时这条就会真的掉出去。
+    """
+    from server.orchestrator import Novelist
+    nv = Novelist.__new__(Novelist)
+
+    cn = [{"chapter": 1, "subject": "甲", "fact": "玉佩彻底崩碎", "kind": "destroy"},
+          {"chapter": 2, "subject": "乙", "fact": "某人死了", "kind": "death"}]
+    cn += [{"chapter": i, "subject": "丙", "fact": f"临时约定{i}", "kind": "other"}
+           for i in range(3, 80)]
+
+    w = nv.canon_window(cn, cap=40)
+    assert len(w) == 40
+    assert any("玉佩" in c["fact"] for c in w), "开篇的毁灭事实被挤掉了"
+    assert any(c["kind"] == "death" for c in w), "死亡事实被挤掉了"
+    assert any(c["chapter"] >= 75 for c in w), "最近的事实被挤掉了"
+    assert [c["chapter"] for c in w] == sorted(c["chapter"] for c in w), "要按章号排"
+
+    # 没超过上限就原样返回，不做任何取舍
+    assert nv.canon_window(cn[:20], cap=40) == cn[:20]
+
+    # 硬事实多到超过上限时，一条都不许丢
+    many = [{"chapter": i, "subject": "x", "fact": f"毁了{i}", "kind": "destroy"}
+            for i in range(1, 60)]
+    w2 = nv.canon_window(many, cap=40)
+    assert len(w2) == 59, "毁灭/死亡这类硬事实不许因为超预算被丢"

@@ -1748,6 +1748,42 @@ class Novelist:
             return False
         return True
 
+    def canon_window(self, cn: List[Dict[str, Any]],
+                     cap: int = 40) -> List[Dict[str, Any]]:
+        """挑哪几条不可逆事实进提示词。
+
+        原来是 cn[-40:] —— 纯取最近的。台账一长, **最老的那批最先掉出去**,
+        而它们恰恰是最容易被后文推翻的: 开篇定死的东西(主角怎么来的、什么
+        东西毁了、谁死了)会被反复回忆、反复提及, 而中段那些「某人答应某事」
+        的临时约定反而没人会去推翻它。
+        现在 canon 才 24 条, 窗口还没开始丢东西; 按每章两条的速度第 30 章就会
+        越过 40。这是个定时炸弹, 趁发现了改掉。
+
+        留三类, 去重后按章号排:
+          · 毁灭/死亡类 —— 一旦被推翻就是硬伤(实测第 10、16 章连着两次写出
+            「玉佩残片」, 而第 1 章白纸黑字写着它彻底崩碎消失)
+          · 最早的 10 条 —— 开篇的根基
+          · 最近的若干条 —— 眼下正在用的
+        """
+        if len(cn) <= cap:
+            return cn
+        hard = {"death", "destroy", "betray", "reveal"}
+        pick = {i for i, c in enumerate(cn)
+                if str(c.get("kind") or "") in hard}      # 硬事实一条不丢
+        pick |= set(range(min(10, len(cn))))              # 开篇根基
+        room = max(10, cap - len(pick))                   # 剩下的给最近的
+        pick |= set(range(max(0, len(cn) - room), len(cn)))
+        # 超了就从**中段**往外挤 —— 中段那些「某人答应某事」的临时约定
+        # 最不容易被推翻, 是这三类里最该让位的。
+        while len(pick) > cap:
+            mid = [i for i in sorted(pick)
+                   if i >= 10 and i < len(cn) - room
+                   and str(cn[i].get("kind") or "") not in hard]
+            if not mid:
+                break
+            pick.discard(mid[len(mid) // 2])
+        return [cn[i] for i in sorted(pick)]
+
     def build_context(self, n: int, chapter_outline: str) -> Dict[str, Any]:
         """五层记忆 → 一份带预算报告的上下文. 见 memory_ctl.py."""
         mc = MemoryController(self.g["context_budget"], self.mcfg.get("layers"))
@@ -1817,9 +1853,9 @@ class Novelist:
                         f"不得随意把主场换到别的县城；确需异地必须写明行程。")
         cn = self.canon()
         if cn and self.con_on("canon"):
-            recent_facts = cn[-40:]
             cons.append("【已确立的不可逆事实，绝对不得推翻】\n" + "；".join(
-                f"{c['subject']}{c['fact']}(第{c['chapter']}章)" for c in recent_facts))
+                f"{c['subject']}{c['fact']}(第{c['chapter']}章)"
+                for c in self.canon_window(cn)))
         era = self.era_card()
         if era and self.con_on("era"):
             cons.append("【时代红线·写进正文即穿帮】\n" + self.condense(era, 3000))
