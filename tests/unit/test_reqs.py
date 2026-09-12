@@ -207,3 +207,28 @@ def test_势力表由程序钉入种子的名字():
     src = inspect.getsource(o.Novelist.grow_factions)
     assert "self.pin_seed_factions()" in src, \
         "扩充之前没先把种子点名的势力钉进去 —— 模型会继续自造形近新名"
+
+
+def test_开书时根合同的事实要灌进台账():
+    """评审的矛盾检查读 canon.json，而 canon 从评审里长出来 —— 开书时是空的。
+
+    实测：第 1 章把根合同 facts 里的「武大郎已死七日」写成活人被踩手，
+    细纲和评审全放行 —— 树上明明有这条，没有任何一层把它当矛盾判。
+    """
+    import inspect
+    from server import orchestrator as o
+    assert hasattr(o.Novelist, "seed_canon_from_tree")
+    src = inspect.getsource(o.Novelist.step_chapter_outlines)
+    assert "self.seed_canon_from_tree()" in src, "排纲前没灌台账，开局照样瞎写"
+
+
+def test_槽内最高优先级的块永远不丢():
+    """人物纪律 2309 字 > 纪律槽预算 2200 —— 单块超预算时原逻辑把它整个丢掉，
+    它物理上永远进不去。预算的本意是恢复优先级，不是把最重要的那块饿死。
+    """
+    from server.prompt_compiler import enforce_slots
+    seg = ["⚠️ 【人物纪律·全局】" + "重" * 2400,      # 单块 > 2200 预算
+           "⚠️ 【开篇铁律】" + "开" * 100,
+           "⚠️ 普通纪律" + "普" * 300]
+    kept = enforce_slots(list(seg), index=0)
+    assert any("人物纪律" in b for b in kept), "最高优先级的块被预算饿死了"

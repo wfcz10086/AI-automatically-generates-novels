@@ -286,9 +286,17 @@ def enforce_slots(seg: List[str], on_drop=None, index: int = 0) -> List[str]:
             # 写成 -pri 就反了 —— 变成分最高的先被丢(单测当场抓到)。
             return (0, pri, -ln)
 
+        top = max(idx, key=lambda i: _slot_of(seg[i])[1])
         for i in sorted(idx, key=rank):
             if used <= budget:
                 break
+            if i == top:
+                # 本槽最高优先级的块**永远不丢**, 哪怕它一块就超预算。
+                # 实测: 人物纪律 2309 字 > 纪律槽预算 2200, 于是它物理上
+                # 永远进不去 —— 连同被挤的还有开篇铁律, 第 1 章立刻开出
+                # 「日头毒辣, 晒得青石板路泛着白光」这种被明令禁止的环境开头。
+                # 预算的本意是恢复优先级, 不是把最重要的那块饿死。
+                continue
             keep[i] = False
             used -= len(seg[i])
             if on_drop:

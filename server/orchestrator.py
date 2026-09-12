@@ -1778,6 +1778,37 @@ class Novelist:
                 f"「{fact[:60]}」已被第 {'、'.join(map(str, rec['chapters']))} 章"
                 f"连撞 {len(rec['chapters'])} 次")
 
+    def seed_canon_from_tree(self) -> int:
+        """开书时把根合同 entry.facts 灌进 canon.json。
+
+        实测抓到的洞: 评审的矛盾检查读 canon.json, 而 canon 是从评审的
+        new_facts 里长出来的 —— **开书时它是空的**。于是第 1 章把「武大郎
+        已死七日」写成活人被踩手, 细纲和评审全放行: 树上明明有这条 fact,
+        没有任何一层把它当矛盾判。
+        根合同的 facts 就是「开篇已定死不许翻的事」, 和 canon 是同一个东西,
+        程序抄过去就行。
+        """
+        f = self.p.dir / "tree.json"
+        if not f.exists():
+            return 0
+        cn = self.canon()
+        if cn:
+            return 0                      # 已经有账了, 别重复灌
+        try:
+            root = json.loads(f.read_text(encoding="utf-8")).get("R") or {}
+            facts = ((root.get("entry") or {}).get("facts")) or []
+        except Exception as e:
+            self._ledger(e, "根合同事实灌注跳过")
+            return 0
+        rows = [{"chapter": 0, "subject": "（种子）", "fact": str(x)[:120],
+                 "kind": "seed"} for x in facts if str(x).strip()]
+        if not rows:
+            return 0
+        self.p.write("canon.json", json.dumps(rows, ensure_ascii=False, indent=2))
+        self._log(f"开书对表：根合同 {len(rows)} 条既定事实已灌入台账"
+                  f"（{'；'.join(r['fact'][:18] for r in rows[:3])}…）")
+        return len(rows)
+
     def canon_window(self, cn: List[Dict[str, Any]],
                      cap: int = 40) -> List[Dict[str, Any]]:
         """挑哪几条不可逆事实进提示词。
@@ -5077,6 +5108,7 @@ class Novelist:
         # 151 条真伏笔只收 30 条(80% 未收)。改成点名 + 硬要求 + 程序核对。
         # 清单由 overdue_foreshadows() 算并缓存 —— 格式表那一栏也要用它,
         # 两边必须是同一份: 表上有「回收伏笔」栏、约束里却没点名, 模型只会填「无」。
+        self.seed_canon_from_tree()
         overdue = self.overdue_foreshadows(start)
         pend = []
         try:
