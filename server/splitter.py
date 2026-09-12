@@ -19,6 +19,14 @@ CHAPTER_PATTERNS = [
 ]
 
 
+def _clip(t: str, n: int, what: str) -> str:
+    t = t or ""
+    if len(t) <= n:
+        return t
+    print(f"  [clip] {what}: {len(t)} → {n} 字", flush=True)
+    return t[:n]
+
+
 def split_chapters(text: str) -> List[Dict[str, Any]]:
     """按章节标题切分。切不出来就按空行块定长聚合，保证总能出结果。"""
     lines = text.replace("\r\n", "\n").split("\n")
@@ -69,7 +77,7 @@ def analyze(chapters: List[Dict[str, Any]], llm: Callable[[str], str],
             f"核心事件：（一句话）\n出场人物：（顿号分隔）\n冲突：（一句话）\n"
             f"爽点：（一句话）\n章末钩子：（一句话）\n"
             f"写作手法：（3 个关键词，如 短句/多对话/内心戏重）\n\n"
-            f"{c['text'][:5000]}")
+            f"{_clip(c['text'], 5000, '拆书正文块')}")
         per.append({"title": c["title"], "raw": out})
 
     digest = "\n\n".join(f"【{p['title']}】\n{p['raw']}" for p in per)
@@ -81,7 +89,7 @@ def analyze(chapters: List[Dict[str, Any]], llm: Callable[[str], str],
         f"## 节奏表（多少章一个大事件，钩子怎么留）\n"
         f"## 文风特征（句式、段落、对话占比、常用手法）\n"
         f"## 可借鉴与不可借鉴\n\n"
-        f"要求：具体、可执行，不要空泛评价。直接输出，无前言。\n\n{digest[:12000]}")
+        f"要求：具体、可执行，不要空泛评价。直接输出，无前言。\n\n{_clip(digest, 12000, "拆书摘要")}")
     return {"chapters": len(chapters), "sampled": len(picks),
             "per_chapter": per, "summary": summary}
 

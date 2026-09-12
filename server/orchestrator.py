@@ -21,6 +21,7 @@ from .prompt_engine import render, budget, est_tokens
 from .evaluator import audit, book_audit, window_audit
 from . import dials as dl
 from . import stagecraft as sc
+from . import distill as dst
 from .retrieval import Retriever
 from .prompt_compiler import (outline_required, outline_format_block, window_drift,
                              render_item,
@@ -576,6 +577,8 @@ class Novelist:
         # 没有覆盖口子的话，只能改包（伤别的书）或跟包对着写（模型两头听、写歪）。
         bind_trace(project.dir / "trace")
         bind_model(m.get("model"))
+        # 提炼缓存挂仓库级 —— 同一段世界观/题材规范被多本书提炼, 只花一次
+        dst.bind_cache(Path(__file__).resolve().parents[1] / ".cache" / "distill")
         self.genre = self._with_overrides(
             registry.genres.get(m.get("genre_id")) or {}, "genre")
         self.style = self._with_overrides(
@@ -634,7 +637,7 @@ class Novelist:
         if not g:
             return ""
         if full:
-            return g.get("raw", "")[:6000]
+            return self.shrink(g.get("raw", ""), 6000, "题材规范")
         parts = [f"题材：{g.get('name')}"]
         for label, key, sep, cap in (("核心爽点：", "corePleasure", "；", 6),
                                      ("人物配置：", "cast", "；", 6)):
@@ -1753,7 +1756,7 @@ class Novelist:
                              "名单内未出场者本章不必写）】\n" + "、".join(_names))
             else:
                 resident += "\n\n【全部角色档案（备查，勿引入未列出的新角色）】\n" + roles_all
-        graw = (self.genre.get("raw") or "")[:8000]
+        graw = self.shrink(self.genre.get("raw") or "", 8000, "题材写作规范")
         if graw:
             resident += "\n\n【题材写作规范（完整版）】\n" + graw
 
@@ -1989,6 +1992,12 @@ class Novelist:
             self._log("势力 %d 家：%s" % (len(fs), "、".join(f["name"] for f in fs)))
         return fs
 
+    def shrink(self, text: str, limit: int, what: str) -> str:
+        """超长就提炼, 不硬切。用 polishing 档(便宜), 结果按内容哈希缓存。"""
+        return dst.distill(text, limit, what,
+                           ask=lambda q: clean(call("polishing", q,
+                                                    max_tokens=int(limit * 0.9)).text))
+
     def seed_factions(self) -> str:
         """种子里点名的势力 —— 势力表必须先用这些名字, 不许另造同类新名。
 
@@ -2220,7 +2229,7 @@ class Novelist:
             return turns.get(str(last), "")
         if not txt:
             return turns.get(str(last), "")
-        turns[str(n)] = txt[:2600]
+        turns[str(n)] = self.shrink(txt, 2600, "世界回合")
         for f in fs:
             f["last_turn"] = n
         self.p.write("factions.json", json.dumps(fs, ensure_ascii=False, indent=2))
@@ -2585,7 +2594,7 @@ class Novelist:
                      "走出去→没有意识形态撑不住\n") if chain else ""
         prompt = (
             f"为《{self.p.meta.get('title','')}》做分卷。全书 {total} 章，分 {n_vol} 卷。\n\n"
-            f"#总纲\n{self.p.read('outline.md')[:4000]}\n\n"
+            f"#总纲\n{self.shrink(self.p.read('outline.md'), 4000, '总纲(分卷)')}\n\n"
             f"#可用角色\n{'、'.join(c['name'] for c in self.roster()) or '未定'}\n\n"
             f"#题材节奏要求\n{self.genre_rules()[:800]}\n\n"
             + (f"#锚定\n朝代只叫「{anchor['dynasty']}」\n\n" if anchor.get("dynasty") else "")
@@ -4216,7 +4225,7 @@ class Novelist:
         vols = self.p._load("volumes.json", []) or []
         vol_map = "\n".join(f"{v.get('start')}-{v.get('end')} {v.get('name','')}"
                             for v in vols)
-        outline = self.asset("outline.md")[:3000]
+        outline = self.shrink(self.asset("outline.md"), 3000, "总纲(排纲)")
 
         CHECKS = (
             "1. **推进**（最要紧的一条）：逐章看，这一章**结束时的局面**与"
@@ -4327,8 +4336,8 @@ class Novelist:
                 one_line.append(f"{k}. {t.splitlines()[0][:20]}｜{(m.group(1) if m else t)[:50]}")
             p = (f"下面是分段审读《{self.p.meta.get('title','')}》细纲得到的问题清单，"
                  f"以及全书一行一章的梗概。\n\n"
-                 f"【全书梗概】\n" + "\n".join(one_line)[:20000] + "\n\n"
-                 f"【分段初判】\n" + json.dumps({"issues": issues}, ensure_ascii=False)[:12000] +
+                 f"【全书梗概】\n" + self.shrink("\n".join(one_line), 20000, "全书梗概") + "\n\n"
+                 f"【分段初判】\n" + self.shrink(json.dumps({"issues": issues}, ensure_ascii=False), 12000, "分段初判") +
                  f"\n\n请：① 去重合并；② 剔除误报（分段时看不到全局，"
                  f"有些「伏笔没收」其实后面收了）；③ 补上**跨段才看得见**的问题"
                  f"（跨卷断线、全书节奏、某人物长期缺席）；④ 按严重程度排序，最多 12 条。\n"
@@ -4612,7 +4621,7 @@ class Novelist:
             body = self.p.chapter(i)
             if body:
                 recent_full += (f"\n———— 第{i}章 正文（**以这个为准**，"
-                                f"与细纲冲突时按正文往下接）————\n{body[:3000]}\n")
+                                f"与细纲冲突时按正文往下接）————\n{self.shrink(body, 3000, "上一章正文")}\n")
         if recent_full:
             cons.append("【最近几章的正文原文】" + recent_full)
 
@@ -4684,13 +4693,13 @@ class Novelist:
                 established += "\n【还没到期的伏笔（心里有数即可）】" + "；".join(
                     f"第{f['planted']}章「{f['text'][:30]}」" for f in rest)
         if established:
-            cons.append("【已确立的事实，不得推翻或给出不同结论】\n" + established[:2500])
+            cons.append("【已确立的事实，不得推翻或给出不同结论】\n" + self.shrink(established, 2500, "已确立的事实"))
 
         bg = self.sanitize_facts(self.ground("plot", context=self.asset("outline.md")))
         # 再查一轮「剧情素材」—— plot 那轮查的是写得对不对(器物称谓物价),
         # 这一轮查的是接下来能写什么: 真实发生过的事、行内真实的做局手法、
         # 制度上真实的漏洞。虚构不出来的东西, 现实里有现成的。
-        drive_ctx = (self.asset("outline.md")[:1500] + "\n\n【本批要排的章节范围】"
+        drive_ctx = (self.shrink(self.asset("outline.md"), 1500, "总纲(推进)") + "\n\n【本批要排的章节范围】"
                      + f"第 {start}-{start + count - 1} 章\n"
                      + (vol.get("text", "")[:800] if vol else ""))
         drive = self.sanitize_facts(self.ground("drive", context=drive_ctx))
@@ -4699,7 +4708,7 @@ class Novelist:
                   + drive) if bg else drive
         if bg:
             prompt += ("\n\n【现实参考资料 —— 本批剧情涉及的器物、行程、礼俗须符合下列常识；"
-                       "资料里的朝代名不得出现在成稿里】\n" + bg[:5000])
+                       "资料里的朝代名不得出现在成稿里】\n" + self.shrink(bg, 5000, "剧情素材"))
         r = call("planning", prompt, on_delta,
                  max_tokens=int(self.g.get("max_tokens_outline") or 8000))
         parts = self.split_outline(r.text, count)
@@ -5258,7 +5267,7 @@ class Novelist:
             f"【机器体检结论】\n全书 {ba['score']}/100，近章窗口 {wa.get('score')}/100\n"
             f"{problems}\n\n"
             f"【最近 {len(picks)} 章正文节选】\n{excerpt}\n\n"
-            + (f"【上一版写作守则】\n{prev_guide[:1500]}\n\n" if prev_guide else "")
+            + (f"【上一版写作守则】\n{self.shrink(prev_guide, 1500, '上一版写作守则')}\n\n" if prev_guide else "")
             + "请输出**更新后的本书写作守则**，直接给后续章节的作者看。要求：\n"
               "1. 只写可执行的具体指令，不要评价、不要鼓励、不要空话\n"
               "2. 每条指令都要能被检查（写什么/不写什么/写多少）\n"
@@ -5916,8 +5925,8 @@ class Novelist:
             f"{ba.get('recent_score')} 分（分差说明前期旧账，重点看后者的趋势）\n问题："
             f"{json.dumps([{'type': i['type'], 'detail': str(i.get('detail'))[:160]} for i in ba['issues']], ensure_ascii=False)}\n\n"
             f"【当前机器规则】{json.dumps(rules, ensure_ascii=False)[:800]}\n\n"
-            f"【当前写作守则】\n{guide[:1200]}\n\n"
-            f"【最近一章正文节选】\n{chs[done[-1]][:2000]}\n\n"
+            f"【当前写作守则】\n{self.shrink(guide, 1200, '当前写作守则')}\n\n"
+            f"【最近一章正文节选】\n{self.shrink(chs[done[-1]], 2000, '最近一章正文')}\n\n"
             "请判断：哪些问题**靠改提示词/守则解决不了**，是系统本身的缺陷？只看这四类：\n"
             "1. 漏检 —— 正文里明显有问题但检测器没报出来\n"
             "2. 误报 —— 检测器报了但其实不是问题\n"
@@ -5995,7 +6004,7 @@ class Novelist:
                f"都是本书的正常用语，绝不是穿帮词）"
                if self.p.meta.get("history_mode") == "real" else "") + "\n"
             f"【出场角色】{roster}\n"
-            f"【近两章正文节选】\n{sample[:2500]}\n\n"
+            f"【近两章正文节选】\n{self.shrink(sample, 2500, '近两章正文')}\n\n"
             f"【候选词】{'、'.join(rest)}\n\n"
             f"分三类：\n"
             f"hard = 穿帮词，出现即错。判断必须以**本书的时代背景**为准：\n"
@@ -6150,7 +6159,7 @@ class Novelist:
             f"【旧档案】\n{m.group(1)}\n\n"
             f"【已确立事实】\n" + "\n".join(f"- 第{f['chapter']}章 {f['fact']}"
                                             for f in facts[-8:])
-            + f"\n\n【近期正文片段】\n{recent[:1500]}\n\n直接输出新档案段，无前言。",
+            + f"\n\n【近期正文片段】\n{self.shrink(recent, 1500, '近期正文片段')}\n\n直接输出新档案段，无前言。",
             max_tokens=800)
         new = clean(r.text)
         if new.startswith("###") and len(new) > 80:

@@ -50,6 +50,15 @@ def detect_fact_needs(text: str, era: str, limit: int = 4) -> List[Dict[str, str
     return out
 
 
+def _clip(t: str, n: int, what: str) -> str:
+    """切了就吼 —— 静默截断是反复吃亏的那一类病。"""
+    t = t or ""
+    if len(t) <= n:
+        return t
+    print(f"  [clip] {what}: {len(t)} → {n} 字", flush=True)
+    return t[:n]
+
+
 class Retriever:
     """内部 FTS5 + 外部 SearXNG 的统一入口。"""
 
@@ -393,7 +402,7 @@ class Retriever:
             f"名称、年份。互相矛盾的标「存疑」；资料里没有的**不要补**。\n"
             f"只写与「{topic}」直接相关的，无关内容一律丢掉。\n"
             f"如果资料里确实没有能用的内容，只回复两个字：无\n"
-            f"直接输出，无前言。\n\n{raw[:9000]}") or "").strip()
+            f"直接输出，无前言。\n\n{_clip(raw, 9000, "检索原文")}") or "").strip()
         if got in ("无", "", "None") or "无法生成" in got or "未包含" in got:
             return ""
         return got
@@ -456,7 +465,7 @@ class Retriever:
         # 变成了「按名字长度排序」: 实测本书 1003 张卡时前 40 名平均 18 字、
         # 全库平均 9.4 字, 而「阳谷至东京里程脚程」排到第 411 名, 永远进不了
         # 窗口。结果同一件事被查了 26 次(里程)、33 次(仵作验尸)。
-        ctx = self._bigrams(str(context)[:3500])
+        ctx = self._bigrams(_clip(str(context), 3500, "上下文(检索规划)"))
         def _rel(k: str) -> float:
             b = self._bigrams(k)
             return len(b & ctx) / len(b) if b else 0.0
@@ -485,7 +494,7 @@ class Retriever:
                         "不要列。\n\n")
         prompt = (
             f"你在帮一位网文作者做资料准备。当前任务：{stage_desc}。\n\n"
-            f"下面是已有的设定与内容：\n{context[:3500]}\n\n"
+            f"下面是已有的设定与内容：\n{_clip(context, 3500, "上下文(查什么)")}\n\n"
             f"{hint_line}{ex_line}{have_line}\n\n"
             f"{ask_line}"
             f"输出最多 {k} 条，每行一条，严格格式：\n"

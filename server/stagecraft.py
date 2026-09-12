@@ -1225,7 +1225,7 @@ def build_factions(outline: str, roster: Sequence[str], title: str,
         f'只输出 JSON，不要代码围栏：\n'
         f'{{"factions":[{{"name":"某派","wants":"…","inner":"…","fears":"…",'
         f'"state":"…","reads_hero":"…"}}]}}\n\n'
-        f"可用角色：{'、'.join(roster or []) or '（见总纲）'}\n\n#总纲\n{outline[:12000]}")
+        f"可用角色：{'、'.join(roster or []) or '（见总纲）'}\n\n#总纲\n{clip(outline, 12000, '总纲(势力)')}")
     data = parse_json(ask(prompt), "factions")
     out = []
     for i, x in enumerate((data.get("factions") or [])[:8]):
