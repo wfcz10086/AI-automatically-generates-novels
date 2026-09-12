@@ -306,3 +306,36 @@ def test_重写不许把扩写的成果抹掉():
     assert 'a["stats"]["cn"] >= floor > _cn2' in src, \
         "判据要写成「原稿达标 且 重写掉到下限以下」"
     assert "not undo_expand" in src, "守卫算出来了但没接进采纳条件"
+
+
+def test_异常里的主机名不许落盘():
+    """网关地址是用户的私有基础设施，不该出现在任何文件里。
+
+    实测一次网关读超时，异常文本被原样记进两个 audit/*.json：
+        ConnectionError: HTTPConnectionPool(host='xxx.xxx.com', port=8000)
+    projects/ 和 reports/ 都在 .gitignore 里，没有泄漏到版本库；但这类东西
+    一旦进了文件，后面每一次归档、打包、贴日志都可能把它带出去。
+    在**写入的那一刻**就去掉，比事后到处去搜可靠。
+    """
+    from server.issues import Ledger, redact
+
+    raw = "HTTPConnectionPool(host='gw.example.com', port=8000): Read timed out"
+    assert "example.com" not in redact(raw)
+    assert "<host>" in redact(raw)
+    assert "Read timed out" in redact(raw)      # 错误类型要留着，不然没法查
+
+    L = Ledger()
+    try:
+        raise ConnectionError(raw)
+    except Exception as e:
+        it = L.record("step_skipped", f"评审失败 {raw}", e)
+    assert "example.com" not in it["detail"]
+    assert "example.com" not in it["trace"]
+
+
+def test_脱敏不误伤中文和普通文本():
+    from server.issues import redact
+    for s in ("第3章扩写第1轮 2238 → 3163 字（达标）",
+              "NameError: name 'cons' is not defined",
+              "评审第10章 26分 问题7 矛盾1"):
+        assert redact(s) == s, f"误伤了：{s} → {redact(s)}"

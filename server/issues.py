@@ -25,8 +25,23 @@
 """
 from __future__ import annotations
 
+import re
 import traceback
 from typing import Any, Dict, List, Optional
+
+#: 主机名/URL 一律脱敏后再落盘。
+#: 异常文本会被原样记进 audit/*.json 和日志, 而网关地址是用户的私有基础设施 ——
+#: 实测一次网关读超时就把它写进了两个 audit 文件。这类东西一旦进了文件,
+#: 后面每一次归档、打包、贴日志都可能把它带出去。在**写入的那一刻**就去掉,
+#: 比事后到处去搜可靠。
+_HOST = re.compile(
+    r"(?:https?://)?(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
+    r"[A-Za-z]{2,24}(?::\d{2,5})?")
+
+
+def redact(text: str) -> str:
+    """把主机名、URL 换成占位符。保留端口信息以外的结构, 便于看出是哪一类错。"""
+    return _HOST.sub("<host>", str(text or ""))
 
 #: 三档。auto_handled 只作记录，不影响状态。
 MUST = "must_handle"
@@ -171,13 +186,13 @@ class Ledger:
             spec = dict(CATALOG["code_bug"])
             detail = f"{type(exc).__name__}: {exc}｜{detail}".strip("｜")
         item = {"code": code, "severity": spec["severity"],
-                "title": spec["title"], "detail": str(detail)[:400],
+                "title": spec["title"], "detail": redact(detail)[:400],
                 "auto_handle": bool(spec.get("auto_handle")),
                 "unregistered": bool(spec.get("unregistered"))}
         if exc is not None:
-            item["trace"] = "".join(
+            item["trace"] = redact("".join(
                 traceback.format_exception(type(exc), exc, exc.__traceback__)
-            )[-600:]
+            ))[-600:]
         self.items.append(item)
         return item
 
