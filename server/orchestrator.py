@@ -4725,9 +4725,7 @@ class Novelist:
         if bg:
             prompt += ("\n\n【现实参考资料 —— 本批剧情涉及的器物、行程、礼俗须符合下列常识；"
                        "资料里的朝代名不得出现在成稿里】\n" + self.shrink(bg, 5000, "剧情素材"))
-        r = call("planning", prompt, on_delta,
-                 max_tokens=int(self.g.get("max_tokens_outline") or 8000))
-        parts = self.split_outline(r.text, count)
+        r, parts = self.outline_best(prompt, count, start, on_delta)
         outlines = self.p._load("chapter_outlines.json", {})
         # 章号以**正文里写的**为准, 不能按顺序硬编号。实测要它排 37-54,
         # 它排出的是「第75章…第87章」, 而 str(start+i) 把这些内容存成了
@@ -4921,6 +4919,91 @@ class Novelist:
                      json.dumps(outlines, ensure_ascii=False, indent=2))
         self._log(f"  细纲定稿: 第{n}章已按第{n-1}章实际正文对表")
         return new_co
+
+    def outline_best(self, prompt: str, count: int, start: int, on_delta=None):
+        """细纲多发散选优。裁判**纯程序**, 不花评审调用。
+
+        判据(全是现成的验收部件, 不额外问模型):
+          · 收得回几章(章号在范围内、字段齐全、不与已排章撞车)
+          · 到期伏笔有没有被安排回收
+          · 钩子有没有和上一章重复(重复= 原地打转的前兆)
+          · 燃料配比: 账目那一格真的动了几章(实测原著 35% 靠账目推进,
+            而模型爱章章靠「又来了个新误会」)
+        """
+        mt = int(self.g.get("max_tokens_outline") or 8000)
+        cands = max(1, int(self.g.get("candidates") or 1))
+        if cands <= 1:
+            r = call("planning", prompt, on_delta, max_tokens=mt)
+            return r, self.split_outline(r.text, count)
+
+        import concurrent.futures as _cf
+
+        def _one(i: int):
+            try:
+                rr = call("planning", prompt, on_delta if i == 0 else None,
+                          max_tokens=mt)
+                return rr, self.split_outline(rr.text, count)
+            except Exception as e:
+                print(f"  [细纲选优] 第{i+1}稿失败 {type(e).__name__}", flush=True)
+                return None, []
+
+        with _cf.ThreadPoolExecutor(max_workers=cands) as ex:
+            outs = list(ex.map(_one, range(cands)))
+        outs = [(r, p) for r, p in outs if r is not None and p]
+        if not outs:
+            r = call("planning", prompt, on_delta, max_tokens=mt)
+            return r, self.split_outline(r.text, count)
+        if len(outs) == 1:
+            return outs[0]
+
+        scored = [(self.outline_score(p, count, start), r, p) for r, p in outs]
+        scored.sort(key=lambda x: -x[0])
+        print(f"  [细纲选优] {len(outs)} 稿得分 "
+              + "、".join(f"{x[0]:.1f}" for x in scored)
+              + f" → 取第 {[x[0] for x in scored].index(scored[0][0]) + 1} 稿",
+              flush=True)
+        return scored[0][1], scored[0][2]
+
+    def outline_score(self, parts: List[str], count: int, start: int) -> float:
+        """细纲打分: 全部靠程序查, 一次模型调用都不花。"""
+        need = outline_required(self.style)
+        exist = self.p._load("chapter_outlines.json", {})
+        prev_hook = ""
+        m0 = re.search(r"^\s*章末钩子\s*[:：]\s*(.+)$",
+                       exist.get(str(start - 1), ""), re.M)
+        if m0:
+            prev_hook = m0.group(1)[:40]
+        score, ok_ch, acct = 0.0, 0, 0
+        for i, part in enumerate(parts[:count]):
+            body = self.clean_outline(part)
+            lack = [f for f in need
+                    if not re.search(rf"^\s*{f}\s*[:：]\s*\S", body, re.M)]
+            if lack:
+                score -= 3.0 * len(lack)          # 缺栏最伤: 整章会被丢掉
+                continue
+            ok_ch += 1
+            # 账目那一栏真的动了账(有数字或 → 箭头), 不是写「形势更严峻」
+            ma = re.search(r"^\s*账目\s*[:：]\s*(.+)$", body, re.M)
+            if ma and re.search(r"[0-9一二三四五六七八九十百千]|→|->", ma.group(1)):
+                acct += 1
+            # 钩子与上一章重复 = 原地打转
+            mh = re.search(r"^\s*章末钩子\s*[:：]\s*(.+)$", body, re.M)
+            if mh and prev_hook and prev_hook[:14] and prev_hook[:14] in mh.group(1):
+                score -= 4.0
+        score += ok_ch * 3.0
+        # 燃料配比: 账目推进的章占比越接近实测的 35% 越好(少了扣, 多了不奖)
+        if ok_ch:
+            want = float((self.style.get("advanceFuel") or {}).get("账目变动") or 0.3)
+            score -= abs(acct / ok_ch - want) * 6.0
+        # 到期伏笔有没有被安排回收
+        names = getattr(self, "_overdue_names", None)
+        if names:
+            blob = "".join(parts[:count])
+            hit = sum(1 for t in names
+                      if any(w and w in blob
+                             for w in re.findall(r"[一-鿿]{3,}", t)[:4]))
+            score += min(6.0, hit * 3.0)
+        return score
 
     def draft_best(self, prompt: str, cap: int, target: int, on_delta=None):
         """正文多发散选优：并发写 N 稿，程序打分挑最好的。
