@@ -4983,7 +4983,12 @@ class Novelist:
         # ② 文风闸: 过区间的指标数 + 爽点来源
         try:
             m = measure_text(text)
-        except Exception:
+        except Exception as e:
+            # 不许沉默: 这里一旦抛异常, 三稿全得 0 分, 选优退化成随机选,
+            # 而日志上看起来一切正常。实测踩过 —— 上一版写成 pc.measure_text,
+            # 名字不存在, NameError 被这个 except 吞掉, 三稿清一色 0.0。
+            print(f"  [选优] 打分失败 {type(e).__name__}: {e} —— "
+                  f"本轮退化为随机选, 请查 measure_text", flush=True)
             return kill, 0.0
         prof = self.style.get("windowFeedback") or {}
         mets = prof.get("metrics") or {}
