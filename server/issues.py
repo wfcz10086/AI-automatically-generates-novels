@@ -178,6 +178,13 @@ CATALOG: Dict[str, Dict[str, Any]] = {
                "赋值覆盖、槽位预算挤掉）。模型没看见的要求，措辞再重也没用。",
         "next_action": "看 server/reqs.py 里这条的 marker，顺着它在组装链上找"
                        "断点。"},
+    "meta_leak": {
+        "severity": MUST, "auto_handle": False,
+        "title": "正文里漏出了规划性词汇或章节回指",
+        "why": "「细纲」「第N章中」「不可逆的事实」这类词是写作过程的，不是"
+               "故事的。实测第 12 章把台账原词写进了叙述 —— 模型在自己做一致性"
+               "核对，把核对过程当成了正文。读者一眼就能看出这是机器写的。",
+        "next_action": "重写那一段，把回指改成剧情内的回忆或对话。"},
     "contract_broken": {
         "severity": MUST, "auto_handle": False,
         "title": "已定死的事实被推翻",

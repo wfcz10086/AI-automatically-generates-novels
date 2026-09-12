@@ -25,6 +25,7 @@ from . import distill as dst
 from . import issues as _iss
 from . import voice as _voice
 from . import reqs as _reqs
+from . import tics as _tics
 
 
 def _norm_key(v: str) -> str:
@@ -1880,6 +1881,18 @@ class Novelist:
         if anchor.get("main_place") and self.con_on("anchor"):
             cons.append(f"【主场锚定】主角常驻地是「{anchor['main_place']}」，"
                         f"不得随意把主场换到别的县城；确需异地必须写明行程。")
+        # 已用滥的措辞禁用表 —— **程序算出来的**, 不是手维护的词表。
+        # 模型写第 40 章时不知道第 3 章用过「砂纸磨过」, 提示词里写一百遍
+        # 「比喻不要重复」它也只能本章之内不重复; 全书的账只有程序有。
+        try:
+            done_ch = sorted(self.p.state.get("done", []))[-24:]
+            _texts = [self.p.chapter(i) for i in done_ch]
+            tb = _tics.ban_block([t for t in _texts if t],
+                                 names=[c["name"] for c in self.roster()])
+            if tb:
+                cons.append(tb)
+        except Exception as e:
+            self._ledger(e, "措辞禁用表生成跳过")
         cn = self.canon()
         if cn and self.con_on("canon"):
             cons.append("【已确立的不可逆事实，绝对不得推翻】\n" + "；".join(
@@ -5559,8 +5572,8 @@ class Novelist:
             print(f"  [选优] 打分失败 {type(e).__name__}: {e} —— "
                   f"本轮退化为随机选, 请查 measure_text", flush=True)
             return kill, 0.0
-        prof = self.style.get("windowFeedback") or {}
-        mets = prof.get("metrics") or {}
+        from .prompt_compiler import all_metrics
+        mets = all_metrics(self.style)     # 包的区间 + 引擎默认(短段/双问号)
         # 在区间内 +2; 不在区间内**按离得多远给部分分**。
         # 原来是「命中就 +2, 不命中 0 分」—— 没有梯度, 于是「对白占比 0.017」
         # 和「0.15」得分完全一样(区间下限 0.16), 三选一挑不出更接近的那一稿。
@@ -5945,6 +5958,12 @@ class Novelist:
                             "；".join(crit.get("blocking_why") or [])
                             + f"（程序算分 {crit.get('overall')}，"
                               f"模型维度平均 {crit.get('dim_avg')}）")
+        # 元叙述泄漏: 正文里不许出现「细纲」「第N章中」「不可逆的事实」这类
+        # 规划性词汇。实测第 12 章把台账原词「不可逆的事实」写进了叙述 ——
+        # 模型在自己做一致性核对, 把核对过程当成了正文。
+        for _leak in _tics.meta_leaks(text):
+            self.iss.record("meta_leak", _leak)
+            self._log(f"  元叙述泄漏：…{_leak}")
         # 开局落点点名的专名(FBI 这类)有没有原样写进正文
         for _d in self.beat_names_missing(n, text):
             self.iss.record("beat_name_swapped", _d)

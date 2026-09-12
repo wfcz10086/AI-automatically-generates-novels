@@ -811,7 +811,41 @@ def measure_text(text: str) -> Dict[str, float]:
                       if l.rstrip("」』\"”').").endswith("？") and len(l) < 48),
         "反讽旁白": sum(body.count(w) for w in IRONY_STRONG),
         "解说体": sum(body.count(w) for w in EXPLAIN_MARK),
+        # 单字/四字以内独立成段。它是很好的节奏工具, 但一旦当成常规手段就
+        # 变成 AI 味的标志 —— 实测 46 章 16.5 万字里 922 处, 每千字 5.6 处,
+        # 是合理上限(2)的两倍八。短段该紧跟一个真的情绪转折, 不是逗号的替代品。
+        "每千字短段": round(
+            sum(1 for l in lines
+                if len(re.sub(r"[^一-鿿]", "", l)) <= 4) / n * 1000, 2),
+        # 连续两个问号的反问("为什么？为什么……？")是震惊模板的指纹
+        "双问号句": len(re.findall(r"[^。！？\n]{0,16}？[^。！？\n]{0,16}？", body)),
     }
+
+
+#: 引擎级默认区间 —— 对**所有书**都成立的纪律, 不属于某个文风包。
+#: 两条都是用户真读 46 章点出来的:
+#:   短段: 「疼。」「没有。」这类四字以内独立成段, 是好的节奏工具, 但实测
+#:         每千字 5.6 处(上限 2)—— 被当成了逗号的替代品
+#:   双问号: 「为什么？为什么……？」是震惊模板的指纹, 实测全书 60 处
+ENGINE_METRICS: Dict[str, Dict[str, Any]] = {
+    "每千字短段": {
+        "lo": 0, "hi": 2.0, "item": None,
+        "高": "四字以内独立成段的少用 —— 它只配出现在真正的情绪转折点上，"
+             "不是逗号的替代品；把碎段并回上下文",
+    },
+    "双问号句": {
+        "lo": 0, "hi": 1.0, "item": None,
+        "高": "连续两个问号的反问（为什么？为什么……？）是震惊模板，删掉；"
+             "写震惊用身体动作——手抖、退步、握不住兵器，不用内心连环反问",
+    },
+}
+
+
+def all_metrics(style_pack: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """文风包的区间 + 引擎默认区间。包里同名的以包为准。"""
+    mets = dict(ENGINE_METRICS)
+    mets.update(((style_pack or {}).get("windowFeedback") or {}).get("metrics") or {})
+    return mets
 
 
 def window_drift(texts: List[str], style_pack: Optional[Dict[str, Any]] = None) -> str:
@@ -831,7 +865,7 @@ def window_drift(texts: List[str], style_pack: Optional[Dict[str, Any]] = None) 
          纠偏时明写「别把它一起砍了」。
     """
     wf = (style_pack or {}).get("windowFeedback") or {}
-    mets = wf.get("metrics") or {}
+    mets = all_metrics(style_pack)
     if not texts or not mets:
         return ""
     ms = [measure_text(t) for t in texts if t and len(t) > 400]
@@ -858,27 +892,38 @@ def window_drift(texts: List[str], style_pack: Optional[Dict[str, Any]] = None) 
     # (低 20% 但带宽窄, 算出 0.64)后面, 被 topK=2 切掉 —— **连着 25 章一次
     # 都没进过纠偏**, 而它是这本书最该救的一项(对白是网文的骨架)。
     devs = []
-    # 三分之二以上的章都偏 → 即便均值在区间内也要纠。拿离它最近的那条边
-    # 当目标(多数章偏低就往下限算)。
+    # 每项先走正常通道(均值 vs 区间, 保留阻尼三档和偏高/偏低措辞), 再看
+    # 离散度**加成**: 三分之二以上的章不在区间内、且窗口够长(≥6 章)时,
+    # 把排序权重抬上去并附「N 章里 M 章不在区间内」的说明。
+    # 两个已经踩过的坑逼出这个结构:
+    #   · 只在「均值在区间内」时走离散分支 → 均值 0.155(略低于下限 0.16)时
+    #     rel≈0.03 被死区切掉, 对白刚救回来又掉出去
+    #   · 离散分支整个**替换**正常通道 → 单章窗口也被劫持, 「1 章里 1 章
+    #     不在区间内」把三档阻尼和偏高/偏低措辞全吞了(三条旧测试当场红)
     for k, spec in mets.items():
         lo, hi = spec.get("lo"), spec.get("hi")
-        if (out_frac.get(k, 0) >= 0.67 and lo is not None and hi is not None
-                and lo <= avg.get(k, 0) <= hi):
-            below = sum(1 for m in ms if m.get(k, 0) < lo)
-            side = "低" if below * 2 >= len(ms) else "高"
-            devs.append((0.5, 0.5 + out_frac[k], k, side, avg.get(k, 0),
-                         dict(spec, _spread=f"{len(ms)} 章里 "
-                              f"{int(out_frac[k]*len(ms))} 章不在区间内，"
-                              f"均值是被少数几章拉回来的")))
+        if lo is None or hi is None:
             continue
         v = avg.get(k, 0)
-        width = max(1e-9, (hi - lo)) if (lo is not None and hi is not None) else 1.0
-        if lo is not None and v < lo:
-            devs.append(((lo - v) / width, (lo - v) / max(1e-9, abs(lo)),
-                         k, "低", v, spec))
-        elif hi is not None and v > hi:
-            devs.append(((v - hi) / width, (v - hi) / max(1e-9, abs(hi)),
-                         k, "高", v, spec))
+        width = max(1e-9, hi - lo)
+        if v < lo:
+            ratio, rel, side = (lo - v) / width, (lo - v) / max(1e-9, abs(lo) or width), "低"
+        elif v > hi:
+            ratio, rel, side = (v - hi) / width, (v - hi) / max(1e-9, abs(hi)), "高"
+        else:
+            ratio, rel, side = 0.0, 0.0, ""
+        sp = dict(spec)
+        if out_frac.get(k, 0) >= 0.67 and len(ms) >= 6:
+            below = sum(1 for m in ms if m.get(k, 0) < lo)
+            side = side or ("低" if below * 2 >= len(ms) else "高")
+            ratio = max(ratio, 0.5)              # 至少中档措辞
+            rel = max(rel, 0.5 + out_frac[k])    # 排序权重抬上去
+            sp["_spread"] = (f"{len(ms)} 章里 {int(out_frac[k]*len(ms))} 章"
+                             f"不在区间内"
+                             + ("，均值是被少数几章拉回来的"
+                                if lo <= v <= hi else ""))
+        if ratio > 0:
+            devs.append((ratio, rel, k, side, v, sp))
     if not devs:
         return ""
     devs.sort(key=lambda d: -d[1])          # 按「离边差几成」排
