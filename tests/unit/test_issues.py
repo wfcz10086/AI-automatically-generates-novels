@@ -382,6 +382,10 @@ def test_返修之后必须复审并按结果决定出队():
     from pathlib import Path
     sh = (Path(o.__file__).resolve().parent.parent
           / "scripts" / "run_until.sh").read_text(encoding="utf-8")
-    assert "q[2:]" not in sh, "还在无条件丢掉前两条 —— 没修好的也当修好了"
+    # 注意别把 `rest = list(q[2:])` 也判成违规 —— 那是起点, 不是无条件丢弃。
+    # 违规的是**直接把 q[2:] 写回文件**。
+    assert "write('repair_queue.json', json.dumps(q[2:]" not in sh, \
+        "还在无条件丢掉前两条 —— 没修好的也当修好了"
+    assert "json.dumps(rest" in sh, "出队结果要按复审状态重算，不是照搬 q[2:]"
     assert "tries" in sh and "不再自动重试" in sh, \
         "要么会无限重修同一章，要么没有次数上限"
