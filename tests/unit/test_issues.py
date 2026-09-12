@@ -269,3 +269,24 @@ def test_开局落点那一行由程序钉进去():
     # 没有落点的章不动它
     body = "第9章 别的事\n一句话：…"
     assert nv.pin_beat(9, body) == body
+
+
+def test_评审判定该拦就不许报完成():
+    """blocking 算出来了却没人用 —— 今天第三次栽在同一件事上。
+
+    实测第 4 章：blocking=True、扣 65 分（3 严重 + 3 中等 + 1 轻微）、
+    程序算分 35，而**模型自己给的维度平均是 77**。状态却是「完成」、
+    问题清单空的，照样打勾过去 —— 因为 blocking 只用来触发一次重写，
+    从没接进问题台账。
+    """
+    import inspect
+    from server import orchestrator as o
+    src = inspect.getsource(o.Novelist.step_chapter)
+    assert 'self.iss.record("critique_blocking"' in src, \
+        "评审判定该拦却没记进问题台账，这一章会照样报「完成」"
+    from server import issues as I
+    assert I.CATALOG["critique_blocking"]["severity"] == I.MUST
+
+    L = I.Ledger()
+    L.record("critique_blocking", "严重问题 3 条；扣分合计 65")
+    assert L.status() == I.STATUS_NEEDS_USER

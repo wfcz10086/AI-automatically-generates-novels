@@ -123,6 +123,12 @@ CATALOG: Dict[str, Dict[str, Any]] = {
         "why": "NameError/AttributeError/TypeError/KeyError 这一类是我们自己"
                "写错了，跟模型无关，必须改代码。",
         "next_action": "看日志里的栈尾。"},
+    "critique_blocking": {
+        "severity": MUST, "auto_handle": False,
+        "title": "评审判定该拦，重写之后仍然该拦",
+        "why": "按扣分表算，这一章有证据的问题多到过线（严重≥2 条，或扣分"
+               "≥40，或与已确立事实冲突）。重写过一轮仍没降下来。",
+        "next_action": "看 audit/NNN.json 的 critique.issues，每条都带正文原句。"},
     "contract_broken": {
         "severity": MUST, "auto_handle": False,
         "title": "已定死的事实被推翻",

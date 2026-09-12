@@ -5705,6 +5705,18 @@ class Novelist:
                   + (f" 溢出:{','.join(rep['overflow'])}" if rep["overflow"] else "")
                   + ("（已重写）" if a.get("rewritten") else ""))
         # 字数不在区间、到期伏笔没着落这类, 补记进台账(它们原来只打一行日志)
+        # 评审判定该拦, 就不许这一章报「完成」。
+        # blocking 是程序按扣分表算出来的(只认有正文原句为证的问题), 它原来
+        # 只用来触发一次重写, **没有接进问题台账** —— 于是实测第 4 章
+        # blocking=True、扣 65 分(3 严重+3 中等+1 轻微)、程序算分 35, 状态
+        # 却是「完成」、问题清单空的, 照样打勾过去。
+        # 又是「算了但没人用」: 这已经是今天第三次(judge 被平均分盖掉、
+        # dimension_results 式丢弃、这一次)。
+        if crit.get("blocking"):
+            self.iss.record("critique_blocking",
+                            "；".join(crit.get("blocking_why") or [])
+                            + f"（程序算分 {crit.get('overall')}，"
+                              f"模型维度平均 {crit.get('dim_avg')}）")
         # 开局落点点名的专名(FBI 这类)有没有原样写进正文
         for _d in self.beat_names_missing(n, text):
             self.iss.record("beat_name_swapped", _d)
