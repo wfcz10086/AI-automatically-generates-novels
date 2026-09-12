@@ -120,6 +120,12 @@ CATALOG: Dict[str, Dict[str, Any]] = {
                "「不许用现代思维嘲笑古人」被泛化成了「整本书别提现代词」——"
                "禁的是姿态，不是词；何况这几章发生在穿越之前的现实世界。",
         "next_action": "把专名改回原样。"},
+    "metric_blowout": {
+        "severity": CONFIRM, "auto_handle": False,
+        "title": "文风指标塌方",
+        "why": "离文风包给的区间两倍宽以上。区间是从原著反推出来的，"
+               "差这么多说明这一章的节奏跟这本书要的不是一回事。",
+        "next_action": "看 windowFeedback 里这一项的「低」/「高」怎么说。"},
     "seam_violation": {
         "severity": CONFIRM, "auto_handle": False,
         "title": "合同接缝没咬合",

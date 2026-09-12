@@ -5369,15 +5369,29 @@ class Novelist:
             return kill, 0.0
         prof = self.style.get("windowFeedback") or {}
         mets = prof.get("metrics") or {}
-        hit = 0
+        # 在区间内 +2; 不在区间内**按离得多远给部分分**。
+        # 原来是「命中就 +2, 不命中 0 分」—— 没有梯度, 于是「对白占比 0.017」
+        # 和「0.15」得分完全一样(区间下限 0.16), 三选一挑不出更接近的那一稿。
+        # 实测这本书对白占比从第 1 章的 21% 一路塌到第 10 章的 1.7%, 而每一稿
+        # 都只是「没命中」, 打分器对这个塌方一无所知。
+        hit, part, bad = 0, 0.0, []
         for k, spec in mets.items():
             v = m.get(k)
             if v is None or not isinstance(spec, dict):
                 continue
             lo, hi = spec.get("lo"), spec.get("hi")
-            if lo is not None and hi is not None and lo <= v <= hi:
+            if lo is None or hi is None:
+                continue
+            if lo <= v <= hi:
                 hit += 1
-        score = hit * 2.0
+                continue
+            span = max(1e-9, hi - lo)
+            off = (lo - v) / span if v < lo else (v - hi) / span
+            part += max(0.0, 2.0 - min(2.0, off))     # 差半个区间还能拿 1.5 分
+            if off >= 2.0:                            # 离区间两倍宽 = 塌方
+                bad.append(f"{k}={v}（区间 {lo}-{hi}）")
+        score = hit * 2.0 + part
+        self._metric_blowout = bad
         score += min(6.0, m.get("独立反问句", 0) * 0.5)       # 人物心里那句问话
         score += min(4.0, m.get("每千字叹号", 0) * 0.2)       # 喊出来的劲
         score += min(4.0, m.get("解说体", 0) * 1.0)           # 把规矩讲透
@@ -5714,6 +5728,11 @@ class Novelist:
                   + (f" 溢出:{','.join(rep['overflow'])}" if rep["overflow"] else "")
                   + ("（已重写）" if a.get("rewritten") else ""))
         # 字数不在区间、到期伏笔没着落这类, 补记进台账(它们原来只打一行日志)
+        # 指标塌方(离区间两倍宽以上)要记一笔。文风包给了区间, 就该有人看着它:
+        # 实测对白占比区间 0.16-0.34, 第 10 章只有 0.017 —— 低一个数量级,
+        # 而旧打分器只是「没命中」, 不报也不扣。
+        for _b in (getattr(self, "_metric_blowout", None) or []):
+            self.iss.record("metric_blowout", _b)
         # 评审判定该拦, 就不许这一章报「完成」。
         # blocking 是程序按扣分表算出来的(只认有正文原句为证的问题), 它原来
         # 只用来触发一次重写, **没有接进问题台账** —— 于是实测第 4 章

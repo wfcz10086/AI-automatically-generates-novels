@@ -339,3 +339,26 @@ def test_脱敏不误伤中文和普通文本():
               "NameError: name 'cons' is not defined",
               "评审第10章 26分 问题7 矛盾1"):
         assert redact(s) == s, f"误伤了：{s} → {redact(s)}"
+
+
+def test_指标打分要有梯度而不是命中与否():
+    """原来是「在区间内 +2，不在就 0 分」—— 没有梯度。
+
+    于是「对白占比 0.017」和「0.15」得分完全一样（下限 0.16），三选一挑不出
+    更接近区间的那一稿。实测这本书对白占比从第 1 章的 21% 一路塌到第 10 章的
+    1.7%，而每一稿都只是「没命中」，打分器对这个塌方一无所知。
+    """
+    import inspect
+    from server import orchestrator as o
+    src = inspect.getsource(o.Novelist.draft_score)
+    assert "hit * 2.0 + part" in src, "指标打分还是「命中与否」，没有梯度"
+    assert "_metric_blowout" in src, "塌方没有被记下来"
+    # 梯度的形状：差半个区间还能拿分，差两倍区间宽就算塌方
+    assert "2.0 - min(2.0, off)" in src
+    assert "off >= 2.0" in src
+
+    from server import issues as I
+    assert I.CATALOG["metric_blowout"]["severity"] == I.CONFIRM
+    src2 = inspect.getsource(o.Novelist.step_chapter)
+    assert 'self.iss.record("metric_blowout"' in src2, \
+        "塌方算出来了却没接进问题台账 —— 又是「算了但没人用」"
