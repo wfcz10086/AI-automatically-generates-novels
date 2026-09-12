@@ -181,9 +181,24 @@ def test_种子势力由模型认一次并缓存():
     assert "seed_cast.json" in src and "cached" in src
     # 程序只留一道**字面**校验：名字必须在种子原文里逐字出现
     assert "in txt" in src, "没校验模型给的名字是不是种子里原样有的"
-    # 不许再出现硬编码的限定词表
-    for junk in ("后缀", '"阁|派', "func = set(", "drop = {"):
-        assert junk not in src, f"又出现了限定词表：{junk}"
+    # 不许再出现硬编码的限定词表。**只扫代码行** —— 文档串里写着当初那三道筛
+    # 是怎么一步步错的，那是教训；断言把教训也判成违规，就会逼人把教训删掉
+    # （硬切那条测试踩过同一个坑）。
+    code, in_doc = [], False
+    for raw in src.splitlines():
+        q3 = raw.count(chr(34) * 3) + raw.count(chr(39) * 3)
+        if in_doc:
+            in_doc = not (q3 % 2)
+            continue
+        if q3 % 2:
+            in_doc = True
+            continue
+        if raw.strip().startswith("#"):
+            continue
+        code.append(raw.split("#", 1)[0])
+    body = "\n".join(code)
+    for junk in ("func = set(", "drop = {", "阁|派|院"):
+        assert junk not in body, f"又出现了限定词表：{junk}"
 
 
 def test_势力表由程序钉入种子的名字():
