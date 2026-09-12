@@ -65,23 +65,65 @@ class Contract:
         return asdict(self)
 
     @staticmethod
+    def _as_map(v: Any) -> Dict[str, str]:
+        """模型给的形状不保证是字典, 一律掰成字典。
+
+        实测根合同那次 notes 返回的是**字符串列表**, dict() 直接
+        ValueError 崩掉建树。解析层不兜住, 模型每换一种写法就崩一次。
+        """
+        if isinstance(v, dict):
+            return {str(k): str(x) for k, x in v.items()}
+        if isinstance(v, (list, tuple)):
+            out = {}
+            for i, x in enumerate(v):
+                if isinstance(x, dict) and len(x) == 1:          # [{"甲":"乙"}]
+                    k, val = next(iter(x.items()))
+                    out[str(k)] = str(val)
+                elif isinstance(x, dict):
+                    for k, val in x.items():
+                        out[str(k)] = str(val)
+                else:                                            # ["一句话", ...]
+                    s = str(x)
+                    k, _, rest = s.partition("：")               # 「地点：迷离林」
+                    out[k.strip() if rest else f"其{i+1}"] = (rest or s).strip()
+            return out
+        if isinstance(v, str) and v.strip():
+            return {"说明": v.strip()}
+        return {}
+
+    @staticmethod
+    def _as_list(v: Any) -> List[str]:
+        if isinstance(v, (list, tuple)):
+            return [str(x) for x in v if str(x).strip()]
+        if isinstance(v, dict):
+            return [f"{k}：{x}" for k, x in v.items()]
+        if isinstance(v, str) and v.strip():
+            return [v.strip()]
+        return []
+
+    @staticmethod
     def from_dict(d: Optional[Dict[str, Any]]) -> "Contract":
         d = d or {}
         # 兼容早先的 hero/people/assets 三栏: 一律并进 notes(散文, 不比对),
         # 但 assets 里短到像账目的挪进 accounts。
-        notes = dict(d.get("notes") or {})
-        acc = dict(d.get("accounts") or {})
+        notes = Contract._as_map(d.get("notes"))
+        acc = Contract._as_map(d.get("accounts"))
         for old_key in ("hero", "people", "assets"):
-            for k, v in (d.get(old_key) or {}).items():
+            for k, v in Contract._as_map(d.get(old_key)).items():
                 if old_key == "assets" and len(str(v)) <= ACCOUNT_MAX:
                     acc.setdefault(k, str(v))
                 else:
                     notes.setdefault(f"{k}", str(v))
+        thr = []
+        for x in (d.get("open_threads") or []):
+            if isinstance(x, dict):
+                thr.append(dict(x))
+            elif str(x).strip():                    # 模型只给了一句话的线
+                thr.append({"id": f"t{len(thr)+1}", "what": str(x).strip()})
         return Contract(
             accounts={k: str(v) for k, v in acc.items()},
-            open_threads=[dict(x) for x in (d.get("open_threads") or [])
-                          if isinstance(x, dict)],
-            facts=[str(x) for x in (d.get("facts") or [])],
+            open_threads=thr,
+            facts=Contract._as_list(d.get("facts")),
             notes=notes,
         )
 
