@@ -4931,7 +4931,16 @@ class Novelist:
                 established += "\n【还没到期的伏笔（心里有数即可）】" + "；".join(
                     f"第{f['planted']}章「{f['text'][:30]}」" for f in rest)
         if established:
-            cons.append("【已确立的事实，不得推翻或给出不同结论】\n" + self.shrink(established, 2500, "已确立的事实"))
+            # **必须拼进 prompt, 不能 append 到 cons。**
+            # cons 在上面第 4850 行就已经被 "\n".join(cons) 固化进 prompt 了,
+            # 这里再 append 等于往一个没人再读的列表里写东西 —— 于是
+            # 「已确立的事实不得推翻」「到期伏笔本批必须收掉 N 条」「还没到期
+            # 的伏笔」整块**从来没有到达过模型**, 而记忆召回和一次提炼调用
+            # 照花不误。
+            # 实测后果: 日志里反复出现「⚠ 到期伏笔 N 条, 本批细纲一条都没碰」——
+            # 不是模型不听话, 是那句话它根本没看见。
+            prompt += ("\n\n【已确立的事实，不得推翻或给出不同结论】\n"
+                       + self.shrink(established, 2500, "已确立的事实"))
 
         bg = self.sanitize_facts(self.ground("plot", context=self.asset("outline.md")))
         # 再查一轮「剧情素材」—— plot 那轮查的是写得对不对(器物称谓物价),

@@ -202,3 +202,33 @@ def test_高优先级不参与轮换():
     for ch in range(6):
         kept = enforce_slots(list(seg), index=ch)
         assert any(b.startswith("🎯") for b in kept)
+
+
+# ───────── 拼进提示词之后就不许再往 cons 里塞东西 ─────────
+
+def test_约束列表固化之后不许再被追加():
+    """实测最贵的一次「算了但没人用」。
+
+    step_chapter_outlines 里 constraints="\\n".join(cons) 在第 4850 行就把
+    约束固化进 prompt 了，而「已确立的事实不得推翻」「到期伏笔本批必须收掉
+    N 条」「还没到期的伏笔」是在第 4934 行才 cons.append 进去的 ——
+    append 之后 cons 再没有任何人读。
+
+    于是那一整块**从来没有到达过模型**，而记忆召回和一次提炼调用照花不误。
+    日志里反复出现「⚠ 到期伏笔 N 条，本批细纲一条都没碰」：不是模型不听话，
+    是那句话它根本没看见。
+    """
+    bad = []
+    for p in _py_files():
+        joined = None
+        for i, code in _code_lines(p):        # _code_lines 已经剥掉注释
+            if '"\n".join(cons)' in code or '"\\n".join(cons)' in code:
+                joined = i
+            elif joined is not None and re.match(r"\s*cons\.(append|insert)\(",
+                                                 code):
+                if i - joined < 300:          # 同一个函数体内
+                    bad.append(f"{p.relative_to(SRC)}:{i} "
+                               f"在第 {joined} 行固化之后又往 cons 里塞东西")
+    assert not bad, ("约束列表固化进提示词之后又被追加 —— 追加的内容"
+                     "永远到不了模型。要么提前算，要么直接拼进 prompt：\n  "
+                     + "\n  ".join(bad))
