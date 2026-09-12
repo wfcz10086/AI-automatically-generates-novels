@@ -6160,7 +6160,10 @@ class Novelist:
             f"【已确立事实】\n" + "\n".join(f"- 第{f['chapter']}章 {f['fact']}"
                                             for f in facts[-8:])
             + f"\n\n【近期正文片段】\n{self.shrink(recent, 1500, '近期正文片段')}\n\n直接输出新档案段，无前言。",
-            max_tokens=800)
+            # 800 太小: 一张角色卡本来就一千多字, 每次必撞上限再续写两三轮。
+            # 实测日志里连着出现「judging 撞上输出上限(800 tok, 已出 1172 字),
+            # 第 1/2/3 次续写」—— 三次调用干一次的活。按旧卡长度给预算。
+            max_tokens=max(1600, int(len(m.group(1)) * 1.2)))
         new = clean(r.text)
         if new.startswith("###") and len(new) > 80:
             self.save_doc("characters", ch.replace(m.group(1), new + "\n\n"))
