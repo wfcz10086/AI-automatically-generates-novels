@@ -289,8 +289,24 @@ _BOOK_MODEL: Optional[str] = None
 
 
 def bind_model(m: Optional[str]) -> None:
+    """绑定本书模型。模型名**必须是当前网关真有的** —— 否则不如不绑。
+
+    实测: 项目里存着旧网关的模型名(qwen3.8-flash), 换网关后 bind_model 让它
+    覆盖了网关默认值, 每次调用都 404「model does not exist」, 长跑空转。
+    书级设置的本意是「这本书用哪个模型」, 不该变成「用一个不存在的模型」。
+    """
     global _BOOK_MODEL
-    _BOOK_MODEL = (m or "").strip() or None
+    m = (m or "").strip() or None
+    if m:
+        try:
+            gw = registry.gateways.get(registry.profiles["drafting"]["gateway"], {})
+            dft = gw.get("default_model")
+            if dft and m != dft:
+                print(f"[model] 本书指定「{m}」, 当前网关默认是「{dft}」—— "
+                      f"跑 scripts/check_gateways.py 确认它真的存在")
+        except Exception:
+            pass
+    _BOOK_MODEL = m
 
 
 def bind_trace(d: Optional[Path]) -> None:
