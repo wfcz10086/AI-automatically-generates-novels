@@ -18,13 +18,24 @@ from pathlib import Path
 import re
 slug=re.sub(r"[^\w一-鿿-]+","_",sys.argv[1]).strip("_")[:60]
 fs=sorted(glob.glob(f'projects/{slug}/trace/*.json'),key=os.path.getmtime)
-c=Counter(); last=None
-for f in fs[-600:]:
+# 只统计**本轮**的请求 —— trace 目录跨版本保留, 混进废稿的记录会把
+# 「每章几次调用」算成好几倍(实测把每章 4 次评审算成了 31 次)。
+# 以最早一章正文的落盘时间为界。
+import pathlib
+chs=sorted(pathlib.Path(f'projects/{slug}/chapters').glob('*.md'),
+           key=lambda x: x.stat().st_mtime) if os.path.isdir(f'projects/{slug}/chapters') else []
+since=chs[0].stat().st_mtime - 900 if chs else 0
+c=Counter(); last=None; skipped=0
+for f in fs:
+    mt=os.path.getmtime(f)
+    if mt < since: skipped+=1; continue
     try: d=json.load(open(f,encoding='utf-8'))
     except: continue
     c[d.get('profile') or '?']+=1
-    last=(time.strftime('%H:%M:%S',time.localtime(os.path.getmtime(f))),d.get('profile'),d.get('model'))
-print('  ',dict(c),'| 共',sum(c.values()),'次(trace 只留最近若干)')
+    last=(time.strftime('%H:%M:%S',time.localtime(mt)),d.get('profile'),d.get('model'))
+n=len(chs) or 1
+print('  ',dict(c),f'| 本轮共 {sum(c.values())} 次, 每章 {sum(c.values())/n:.1f} 次'
+      + (f'（另有 {skipped} 条旧版记录已排除）' if skipped else ''))
 if last: print(f'   最近: {last[0]} {last[1]} / {last[2]}')
 PY
 echo "【提炼/截断】"
