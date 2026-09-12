@@ -2008,10 +2008,20 @@ class Novelist:
         return fs
 
     def shrink(self, text: str, limit: int, what: str) -> str:
-        """超长就提炼, 不硬切。用 polishing 档(便宜), 结果按内容哈希缓存。"""
+        """超长就提炼, 不硬切。用 polishing 档(便宜), 结果按内容哈希缓存。
+
+        **提炼必须 no_continue。** 续写机制的前提是「写少了, 催它接着写」,
+        而提炼的失败模式恰恰相反 —— 它写多了。实测:
+            [call] polishing 撞上输出上限(1350 tok), 第 1/2/3 次续写
+            [提炼] 总纲(推进): 越压越长(7376 ≥ 原文 6756), 退回 1497 字
+        要它压到 1500, 它写超了, 系统却催它接着写三次, 把 6756 字「压」成
+        7376 字 —— 三次调用全白烧, 最后还是退回按句子收尾。
+        撞上限对提炼来说**本身就是失败信号**, 不是「还没写完」。
+        """
         return dst.distill(text, limit, what,
                            ask=lambda q: clean(call("polishing", q,
-                                                    max_tokens=int(limit * 0.9)).text))
+                                                    max_tokens=int(limit * 0.9),
+                                                    no_continue=True).text))
 
     def seed_factions(self) -> str:
         """种子里点名的势力 —— 势力表必须先用这些名字, 不许另造同类新名。

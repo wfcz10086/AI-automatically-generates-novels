@@ -99,7 +99,11 @@ def distill(text: str, limit: int, what: str,
 
     k = _key(t, limit, what)
     hit = _cached(k)
-    if hit:
+    if hit is not None:
+        if hit == "":
+            # 失败也要缓存。同一段总纲、同一个目标长度, 压不动就是压不动 ——
+            # 不记下来的话每章都会再试一次, 345 章就是 345 次白烧。
+            return _soft_cut(t, limit)
         return hit
 
     try:
@@ -112,7 +116,11 @@ def distill(text: str, limit: int, what: str,
         why = ("空输出" if not out else
                f"越压越长（{len(out)} ≥ 原文 {len(t)}）" if len(out) >= len(t)
                else f"没压到位（{len(out)} 字，要 {limit}）")
-        print(f"  [提炼] {what}: 提炼没成 —— {why}，退回 {len(cut)} 字", flush=True)
+        ratio = len(t) / max(1, limit)
+        print(f"  [提炼] {what}: 提炼没成 —— {why}，退回 {len(cut)} 字"
+              f"（要求 {ratio:.1f}:1；已记下，同一段不再重试）", flush=True)
+        _store(k, "", {"what": what, "src_len": len(t), "limit": limit,
+                       "failed": why})
         return cut
     print(f"  [提炼] {what}: {len(t)} → {len(out)} 字"
           f"（压缩比 {len(t)/max(1,len(out)):.1f}:1）", flush=True)
