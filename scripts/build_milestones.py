@@ -74,16 +74,16 @@ def one_candidate(tag: str, root, k: int, chain: str = ""):
                 break
             say(f"  候选{tag}: 第{attempt+1}次没解析出来"
                 f"({'空输出' if not (r.text or '').strip() else '非JSON'}), 重试")
-        errs = tr.check_milestones(root, ms) if ms else ["三次都没解析出来"]
+        errs = tr.check_milestones(root, ms, chain) if ms else ["三次都没解析出来"]
         # 违约打回去修一轮(只修不重来)
         if ms and errs:
             r2 = call("planning", tr.p_repair(root, errs, r.text), max_tokens=16000)
             ms2 = tr.parse_milestones((r2.text or ""), root)
             if ms2:
-                e2 = tr.check_milestones(root, ms2)
+                e2 = tr.check_milestones(root, ms2, chain)
                 if len(e2) < len(errs):
                     ms, errs = ms2, e2
-        sc = tr.score_milestones(root, ms)
+        sc = tr.score_milestones(root, ms, chain)
         say(f"  候选{tag}: {len(ms)}节 违约{len(errs)} 得分{sc:.1f} "
             f"{time.time()-t:.0f}s")
         return tag, ms, errs, sc

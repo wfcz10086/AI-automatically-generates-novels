@@ -857,9 +857,56 @@ def parse_milestones(raw: str, root: "Node") -> List["Node"]:
     return out
 
 
-def check_milestones(root: "Node", ms: List["Node"]) -> List[str]:
+def parse_seed_chain(chain: str) -> List[Tuple[str, str]]:
+    """种子【但是链】→ [(解决, 暴露), ...]。作者亲手写的配对。
+
+    每条形如「3 解决：X → 暴露：Y」(箭头也可能是 -> 或换行)。
+    """
+    out: List[Tuple[str, str]] = []
+    for m in re.finditer(r"(?m)^\s*\d+\s*解决[：:]\s*(.+?)\s*(?:→|->|＝>)\s*"
+                         r"暴露[：:]\s*(.+?)\s*$", chain or ""):
+        out.append((m.group(1).strip(), m.group(2).strip()))
+    return out
+
+
+def _same_gist(a: str, b: str, thresh: float = 0.5) -> bool:
+    """两句话是不是同一句。模型会截断、会去掉标点, 所以按字重合算。"""
+    sa, sb = set(_norm(a)), set(_norm(b))
+    if not sa or not sb:
+        return False
+    return len(sa & sb) / min(len(sa), len(sb)) >= thresh
+
+
+def check_seed_pairs(ms: List["Node"], pairs: List[Tuple[str, str]]) -> List[str]:
+    """每一节的(解决, 暴露)必须是种子里**同一条**但是链, 不许错位。
+
+    相邻咬合(下节 solves 照抄上节 exposes)是链**内部**的一致性, 它拦不住
+    整体错位。实测抓到过: 模型把每节写成「解决第 i-1 条的暴露 → 暴露第 i 条
+    的解决」, 相邻处处咬合、程序 0 违约, 可每节内部的因果全反了 ——
+    「解决：靠山把他当苦力, 而且佛门有戒律」根本不是一个解决, 那是个麻烦。
+    种子里那几对是作者亲手写的, 程序逐对核对就行, 没有理由不查。
+    """
+    errs: List[str] = []
+    if not pairs or not ms:
+        return errs
+    for i, nd in enumerate(ms[:len(pairs)]):
+        want_s, want_e = pairs[i]
+        if not _same_gist(nd.solves, want_s):
+            errs.append(f"{nd.id} 的「解决」不是种子第 {i+1} 条那个："
+                        f"种子写的是「{want_s[:28]}」，这里写成了"
+                        f"「{nd.solves[:28]}」")
+        if not _same_gist(nd.exposes, want_e):
+            errs.append(f"{nd.id} 的「但是」不是种子第 {i+1} 条那个："
+                        f"种子写的是「{want_e[:28]}」，这里写成了"
+                        f"「{nd.exposes[:28]}」")
+    return errs
+
+
+def check_milestones(root: "Node", ms: List["Node"],
+                     chain: str = "") -> List[str]:
     """里程碑链体检: 但是链咬合(照抄判定) + 覆盖 + 变化多样性 + 线收干净。"""
     errs = check_parent(root, ms)
+    errs += check_seed_pairs(ms, parse_seed_chain(chain))
     for i in range(len(ms) - 1):
         if _norm(ms[i + 1].solves) != _norm(ms[i].exposes):
             errs.append(f"{ms[i].id}→{ms[i+1].id} 但是链断了："
@@ -884,7 +931,7 @@ def check_milestones(root: "Node", ms: List["Node"]) -> List[str]:
     return errs
 
 
-def score_milestones(root: "Node", ms: List["Node"]) -> float:
+def score_milestones(root: "Node", ms: List["Node"], chain: str = "") -> float:
     """三候选选优的打分器。程序打分, 不问模型。
 
     合规是淘汰线不是加分项(违约越多分越低), 加分给**多样性**:
@@ -892,6 +939,6 @@ def score_milestones(root: "Node", ms: List["Node"]) -> float:
     """
     if not ms:
         return -1e9
-    errs = check_milestones(root, ms)
+    errs = check_milestones(root, ms, chain)
     kinds = {changed_fields(nd) for nd in ms if changed_fields(nd)}
     return -10.0 * len(errs) + 2.0 * len(kinds) + 0.5 * len(ms)
