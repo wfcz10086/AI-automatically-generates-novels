@@ -5715,11 +5715,12 @@ class Novelist:
                              + (("\n" + self.milestone_ctx(n)) if self.milestone_ctx(n) else "")),
             global_rules=self.cfg.get("anti_ai_rules") or [],
             directives=self.cfg.get("chapter_directives") or [],
-            character_rules=((self.cfg.get("character_rules") or [])
-                             + ([("【本书铁律，违反一次就穿帮】\n"
-                                  + "\n".join(f"- {x}" for x in self.hard_rules()))]
-                                if self.hard_rules() else [])
-                             + [dl.brief(self.dials())]),
+            # 三样东西各归各的槽, 不再塞成一个 2309 字的巨块:
+            #   人物纪律(595字, 纪律槽 85) / 本书铁律(任务槽 97, 永不挤) /
+            #   旋钮简报(调子槽 74)
+            character_rules=self.cfg.get("character_rules") or [],
+            iron_rules=self.hard_rules() or [],
+            dial_brief=dl.brief(self.dials()),
             roster=rost, protagonist=((self.alias_pair() or [None])[0]
                                       or (rost[0]["name"] if rost else "")),
             relations=f.get("relationships", ""),

@@ -92,16 +92,29 @@ def ban_block(texts: Iterable[str], cap: int = 3, top: int = 12,
 #: 词带进了成品。实测抓到一次: 第 12 章写着「第1章中，那块伴随他穿越的玉佩
 #: ……不可逆的事实」—— 那是模型在**自己做一致性核对**，把核对过程当成叙述
 #: 写了出来。而「不可逆的事实」正是我台账里的原词，是提示词教它这么想的。
-META_LEAK = re.compile(
+#: 两类分开管:
+#:   词汇类 —— 只在**叙述**里算泄漏。实测误报: 角色让人伪造文书时说
+#:   「现在, 写个草稿」, 「草稿」是戏内的; 台词里说什么都是剧情, 先剥引号。
+#:   回指类 ——「第N章中」「如前所述」在哪儿都是泄漏, 台词里出现更荒唐。
+_LEAK_VOCAB = re.compile(
     r"细纲|大纲|本章要点|修订版|草稿|设定回顾|作者注|本章目标"
-    r"|第\s*[0-9一二三四五六七八九十百]{1,4}\s*章中"
-    r"|前文提到|前文已|上文提到|如前所述|不可逆的事实|已确立的")
+    r"|不可逆的事实|已确立的")
+_LEAK_REF = re.compile(
+    r"第\s*[0-9一二三四五六七八九十百]{1,4}\s*章中"
+    r"|前文提到|前文已|上文提到|如前所述")
+_QUOTED = re.compile(r"[「『\"“][^」』\"”]{0,200}[」』\"”]")
+
+#: 旧名保留 —— 有测试/调用引用它
+META_LEAK = re.compile(_LEAK_VOCAB.pattern + "|" + _LEAK_REF.pattern)
 
 
 def meta_leaks(text: str) -> List[str]:
     """正文里漏出来的规划性词汇/章节回指，返回命中的原句片段。"""
+    t = text or ""
     out = []
-    for m in META_LEAK.finditer(text or ""):
-        a = max(0, m.start() - 12)
-        out.append((text[a:m.end() + 16]).replace("\n", " "))
+    narration = _QUOTED.sub(lambda m: "＂" * len(m.group(0)), t)   # 等长占位, 位置不变
+    for pat, hay in ((_LEAK_VOCAB, narration), (_LEAK_REF, t)):
+        for m in pat.finditer(hay):
+            a = max(0, m.start() - 12)
+            out.append((t[a:m.end() + 16]).replace("\n", " "))
     return out[:5]

@@ -205,6 +205,11 @@ SLOT_RULES: List[tuple] = [
     # 用户自定义指令进任务槽(不限额) —— 实测它顶着「优先级最高」的名头,
     # 却按通用 ⚠️ 的 40 分被纪律槽第一个挤掉。用户亲手写的话永远不许被程序丢。
     ("⚠️ 【本书追加指令", "任务", 98),
+    # 本书铁律(违反一次就穿帮)进任务槽 —— 它原来被塞进人物纪律块里, 把那块
+    # 撑到 2309 字(> 纪律槽预算 2200), 于是**整块物理上永远进不去**, 连带
+    # 开篇铁律陪葬, 连着两版第 1 章都开出被明令禁止的天气开头。
+    ("⚠️ 【本书铁律", "任务", 97),
+    ("🎛", "调子", 74),
     ("⚠️ 【设定与红线打架", "纪律", 95),
     # 写作纪律(全局 5 条 AI 腔指纹)和描写配给是**留下来的那几条**, 已经从
     # 12 条砍到 5 条了 —— 它们现在是纪律槽的主料, 不能再被挤掉。
@@ -344,6 +349,8 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
                            global_rules: Optional[List[str]] = None,
                            directives: Optional[List[str]] = None,
                            character_rules: Optional[List[str]] = None,
+                           iron_rules: Optional[List[str]] = None,
+                           dial_brief: str = "",
                            background: str, world_digest: str,
                            roster: List[Dict[str, str]], protagonist: str,
                            relations: str, mainline: str,
@@ -383,6 +390,11 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
     if alias_rule:
         seg.append("\n⚠️ " + alias_rule)
     # 全局去 AI 味纪律（所有书共享）在前, 文风包题材纪律在后
+    if iron_rules:
+        seg.append("\n⚠️ 【本书铁律，违反一次就穿帮】\n"
+                   + "\n".join(f"- {r}" for r in iron_rules))
+    if dial_brief:
+        seg.append("\n🎛 " + dial_brief.strip())
     if character_rules:
         seg.append("\n⚠️ 【人物纪律·全局】所有人都是有自己算盘的人，不是推动剧情的道具\n"
                    + "\n".join(f"- {r}" for r in character_rules))
