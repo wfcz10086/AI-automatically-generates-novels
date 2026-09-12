@@ -155,3 +155,45 @@ def test_评审合并后必须用程序的判定而不是维度平均():
         "多遍合并之后没有再过一次程序判定，judge() 的结果会被平均分盖掉"
     assert 'merged["overall"] = round(sum(vals) / len(vals))' not in src, \
         "overall 又被写回成维度平均了 —— 那就是让被考的人自己填分"
+
+
+# ───────── 开局落点：把不可判定的语义问题换成可判定的字面问题 ─────────
+
+def test_开局落点必须逐字抄进细纲(tmp_path, monkeypatch):
+    """实测落点四「妖姬一吻夺元阳」整条丢了，换成了自创的「瓷片挟持老太监」。
+
+    丢的不是一场戏 —— 夺元阳是他**成为鼎炉的原因**。全书 0 次「元阳」，
+    主角却从第 3 章起就被叫鼎炉：果还在，因没了。
+
+    opening_beats() 早就把「一条一章，不许合并也不许跳过」写进提示词了，
+    可没有任何程序在查 —— 第九次栽在同一件事上。
+
+    语义覆盖判不了（试过名物匹配：第 1 章明明写全了纽约/FBI/加特林/玉佩，
+    命中率却只算出 21%，因为切出来的 2-4 字组大半是「一枚」「一枚古」这类
+    碎片）。但**逐字照抄**判得了，跟但是链那条是同一个办法。
+    """
+    from server.orchestrator import Novelist
+
+    class _P:
+        meta = {"fields": {"premise":
+                           "【开局落点（前六章骨架，按此写）】\n"
+                           "一 纽约曼哈顿，被小弟出卖，FBI 围楼。\n"
+                           "二 玉佩崩碎，光华卷走他。落在迷离林。\n"
+                           "【基调】要爽。\n"}}
+
+    nv = Novelist.__new__(Novelist)
+    nv.p = _P()
+    assert nv.beat_for(1).startswith("纽约曼哈顿")
+    assert nv.beat_for(2).startswith("玉佩崩碎")
+    assert nv.beat_for(9) == ""                      # 超出范围不管
+
+    # 没抄 → 报缺
+    assert nv.beat_missed(1, "第1章 主角很强\n一句话：他打赢了")
+    # 抄了 → 放行
+    good = "第1章 突围\n开局落点：" + nv.beat_for(1) + "\n一句话：…"
+    assert nv.beat_missed(1, good) == []
+    # 改写了也算没抄 —— 「原样」就是原样
+    bad = "第1章\n开局落点：主角在美国某大城市被警方包围\n"
+    assert nv.beat_missed(1, bad)
+    # 超出落点范围的章节不受这条管
+    assert nv.beat_missed(9, "随便写的") == []

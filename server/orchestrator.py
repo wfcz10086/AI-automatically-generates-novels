@@ -2168,6 +2168,14 @@ class Novelist:
         for k in range(n, min(n + count, len(beats) + 1)):
             lines.append(f"　第{k}章：{beats[k-1][1].strip()}")
         lines.append("　⚠ 这是作者亲手写的开局骨架。**每一条的地点、人物、动作都要落到正文里**。")
+        # 「要落到正文里」这句只写在提示词里时被违反了 —— 实测落点四
+        # 「妖姬一吻夺元阳」整条丢掉, 换成自创的「瓷片挟持老太监」。
+        # 语义覆盖程序判不了(试过名物匹配, 噪声大到没法用), 但**逐字照抄**判得了。
+        # 跟但是链那条一样: 把不可判定的语义问题换成可判定的字面问题。
+        lines.append("　⚠ 这几章的细纲里**必须有这么一行**，作者原文一字不改地抄上：")
+        for k in range(n, min(n + count, len(beats) + 1)):
+            lines.append(f"　　开局落点：{beats[k-1][1].strip()}")
+        lines.append("　　（程序会逐字核对这一行。抄漏或改写 = 这一版细纲作废。）")
         # 专名要原样出现 —— 实测模型会自动把「纽约」写成「曼哈顿」、
         # 「FBI」写成「联邦调查局行动」, 因为题材包的禁忌(不许用现代思维嘲笑
         # 古人)被它泛化成了「整本书别提现代词」。禁的是姿态, 不是词。
@@ -2184,6 +2192,46 @@ class Novelist:
                          "禁的是**姿态**，不是词。")
         lines.append("　写完这几条再接里程碑的主线。")
         return "\n".join(lines)
+
+    def beat_for(self, n: int) -> str:
+        """第 n 章该落的那一条开局落点。超出范围返回空串。"""
+        txt = str((self.p.meta.get("fields") or {}).get("premise") or "")
+        i = txt.find("【开局落点")
+        if i < 0:
+            return ""
+        j = txt.find("\n【", i + 4)
+        block = txt[i:j if j > 0 else i + 1400]
+        beats = re.findall(r"^\s*([一二三四五六七八九十]|\d+)[、.．\s]\s*(.+)$",
+                           block, re.M)
+        return beats[n - 1][1].strip() if 0 < n <= len(beats) else ""
+
+    def beat_missed(self, n: int, body: str) -> List[str]:
+        """第 n 章的细纲有没有把它那条开局落点**原样抄进去**。
+
+        为什么是「抄」而不是「写到了」：
+        试过按名物匹配判「正文有没有落到这条」, 噪声大到没法用 —— 第 1 章
+        明明把纽约、FBI、加特林、玉佩全写了, 命中率却只算出 21%, 因为短语
+        切出来的 2-4 字组大半是「一枚」「一枚古」这类碎片。语义覆盖这件事,
+        字符串匹配判不了。
+
+        能判的是**逐字照抄**。所以改成: 细纲里必须有一行
+            开局落点：<作者原文>
+        程序只查这一行在不在、抄没抄对。这跟但是链那条「下一节的 solves 必须
+        原样照抄上一节的 exposes」是同一个办法 —— 把不可判定的语义问题,
+        换成可判定的字面问题。
+
+        这条为什么要紧: 实测这一版落点四「妖姬一吻夺元阳」整条丢了, 换成了
+        自创的「瓷片挟持老太监」。丢的不是一场戏 —— 夺元阳是他**成为鼎炉的
+        原因**。全书 0 次「元阳」, 主角却从第 3 章起就被叫鼎炉: 果还在, 因没了。
+        """
+        beat = self.beat_for(n)
+        if not beat:
+            return []
+        key = re.sub(r"\s+", "", beat)[:24]     # 取前 24 字做比对锚点
+        if re.sub(r"\s+", "", body).find(key) >= 0:
+            return []
+        return [f"第{n}章细纲里没有「开局落点：」那一行，或没照抄作者原文。"
+                f"应原样写上：{beat[:60]}"]
 
     def milestone_ctx(self, n: int) -> str:
         """本章所属里程碑的合同 + 左右节 —— 排纲的主供料。
@@ -5088,6 +5136,9 @@ class Novelist:
                 score -= 3.0 * len(lack)          # 缺栏最伤: 整章会被丢掉
                 continue
             ok_ch += 1
+            # 开局落点漏了直接重罚 —— 那是作者亲手写的骨架, 不是建议
+            for _m in self.beat_missed(start + i, body):
+                score -= 30.0
             # 账目那一栏真的动了账(有数字或 → 箭头), 不是写「形势更严峻」
             ma = re.search(r"^\s*账目\s*[:：]\s*(.+)$", body, re.M)
             if ma and re.search(r"[0-9一二三四五六七八九十百千]|→|->", ma.group(1)):
