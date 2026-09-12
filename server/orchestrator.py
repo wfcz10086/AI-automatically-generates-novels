@@ -2045,6 +2045,35 @@ class Novelist:
         self._log(f"换壳令: 第{cur['index']}卷还剩 {left} 章, 卷末要收走「{shell or '当前位置'}」")
         return sc.reshell_prompt(cur, shell, left, n)
 
+    def opening_beats(self, n: int, count: int) -> str:
+        """开局落点：种子里点名的前几章，逐条派活，不让排纲自己发挥。
+
+        实测两次踩同一个坑：种子写着「一 纽约曼哈顿被 FBI 围楼…二 玉佩崩碎
+        卷走他…」，而里程碑第一节的 solves 是但是链第 1 条「不被吸干」——
+        那是开局落点第五条的内容。于是前四章（纽约／穿越／采草／狐寨）
+        不在任何一节的主线里，排纲直接从第五条起笔，开局那场戏整个没了。
+        **但是链是穿越之后才开始的，开局落点是它前面的引子，两者不能互相替代。**
+        """
+        txt = str((self.p.meta.get("fields") or {}).get("premise") or "")
+        i = txt.find("【开局落点")
+        if i < 0:
+            return ""
+        j = txt.find("\n【", i + 4)
+        block = txt[i:j if j > 0 else i + 1400]
+        beats = re.findall(r"^\s*([一二三四五六七八九十]|\d+)[、.．\s]\s*(.+)$",
+                           block, re.M)
+        if not beats:
+            return ""
+        if n > len(beats):
+            return ""
+        lines = [f"🎬【开局落点·第 {n} 章起按这几条写，一条一章，不许合并也不许跳过】"]
+        for k in range(n, min(n + count, len(beats) + 1)):
+            lines.append(f"　第{k}章：{beats[k-1][1].strip()}")
+        lines.append("　⚠ 这是作者亲手写的开局骨架。**每一条的地点、人物、动作都要落到正文里**——"
+                     "写在现代世界的那几章照常用现代地名与器物（那是主角真实的来处）。"
+                     "写完这几条再接里程碑的主线。")
+        return "\n".join(lines)
+
     def milestone_ctx(self, n: int) -> str:
         """本章所属里程碑的合同 + 左右节 —— 排纲的主供料。
 
@@ -4466,6 +4495,9 @@ class Novelist:
         mc = self.milestone_ctx(start)
         if mc:
             cons.insert(0, mc)
+        ob = self.opening_beats(start, count)
+        if ob:
+            cons.insert(0, ob)          # 开局落点优先级高于里程碑
         # 世界自转 —— 横向扩散。放在最前面, 让排纲先看见「世界自己变成了什么样」,
         # 再决定主角撞上哪一条。没有这一块, 各势力就只是背景板。
         wt = self.world_turn(start)
