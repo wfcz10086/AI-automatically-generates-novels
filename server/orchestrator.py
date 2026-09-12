@@ -23,6 +23,7 @@ from . import dials as dl
 from . import stagecraft as sc
 from . import distill as dst
 from . import issues as _iss
+from . import voice as _voice
 
 
 def _soft(t: str, n: int, what: str = "") -> str:
@@ -2543,6 +2544,7 @@ class Novelist:
                  max_tokens=int(self.g.get("max_tokens_outline") or 8000))
         ch = clean(r.text)
         ch = self._complete_characters(ch, prompt, on_delta)
+        ch = self._fix_self_address(ch)
         self.p.write("characters.md", ch)
         n = self.p.mem.index_document("role", "characters", ch)
         self._log(f"角色档案 {len(ch)} 字 / {r.elapsed:.1f}s / 入索引 {n} 条")
@@ -5223,6 +5225,43 @@ class Novelist:
               flush=True)
         return best[2], best[3]
 
+    def _fix_self_address(self, card_md: str) -> str:
+        """角色卡里主角的自称，以**种子里作者亲手写的台词**为准。
+
+        实测这一版: 卡写着「自称：洒家」还配了三句「洒家不信神佛…」的原声
+        样本, 而种子里作者指定的两句台词用的都是「我」。卡是模型编的, 跟种子
+        打架, 于是正文在两者之间摇摆 —— 十章里七章漂, 第 2 章用了八次「洒家」,
+        第 3-5、7-9 章一次都没有。
+
+        自称是**有限的封闭词表**, 这件事程序判得了, 就不该让它自由发挥。
+        """
+        hero = self.hero_name()
+        prem = str((self.p.meta.get("fields") or {}).get("premise") or "")
+        bad = _voice.check_card_vs_seed(prem, card_md, hero)
+        if not bad:
+            return card_md
+        want, _ = _voice.seed_self_address(prem)
+        got = _voice.card_self_address(card_md, hero)
+        self._log(f"  自称对表：{bad[0][:90]}")
+        if not (want and got):
+            return card_md
+        # 只改主角那一段, 别动别人的卡
+        i = card_md.find(hero)
+        j = card_md.find("\n### ", i) if i >= 0 else -1
+        if i < 0:
+            return card_md
+        blk = card_md[i:j if j > 0 else len(card_md)]
+        fixed = blk.replace(got, want)
+        self.iss.record("voice_card_conflict", bad[0])
+        self._log(f"  已按种子把「{got}」改回「{want}」（{blk.count(got)} 处）")
+        return card_md[:i] + fixed + (card_md[j:] if j > 0 else "")
+
+    def hero_name(self) -> str:
+        """主角名字。角色卡第一个条目就是主角（模板如此）。"""
+        txt = self.p.read("characters.md") or ""
+        m = re.search(r"^###\s*\d+[.．、]?\s*([^：:\n]{2,8})", txt, re.M)
+        return (m.group(1).strip() if m else "")
+
     def draft_score(self, text: str, target: int):
         """返回 (是否被硬闸淘汰, 文风分)。合规是淘汰线, 加分只给「爽」的来源。"""
         from . import evaluator as ev
@@ -5243,6 +5282,12 @@ class Novelist:
         cn = len(re.findall(r"[一-鿿]", text))
         if cn < target * 0.6 or cn > target * 1.6:
             kill = True
+        drift = 0
+        _hero = self.hero_name()
+        _want = _voice.card_self_address(self.p.read("characters.md"), _hero)
+        if _voice.check_prose_voice(text, _hero, _want or ""):
+            drift = 1        # 不淘汰 —— 一章里主角本来就可能一次都没自称
+
         # ② 文风闸: 过区间的指标数 + 爽点来源
         try:
             m = measure_text(text)
@@ -5269,6 +5314,9 @@ class Novelist:
         score += min(4.0, m.get("解说体", 0) * 1.0)           # 把规矩讲透
         pos = [w for w in (self.style.get("positive") or []) if w in text]
         score += min(4.0, len(pos) * 0.5)
+        # 自称漂了扣分。不进硬闸 —— 一章里主角本来就可能一次都没自称,
+        # 淘汰会误伤; 但三稿里有一稿说话对味, 那一稿就该赢。
+        score -= drift * 5.0
         return kill, score
 
     def _ledger(self, e: BaseException, what: str) -> None:
@@ -5588,6 +5636,12 @@ class Novelist:
                   + (f" 溢出:{','.join(rep['overflow'])}" if rep["overflow"] else "")
                   + ("（已重写）" if a.get("rewritten") else ""))
         # 字数不在区间、到期伏笔没着落这类, 补记进台账(它们原来只打一行日志)
+        # 自称漂没漂 —— 声明了就得查
+        _hero = self.hero_name()
+        _want = _voice.card_self_address(self.p.read("characters.md"), _hero)
+        for _d in _voice.check_prose_voice(text, _hero, _want or ""):
+            self.iss.record("voice_drift", _d)
+            self._log("  " + _d)
         cw = self.style.get("chapterWords")
         if isinstance(cw, (list, tuple)) and len(cw) == 2:
             lo, hi = int(cw[0]), int(cw[1])

@@ -86,6 +86,18 @@ CATALOG: Dict[str, Dict[str, Any]] = {
         "why": "这一步抛异常被吞掉、流程继续往下走了。单看一行日志不要紧，"
                "攒起来才看得出这一章缺了多少道工序。",
         "next_action": "看日志里那一行「…失败/跳过」。"},
+    "voice_drift": {
+        "severity": CONFIRM, "auto_handle": False,
+        "title": "主角的自称漂了",
+        "why": "角色卡声明了自称，正文里他说话时却用了别的。声明了没人查的"
+               "东西早晚对不上 —— 实测十章里七章在「洒家」和「我」之间摇摆。",
+        "next_action": "看 characters.md 的「自称」栏与本章对白。"},
+    "voice_card_conflict": {
+        "severity": CONFIRM, "auto_handle": False,
+        "title": "角色卡的自称跟种子打架",
+        "why": "卡是模型编的，种子里的台词是作者亲手写的。两者不一致时，"
+               "正文会在两个选项之间摇摆。",
+        "next_action": "已按种子自动改回；确认一下 characters.md。"},
     "seam_violation": {
         "severity": CONFIRM, "auto_handle": False,
         "title": "合同接缝没咬合",
