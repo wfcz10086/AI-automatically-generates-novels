@@ -22,6 +22,12 @@ from .evaluator import audit, book_audit, window_audit
 from . import dials as dl
 from . import stagecraft as sc
 from . import distill as dst
+
+
+def _soft(t: str, n: int, what: str = "") -> str:
+    """不硬切的收尾。全模块统一走这里 —— 半句话切断, 模型会顺着补完,
+    补出来的是它编的, 而下游看不出这段是编的。"""
+    return dst.soft(t or "", n, what)
 from .retrieval import Retriever
 from .prompt_compiler import (measure_text, outline_required, outline_format_block, window_drift,
                              render_item,
@@ -648,7 +654,7 @@ class Novelist:
             if got:
                 parts.append(label + sep.join(got))
         if g.get("pacing"):
-            parts.append("节奏要求：\n" + str(g["pacing"])[:600])
+            parts.append("节奏要求：\n" + _soft(str(g["pacing"]), 600, "题材节奏"))
         pit = self._items(g.get("pitfalls"), 8)
         if pit:
             parts.append("必须避开的坑：\n- " + "\n- ".join(pit))
@@ -825,7 +831,7 @@ class Novelist:
                 "下面是一部小说的设定。它发生在中国历史上的哪个朝代？\n"
                 "只回答朝代名, 2-4 个字, 比如「北宋」「明」「唐」。\n"
                 "架空世界或无法判断就回答「无」, 不要解释。\n\n"
-                + src[:1200], max_tokens=20).text)[:6].strip()
+                + _soft(src, 1200, "判时代用的原文"), max_tokens=20).text)[:6].strip()
         except Exception:
             return ""
         ans = re.sub(r"[^\u4e00-\u9fff]", "", ans)
@@ -1137,7 +1143,7 @@ class Novelist:
         """读取本书资产。默认整份返回, 只在超过硬上限时才截。"""
         t = self.p.read(name)
         lim = cap or self.ASSET_CAP
-        return t if len(t) <= lim else t[:lim]
+        return t if len(t) <= lim else _soft(t, lim)
 
     @staticmethod
     def condense(text: str, cap: int, head_ratio: float = 0.55) -> str:
@@ -1159,8 +1165,8 @@ class Novelist:
         mid = ""
         if paras:
             step = max(1, len(paras) // 6)
-            mid = "\n".join(paras[::step][:6])[:max(0, cap // 6)]
-        return (text[:head_n]
+            mid = _soft("\n".join(paras[::step][:6]), max(0, cap // 6))
+        return (_soft(text, head_n)
                 + f"\n\n……〔中段节选，原文另有约 {len(text) - cap} 字〕\n" + mid
                 + "\n\n" + text[len(text) - tail_n:])
 
@@ -1181,7 +1187,7 @@ class Novelist:
         时间轴就从第 300 字才开始），截断会让年号年份整个抽取不到，
         时代红线卡随之缺位。需要短文本的地方显式调这个方法。
         """
-        return self.era_hint()[:limit]
+        return _soft(self.era_hint(), limit, "时代提示")
 
     # 年号纪年（政和五年 / 宣和二年 / 洪武二十三年）与公元年（1115 / 1115年 /（1115））。
     # 原来用 [一-鿿]{2,8}(?:年|朝) 硬扫, 贪婪匹配会把「下始知能打的不是朝」这种
@@ -1244,7 +1250,7 @@ class Novelist:
                     name = m2.group(1).strip()
             if not re.search(r"[一-鿿]", name) or name in ("身份", "年龄", "外貌", "性格"):
                 continue
-            cards.append({"name": name, "card": blk[:700]})
+            cards.append({"name": name, "card": _soft(blk, 700)})
         if cards:
             # 花名册首条用「对外身份」做名字, 否则模型会把本名当主名来写
             m = re.search(r"姓名\s*[:：]\s*([^\n（(]{1,8})[（(]\s*([^）)]{1,8})[）)]",
@@ -2355,7 +2361,7 @@ class Novelist:
         if not hits:
             return ""
         label = {"world": "世界观", "role": "角色", "plot": "往期剧情", "fore": "伏笔"}
-        lines = [f"[{label.get(h['kind'], h['kind'])}] {h['title']}: {h['text'][:300]}"
+        lines = [f"[{label.get(h['kind'], h['kind'])}] {h['title']}: {_soft(h['text'], 300)}"
                  for h in hits]
         pend = self.p.mem.pending_foreshadow()
         if pend:
@@ -2409,7 +2415,7 @@ class Novelist:
                     f"请直接采用；拿不准的宁可写模糊，不要编造数字")
         else:
             note = f"用来保证{scope}贴近现实，别照抄原文措辞"
-        return f"\n\n【现实参考资料 —— {note}】\n" + bg[:limit]
+        return f"\n\n【现实参考资料 —— {note}】\n" + _soft(bg, limit, "现实参考资料")
 
     # ---------- 步骤 ----------
     def step_naming(self, on_delta=None) -> Dict[str, Any]:
@@ -2624,7 +2630,7 @@ class Novelist:
             f"为《{self.p.meta.get('title','')}》做分卷。全书 {total} 章，分 {n_vol} 卷。\n\n"
             f"#总纲\n{self.shrink(self.p.read('outline.md'), 4000, '总纲(分卷)')}\n\n"
             f"#可用角色\n{'、'.join(c['name'] for c in self.roster()) or '未定'}\n\n"
-            f"#题材节奏要求\n{self.genre_rules()[:800]}\n\n"
+            f"#题材节奏要求\n{_soft(self.genre_rules(), 800, '题材节奏')}\n\n"
             + (f"#锚定\n朝代只叫「{anchor['dynasty']}」\n\n" if anchor.get("dynasty") else "")
             + f"每卷严格按此格式，卷之间用一行 ###fenge 分隔：\n"
               f"卷名：…\n章节范围：第X章-第Y章\n本卷主线：…\n"
@@ -4617,7 +4623,7 @@ class Novelist:
                         "不许当作不存在】\n" + "\n".join(f"- {g}" for g in gone))
         if self.prompt_override("chapter_outline_extra"):
             cons.append(self.prompt_override("chapter_outline_extra"))
-        cons.append(self.genre_rules()[:800])
+        cons.append(_soft(self.genre_rules(), 800, "题材节奏"))
         # 这一批要写的章号**不一定连续**：前面批次有章被完整性守卫丢掉，
         # 就留下了洞。而前情里的「每章一句话」清单是按现有章号排的，
         # 洞在清单里看不出来（66 直接跳到 69），模型以为那两章早写过了，
@@ -4798,7 +4804,7 @@ class Novelist:
         # 制度上真实的漏洞。虚构不出来的东西, 现实里有现成的。
         drive_ctx = (self.shrink(self.asset("outline.md"), 1500, "总纲(推进)") + "\n\n【本批要排的章节范围】"
                      + f"第 {start}-{start + count - 1} 章\n"
-                     + (vol.get("text", "")[:800] if vol else ""))
+                     + (_soft(vol.get("text", ""), 800) if vol else ""))
         drive = self.sanitize_facts(self.ground("drive", context=drive_ctx))
         if drive:
             bg = (bg + "\n\n【可用作剧情素材的真实内容（不是查证，是拿来用）】\n"
@@ -5548,11 +5554,11 @@ class Novelist:
         # 抽样最近几章正文给 critic 读 —— 光看指标看不出"写得好不好"
         picks = done[-sample:]
         excerpt = "\n\n".join(
-            f"—— 第{n}章（节选）——\n{chs[n][:1800]}" for n in picks)
+            f"—— 第{n}章（节选）——\n{_soft(chs[n], 1800)}" for n in picks)
 
         prev_guide = self.p.read("style_guide.md")
-        problems = json.dumps(ba.get("issues", []) + wa.get("issues", []),
-                              ensure_ascii=False)[:2500]
+        problems = dst.json_fit(ba.get("issues", []) + wa.get("issues", []),
+                                2500, "待办问题")
 
         rules_now = self.p._load("rules.json", {})
         prompt = (
@@ -5574,7 +5580,7 @@ class Novelist:
               '"must_appear":["接下来几章必须回归的断线角色"],'
               '"drop_roles":["建了档但一直没登场、建议删除的角色"]}\n'
               "每项最多 8 条，没有就给空数组。只抽**确定无疑**的，宁缺毋滥。\n"
-              + (f"（已有规则，不要重复：{json.dumps(rules_now, ensure_ascii=False)[:600]}）\n"
+              + (f"（已有规则，不要重复：{dst.json_fit(rules_now, 600, '已有规则')}）\n"
                  if rules_now else "")
               + "先输出守则，再输出 ===RULES=== 与 JSON。")
         r = call("judging", prompt, on_delta, max_tokens=int(self.g.get("max_tokens_outline") or 8000))
@@ -5766,7 +5772,7 @@ class Novelist:
         digests = [f.read_text(encoding="utf-8")
                    for f in sorted((self.p.dir / "l2_summary").glob("*.md"))]
         try:
-            recalled = self.p.mem.search(text[:1500], k=20)
+            recalled = self.p.mem.search(_soft(text, 1500), k=20)
         except Exception:
             recalled = []
         tl = self.p.state.get("timeline", {})
@@ -6221,7 +6227,7 @@ class Novelist:
             f"【全书体检】总分 {ba['score']}；最近 {ba.get('recent_range')} 章 "
             f"{ba.get('recent_score')} 分（分差说明前期旧账，重点看后者的趋势）\n问题："
             f"{json.dumps([{'type': i['type'], 'detail': str(i.get('detail'))[:160]} for i in ba['issues']], ensure_ascii=False)}\n\n"
-            f"【当前机器规则】{json.dumps(rules, ensure_ascii=False)[:800]}\n\n"
+            f"【当前机器规则】{dst.json_fit(rules, 800, '机器规则')}\n\n"
             f"【当前写作守则】\n{self.shrink(guide, 1200, '当前写作守则')}\n\n"
             f"【最近一章正文节选】\n{self.shrink(chs[done[-1]], 2000, '最近一章正文')}\n\n"
             + ("\n\n".join(extra) + "\n\n" if extra else "")
@@ -6288,7 +6294,7 @@ class Novelist:
 
         roster = "、".join(c["name"] for c in self.roster()) or "（未知）"
         done = sorted(self.p.state.get("done", []))
-        sample = "\n".join(self.p.chapter(n)[:700] for n in done[-2:])
+        sample = "\n".join(_soft(self.p.chapter(n), 700) for n in done[-2:])
         anchor = self.world_anchor()
         prompt = (
             f"你在给一套 AI 写作系统做「禁用词守门」。下面是候选词，"
@@ -6449,7 +6455,7 @@ class Novelist:
             return f"档案无{name}"
         facts = [c for c in self.canon() if name in (c.get("subject") or "")]
         done = sorted(self.p.state.get("done", []))
-        recent = "\n".join(self.p.chapter(n)[:600] for n in done[-3:]
+        recent = "\n".join(_soft(self.p.chapter(n), 600) for n in done[-3:]
                             if name in self.p.chapter(n))
         r = call("judging",
             f"角色档案与剧情已脱节（{reason}）。按既成事实重写该角色档案段，"

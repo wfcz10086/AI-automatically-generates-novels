@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from .prompt_engine import est_tokens, CHARS_PER_TOKEN
+from server.distill import soft
 
 # 默认配比 (占 context_budget 的比例). 合计 <= 1.0, 余量留给提示词本身
 DEFAULT_LAYERS: Dict[str, Dict[str, Any]] = {
@@ -71,7 +72,7 @@ class MemoryController:
             # hard 层不裁剪, 但要记录是否已超额 (超了说明预算配比该调)
             return LayerResult(key, lab, text, tk, cap, truncated=tk > cap)
         keep = int(cap * CHARS_PER_TOKEN)
-        cut = text[:keep].rstrip() + f"\n…（{lab}超预算，已截断）"
+        cut = soft(text, keep, lab).rstrip() + f"\n…（{lab}超预算，已在句末收尾）"
         return LayerResult(key, lab, cut, est_tokens(cut), cap, True)
 
     # ---------------- 装配 ----------------

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from typing import Dict, Any, List, Tuple
+from server.distill import soft
 
 _VAR = re.compile(r"\$\{(\w+)\}")
 
@@ -62,6 +63,7 @@ def budget(parts: List[Tuple[str, str, int]], max_tokens: int) -> Dict[str, str]
         else:
             room = max(0, max_tokens - used)
             keep = int(room * CHARS_PER_TOKEN)
-            out[key] = (text[:keep] + "\n…（因上下文预算截断）") if keep > 200 else ""
+            out[key] = ((soft(text, keep, key) + "\n…（因上下文预算收尾）")
+                        if keep > 200 else "")
             used = max_tokens
     return out

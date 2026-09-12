@@ -32,6 +32,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional, Tuple
+from server.distill import soft
 
 #: 账目值必须是**短的、离散的**记号(「3000人」「河北兵马元帅」), 不是描述。
 #: 这是从原著反推出来的形态: 账本带计量单位, 数字比数字。
@@ -154,7 +155,7 @@ class Contract:
         if self.facts:
             out.append("已定死：" + "；".join(self.facts))
         s = "\n".join(out)
-        return s if len(s) <= cap else s[:cap] + "…"
+        return soft(s, cap, "合同摘要") + ("…" if len(s) > cap else "")
 
 
 @dataclass

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from .registry import registry
+from server.distill import soft
 
 # 需要事实支撑的信号: 出现这些模式说明本章要写具体的、可以写错的东西
 # 每项: (正则, 主题). 正则只捕获关键词本身, 不带上下文 —— 否则检索式会被噪声污染。
@@ -143,7 +144,7 @@ class Retriever:
                    "message": "搜到了资料，但守门判定答非所问（多为百科泛述或广告）",
                    "query": need.get("query", "")}
             if keep_raw and self._last_raw:
-                self.facts[topic] = {"topic": topic, "card": self._last_raw[:800],
+                self.facts[topic] = {"topic": topic, "card": soft(self._last_raw, 800),
                                      "sources": self._last_urls[:3],
                                      "kept_raw": True,
                                      "built_at": time.strftime("%F %T")}
@@ -205,7 +206,7 @@ class Retriever:
             txt = re.sub(r"&[a-z]{2,8};", " ", txt)
             txt = re.sub(r"[ \t\r\f\v]+", " ", txt)
             txt = re.sub(r"\n\s*\n+", "\n", txt)
-            return txt.strip()[:cap]
+            return soft(txt.strip(), cap)
         except Exception:
             return ""
 
@@ -315,7 +316,7 @@ class Retriever:
         return (
             f"你是考据编辑。就下面这个知识点{era}, 写一张**考据卡**给小说作者用。\n\n"
             f"知识点：{topic}\n"
-            + (f"用处（写到这段时要用）：{ctx[:200]}\n" if ctx else "")
+            + (f"用处（写到这段时要用）：{soft(ctx, 200)}\n" if ctx else "")
             + f"\n要求：\n"
             f"- 只写**你确实知道**的。不确定的写「说法不一」并给出常见的两三种,"
             f"**不许编造具体数字和人名**\n"
@@ -338,7 +339,7 @@ class Retriever:
             return None
         if len(card) < 20:
             return None
-        rec = {"topic": topic, "card": card[:600], "sources": ["模型自身知识"],
+        rec = {"topic": topic, "card": soft(card, 600), "sources": ["模型自身知识"],
                "by_model": True}
         self.facts[topic] = rec
         self._save()
@@ -398,7 +399,7 @@ class Retriever:
             tried.append(q)
             hits = self.sx.search(q, k=6)
             self._last_raw = "\n".join(
-                f"- {h['title']}：{h['content'][:300]}" for h in hits)
+                f"- {h['title']}：{soft(h['content'], 300)}" for h in hits)
             self._last_urls = [h["url"] for h in hits]
             keep = [hits[i] for i in self._judge(topic, hits)]
             if keep:
@@ -443,7 +444,7 @@ class Retriever:
             parts.append(f"【来源{i+1}｜{h.get('title','')[:60]}{date}】\n{src}")
         raw = "\n\n".join(parts) or self._last_raw
         if not self.summarize:
-            return raw[:800]
+            return soft(raw, 800, "考据卡")
         got = (self.summarize(
             f"下面是关于「{self.era} {topic}」的资料原文。\n"
             f"压成 5 条以内的**写作硬事实**，每条一句话，尽量带具体数字、"

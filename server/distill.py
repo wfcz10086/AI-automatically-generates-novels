@@ -120,6 +120,64 @@ def distill(text: str, limit: int, what: str,
     return out
 
 
+def json_fit(obj, limit: int, what: str = "") -> str:
+    """把对象序列化到 limit 以内，**始终是合法 JSON**。
+
+    `json.dumps(x)[:800]` 这种写法交给模型的是一段从中间断掉的 JSON ——
+    括号不配对、最后一个键只有一半。模型面对残缺结构会**自行脑补**成它
+    认为完整的样子，而这份脑补看起来跟真的一样。比切散文严重得多：
+    切散文只是少了信息，切 JSON 是给了假信息。
+
+    办法是丢条目不丢语法：从尾巴开始整条整条地扔，直到塞得下。
+    """
+    import json as _j
+
+    def dump(o):
+        return _j.dumps(o, ensure_ascii=False)
+
+    s = dump(obj)
+    if len(s) <= limit:
+        return s
+    n0 = len(obj) if isinstance(obj, (list, dict)) else 0
+    if isinstance(obj, list):
+        cur = list(obj)
+        while cur and len(dump(cur)) > limit:
+            cur.pop()
+        out = dump(cur)
+    elif isinstance(obj, dict):
+        cur = dict(obj)
+        while cur and len(dump(cur)) > limit:
+            cur.pop(next(reversed(cur)))
+        out = dump(cur)
+    else:
+        return soft(s, limit, what)
+    if what:
+        print(f"  [JSON收尾] {what}: {n0} 条 → {len(cur)} 条"
+              f"（{len(s)} → {len(out)} 字，仍是合法 JSON）", flush=True)
+    return out
+
+
+def soft(t: str, limit: int, what: str = "") -> str:
+    """**不硬切**的收尾。给那些来不及/不值得调模型提炼的地方用。
+
+    跟 distill() 的分工：
+      distill  超长且有 3:1 余量 → 真提炼（花一次调用，保信息）
+      soft     就地收尾 → 落在最近的句号上，绝不半句斩断
+
+    为什么连「切短一点」都要管：半句话切断的东西，模型读到的是一个语法上
+    没写完的句子，它会**顺着补完**——补出来的内容是它编的，而下游看不出
+    这段是编的。这比少给它一句话危险得多。
+    """
+    t = t or ""
+    if len(t) <= limit:
+        return t
+    out = _soft_cut(t, limit)
+    if what:
+        print(f"  [收尾] {what}: {len(t)} → {len(out)} 字（落在句末，未截断半句）",
+              flush=True)
+    return out
+
+
 def _soft_cut(t: str, limit: int) -> str:
     """按句子边界收尾，不切在半句话上。"""
     if len(t) <= limit:

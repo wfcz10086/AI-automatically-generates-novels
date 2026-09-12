@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, Dict, List, Optional
+from server.distill import soft
 
 
 def to_plot_list(outline: str) -> List[str]:
@@ -104,7 +105,7 @@ def _digest(card: str, limit: int = 150) -> str:
         if m:
             parts.append(m.group(1).strip().rstrip("。"))
     s = "，".join(parts) if parts else re.sub(r"\s+", " ", card)
-    return s[:limit]
+    return soft(s, limit)
 
 
 def outline_fields_block(chapter_outline: str,
@@ -291,7 +292,7 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
     max_plots = max(3, int(target_words / (block_words * 0.8)))
     if len(plots) > max_plots:
         head, tail = plots[:max_plots - 1], plots[max_plots - 1:]
-        plots = head + ["；".join(tail)[:160]]
+        plots = head + [soft("；".join(tail), 160)]
     plot_block = "\n".join(f"剧情{i+1}：{p}" for i, p in enumerate(plots)) or chapter_outline
 
     seg: List[str] = []

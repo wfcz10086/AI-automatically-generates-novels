@@ -32,6 +32,7 @@ from server.orchestrator import (Project, Novelist, create_project,        # noq
 from server.exporters import EXPORTERS, BINARY_EXPORTERS, MIME, EXT                 # noqa: E402
 from server.evaluator import audit, book_audit, window_audit
 from server.splitter import split_chapters, analyze, apply_to_project
+from server.distill import soft
                                 # noqa: E402
 
 WEB = ROOT / "web"
@@ -294,7 +295,7 @@ def save_chapter(slug: str, n: int):
     p.write(f"audit/{n:03d}.json", json.dumps(a, ensure_ascii=False, indent=2))
     if p.cfg["memory"].get("index_chapters", True):
         p.mem.add("plot", f"ch{n}", f"第{n}章",
-                  p.state.get("summaries", {}).get(str(n), "") + "\n" + text[:1500])
+                  p.state.get("summaries", {}).get(str(n), "") + "\n" + soft(text, 1500, "章摘要"))
     # 手动保存/导入的章节也要登记, 否则章节列表不显示（实测坑）
     if n not in p.state.get("done", []):
         p.state.setdefault("done", []).append(n)
@@ -989,10 +990,10 @@ def project_kb(nv: "Novelist", limit: int = 4000) -> str:
         facts = nv.p._load("facts.json", {}) or {}
         cards = [(k, v.get("card", "")) for k, v in facts.items() if v.get("card")]
         for topic, card in cards[:40]:
-            parts.append(f"【{topic}】{card.strip()[:300]}")
+            parts.append(f"【{topic}】{soft(card.strip(), 300)}")
     except Exception:
         pass
-    return "\n\n".join(parts)[:limit]
+    return soft("\n\n".join(parts), limit, "知识卡")
 
 
 def fill_vars(prompt: str, slug: Optional[str]) -> str:

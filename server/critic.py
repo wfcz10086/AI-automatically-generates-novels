@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any, Callable, Dict, List, Optional
+from server.distill import soft
 
 # 多遍阅读 —— 一遍读不出所有问题（人读也一样）。每遍换一个焦点:
 #   第 1 遍逻辑读: 盯剧情、人物、设定、事实
@@ -128,7 +129,7 @@ def build_prompt(*, title: str, n: int, text: str, prev_texts: List[str],
     recall_lines = "\n".join(
         # 260 太狠: 一条召回的往期剧情在这里只剩两三句, 评审据此判「与前文矛盾」
         # 等于凭残片判案。给到 1200, 仍远小于 budget_chars 的总盘子。
-        f"- [{h.get('kind','')}] {h.get('title','')}：{str(h.get('text',''))[:1200]}"
+        f"- [{h.get('kind','')}] {h.get('title','')}：{soft(str(h.get('text','')), 1200)}"
         for h in (recalled or [])[:20])
     role_lines = "；".join(
         f"{k}（第{v.get('at')}章）{v.get('state','')}"
@@ -154,14 +155,15 @@ def build_prompt(*, title: str, n: int, text: str, prev_texts: List[str],
         room = budget_chars - used
         if room < 500:
             break
-        b = body if len(body) <= room else body[:room] + "\n…（截断）"
+        b = (body if len(body) <= room
+             else soft(body, room, "送审正文") + "\n…（已在句末收尾）")
         parts.append(f"【{name}】\n{b}")
         used += len(b)
 
     dims_list = dims_override if dims_override else DIMENSIONS
     dims = "\n".join(f"  {i+1}. {d}：{desc}" for i, (d, desc) in enumerate(dims_list))
     return (
-        (f"【本书为真实历史背景】{era_hint[:160]}\n"
+        (f"【本书为真实历史背景】{soft(era_hint, 160)}\n"
          f"审读时把史实当硬约束：他朝的事件、器物、制度、称谓出现在本朝即为错。\n\n"
          if real_mode and era_hint else "")
         + f"你是网文主编，正在逐章审读《{title}》第 {n} 章（{pass_name or '通读'}）。"
