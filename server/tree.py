@@ -400,11 +400,13 @@ def check_root_entry(root: "Node", seed: str) -> List[str]:
     errs = []
     e_first, e_later = _entities(first, seed), _entities(later, seed)
     早到 = sorted(g for g in (e_later - e_first) if g in now)
+    # 一个词一条。挤成一条的话「一条里塞八个词」看起来比「两条」还轻,
+    # 而三选一是按条数比的 —— 计数一失真, 选出来的就是错的那版。
+    for g in 早到[:8]:
+        errs.append(f"entry 里出现了「{g}」—— 那是开局落点后几条才有的东西，"
+                    f"第 1 章开场时还不存在")
     if 早到:
-        errs.append(
-            f"entry 写的不是第 1 章开场, 而是开局落点后几条才发生的世界："
-            f"出现了{'、'.join('「%s」' % g for g in 早到[:8])}。"
-            f"entry 必须停在开局落点第一条那一刻：{first[:60]}")
+        errs.append(f"entry 必须停在开局落点第一条那一刻：{first[:70]}")
     if e_first and not (e_first & set(_entities(now, seed))):
         errs.append(
             f"entry 里找不到开局落点第一条的任何东西"

@@ -86,7 +86,7 @@ def main():
                            + "\n".join("· " + b for b in bad))
                     continue
                 if bad:
-                    say(f"  ⚠ 三次都没全对, 取最好的一版（还剩 {len(best_bad)} 处）："
+                    say(f"  ⚠ 三次都没全对, 取最好的一版（还剩 {len(best_bad or [])} 处）："
                         f"{(best_bad or [''])[0][:80]}")
                     root = best
                 nodes["R"] = root
