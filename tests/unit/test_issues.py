@@ -138,3 +138,20 @@ def test_与已确立事实冲突一票拦下():
     d = parse(raw)
     assert d["blocking"] is True
     assert d["overall"] == 65           # 100 - 35
+
+
+def test_评审合并后必须用程序的判定而不是维度平均():
+    """「算了但没人用」比「没算」更难发现 —— 字段就在那儿，看起来是全的。
+
+    实测第 8 章：overall=88 正好是 15 个维度的算术平均（1318/15），而
+    blocking/penalty/severity_counts 全是 None。因为 step_critique 多遍合并
+    之后又写了一句 merged["overall"] = 各维平均，把每一遍 parse() 里
+    judge() 算好的结果整个盖掉了。
+    """
+    import inspect
+    from server import orchestrator as o
+    src = inspect.getsource(o.Novelist.step_critique)
+    assert "critic_mod.judge(merged)" in src, \
+        "多遍合并之后没有再过一次程序判定，judge() 的结果会被平均分盖掉"
+    assert 'merged["overall"] = round(sum(vals) / len(vals))' not in src, \
+        "overall 又被写回成维度平均了 —— 那就是让被考的人自己填分"

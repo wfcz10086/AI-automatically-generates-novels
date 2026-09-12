@@ -5924,7 +5924,17 @@ class Novelist:
         vals = [v for v in merged["scores"].values() if isinstance(v, (int, float))]
         if not vals:
             return {"error": "评审未返回可解析结果"}
-        merged["overall"] = round(sum(vals) / len(vals))
+        # 分数与放行由**程序**按扣分表算 —— 不是把模型给的维度分平均一下。
+        # 这里原来写 merged["overall"] = 各维平均, 把每一遍 parse() 算好的
+        # judge 结果整个盖掉了: 实测第 8 章 overall=88 正好是 15 个维度的
+        # 算术平均(1318/15), 而 blocking/penalty 全是 None ——
+        # 「算了但没人用」比「没算」更难发现, 因为字段就在那儿, 看起来是全的。
+        j = critic_mod.judge(merged)
+        merged["dim_avg"] = round(sum(vals) / len(vals))
+        merged.update({"overall": j["score"], "blocking": j["blocking"],
+                       "blocking_why": j["blocking_why"], "penalty": j["penalty"],
+                       "severity_counts": j["counts"],
+                       "evidenced": j["evidenced"], "claimed": j["claimed"]})
         merged["passes"] = n_pass
         d = merged
 
