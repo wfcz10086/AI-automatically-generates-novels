@@ -323,6 +323,85 @@ def check_variety(kids: List[Node], min_kinds: int = 2) -> List[str]:
     return []
 
 
+#: 修真题材的通用词。它们在种子里到处都是, 拿来当「后文才出现的东西」会
+#: 把根合同误判成违约。只挡**具体的人、地、物**。
+_GENERIC = {"灵气", "内力", "修士", "门派", "肉身", "修行", "天下", "世道",
+            "元气", "境界", "法术", "阵法", "符箓", "道门", "佛门", "旁门",
+            "武修", "主角", "读者", "一个", "什么", "自己", "已经", "他的"}
+
+
+def opening_scene(seed: str) -> Tuple[str, str]:
+    """从种子里切出【开局落点】的**第一条**和其余几条。
+
+    切不出来就返回两个空串 —— 种子没写这一栏是合法的, 不是错误。
+    """
+    m = re.search(r"【开局落点[^】]*】\s*\n?(.*?)(?=\n【|\Z)", seed or "", re.S)
+    if not m:
+        return "", ""
+    body = m.group(1)
+    items = re.split(r"(?m)^\s*(?=[一二三四五六七八九十]\s)", body)
+    items = [x.strip() for x in items if x.strip()]
+    if not items:
+        return "", ""
+    return items[0], "\n".join(items[1:])
+
+
+def _entities(text: str, seed: str) -> set:
+    """从一段话里抽出**具体的名物**: 2-4 字, 且在整颗种子里出现过至少两次。
+
+    「出现两次」这一条是关键的降噪: 真正的人名地名物名(狐媚/虚弥戒/迷离林)
+    在种子里必然反复出现, 而顺手一提的修饰词(光华/昏死)只出现一次。
+    不靠分词, 因为分词器对自造名词一样切不准。
+    """
+    out = set()
+    for run in re.findall(r"[一-鿿]{2,}", text or ""):
+        for n in (4, 3, 2):
+            for i in range(len(run) - n + 1):
+                g = run[i:i + n]
+                if g in _GENERIC:
+                    continue
+                if seed.count(g) >= 2:
+                    out.add(g)
+    # 「狐媚」和「狐媚献戒」都在时只留长的, 免得同一件事报两遍
+    return {g for g in out if not any(g != h and g in h for h in out)}
+
+
+def check_root_entry(root: "Node", seed: str) -> List[str]:
+    """根合同的进口必须落在**第 1 章开场那一刻**。
+
+    这条规矩在 p_root 里写了三遍(还附了实测案例), 模型照样把六章的开局
+    落点整个压进 entry —— 实测这一版 entry 里躺着「狐媚已献虚弥戒」
+    「石室行尸」「狐王已死」, 那是第六章末尾的世界, 不是第一章开场。
+    后果不只是根节点难看: 幼子的进口由程序赋值 entry=prev_exit, 整条链的
+    起点都跟着错, 开局那六章无处可写。
+
+    凡是提示词里写了而程序不查的规矩, 早晚被违反 —— 这已经是第八次。
+    种子里的【开局落点】是程序读得出来的, 那就由程序来查。
+    """
+    first, later = opening_scene(seed)
+    if not first:
+        return []
+    # facts 是世界的规矩(「鼎炉被吸干必成行尸」), 开篇本就成立, 不参与判定。
+    # 只查「主角此刻的账」和「此刻谁在哪」。
+    now = " ".join(list(root.entry.accounts.values())
+                   + list(root.entry.accounts.keys())
+                   + list(root.entry.notes.values())
+                   + list(root.entry.notes.keys()))
+    errs = []
+    e_first, e_later = _entities(first, seed), _entities(later, seed)
+    早到 = sorted(g for g in (e_later - e_first) if g in now)
+    if 早到:
+        errs.append(
+            f"entry 写的不是第 1 章开场, 而是开局落点后几条才发生的世界："
+            f"出现了{'、'.join('「%s」' % g for g in 早到[:8])}。"
+            f"entry 必须停在开局落点第一条那一刻：{first[:60]}")
+    if e_first and not (e_first & set(_entities(now, seed))):
+        errs.append(
+            f"entry 里找不到开局落点第一条的任何东西"
+            f"（该有：{'、'.join(sorted(e_first)[:6])}）")
+    return errs
+
+
 def audit_tree(nodes: Dict[str, Node]) -> List[str]:
     """全树体检。这是**唯一**判定树合不合法的地方，其余都不许自己判。"""
     errs: List[str] = []
