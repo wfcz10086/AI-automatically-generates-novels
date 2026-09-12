@@ -5456,10 +5456,19 @@ class Novelist:
             try:
                 crit = self.step_critique(n, text)
                 a["critique"] = {k: crit.get(k) for k in
-                                 ("overall", "scores", "issues", "contradictions", "tics")}
+                                 ("overall", "dim_avg", "scores", "issues",
+                                  "contradictions", "tics", "blocking",
+                                  "blocking_why", "penalty", "severity_counts")}
                 # 评审不合格 → 用评审的具体发现当重写指令(而不是只报黑名单词)
                 fix_note = self._critique_to_note(crit)
-                if (crit.get("overall") or 100) < self.q["audit_pass_score"] and fix_note:
+                # 闸门看**程序算出来的 blocking**, 不看模型给的分数。
+                # 拿模型的总分卡门等于让被考的人自己填分: 同一篇稿子重评能差
+                # 十几分, 而且它可以「问题照列、分照给高」, 两者之间没有约束。
+                # blocking 由可数的、带正文原句为证的东西推出来, 谁都能复核。
+                if crit.get("blocking") and fix_note:
+                    self._log(f"  评审判定拦下：{'；'.join(crit.get('blocking_why') or [])}"
+                              f"（扣分 {crit.get('penalty')}，"
+                              f"有证据的问题 {crit.get('evidenced')}/{crit.get('claimed')} 条）")
                     r3 = call("polishing",
                         f"下面这章被主编批了，问题如下，逐条改掉。剧情主线不变，"
                         f"字数保持 {target} 字左右。直接输出正文，无前言。\n\n"
@@ -5468,11 +5477,16 @@ class Novelist:
                     t3 = re.sub(r"【字数标记[^】]*】\s*", "", clean(r3.text))
                     if t3 and len(re.findall(r"[一-鿿]", t3)) >= target * 0.6:
                         c3 = self.step_critique(n, t3)
-                        if (c3.get("overall") or 0) > (crit.get("overall") or 0):
+                        # 改好没有, 也按程序的分比 —— 先看还拦不拦, 再比扣分
+                        better = ((not c3.get("blocking") and crit.get("blocking"))
+                                  or (c3.get("penalty", 99) < crit.get("penalty", 99)))
+                        if better:
                             text, crit = t3, c3
                             a["critique"] = {k: c3.get(k) for k in
-                                             ("overall", "scores", "issues",
-                                              "contradictions", "tics")}
+                                             ("overall", "dim_avg", "scores",
+                                              "issues", "contradictions", "tics",
+                                              "blocking", "blocking_why",
+                                              "penalty", "severity_counts")}
                             a["critique_rewritten"] = True
                             self.p.write(self.p.chapter_path(n), text)
             except Exception as e:

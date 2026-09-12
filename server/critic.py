@@ -183,7 +183,60 @@ def build_prompt(*, title: str, n: int, text: str, prev_texts: List[str],
         f"只输出 JSON（不要代码围栏），格式：\n{schema_for([d[0] for d in dims_list])}\n"
         f"⚠ scores 里上面列的 {len(dims_list)} 个维度**一个都不能少**，"
         f"每个都要给 0-100 的整数。少一个这次评审就作废。\n"
-        f"issues 最多 6 条，只报**有正文原句为证**的。")
+        f"issues 最多 6 条，只报**有正文原句为证**的。\n"
+        f"⚠ 你不判这一章过不过 —— 过不过由程序按你报的问题数和严重度算。\n"
+        f"  所以不要为了「让它过」而少报问题，也不要为了「显得严格」而凑数：\n"
+        f"  **没有正文原句能指出来的问题，一条都不要写**（写了也不算数，程序会"
+        f"把没证据的直接剔掉）。你的活是找问题、给证据，就这两样。")
+
+
+#: 一条问题扣多少分。**这张表在程序里, 不在模型手里。**
+SEVERITY_PENALTIES = {"high": 15, "mid": 6, "low": 2}
+#: 与已确立事实冲突是最贵的一类 —— 它一旦固化就一路错到底。
+CONTRADICTION_PENALTY = 35
+
+
+def judge(d: Dict[str, Any]) -> Dict[str, Any]:
+    """分数和放不放行**由程序算**，模型只负责找问题、给证据。
+
+    —— 为什么要这样分工 ——
+
+    原来是让模型给每个维度打 0-100，取平均当总分，再拿总分卡门
+    (`overall < audit_pass_score` → 重写)。这等于**让被考的人自己填分**：
+      · 分数是模型一次性拍出来的，同一篇稿子重评一遍能差十几分
+      · 它可以「问题照列、分照给高」，两者之间没有任何约束
+      · 章与章之间不可比 —— 实测每遍稳定漏评 2-3 个维度，总分是按不同
+        数量的维度平均出来的
+
+    改成：模型报 issues（每条带 severity 和**正文原句为证**），程序按扣分表
+    算分；放行与否看 `blocking` 这个布尔，不看分数。布尔的好处是它由
+    **可数的、带证据的东西**推出来，谁都能复核；分数不行。
+
+    维度分照样留着，但只作参考，不再是闸门。
+    """
+    issues = [i for i in (d.get("issues") or []) if isinstance(i, dict)]
+    contras = [c for c in (d.get("contradictions") or []) if isinstance(c, dict)]
+    # 只认有正文原句为证的 —— 没证据的问题不扣分, 这条逼着模型给证据
+    solid = [i for i in issues if str(i.get("evidence") or "").strip()]
+    counts = {k: 0 for k in SEVERITY_PENALTIES}
+    penalty = 0
+    for i in solid:
+        sev = str(i.get("severity") or "low").lower()
+        sev = sev if sev in SEVERITY_PENALTIES else "low"
+        counts[sev] += 1
+        penalty += SEVERITY_PENALTIES[sev]
+    penalty += CONTRADICTION_PENALTY * len(contras)
+
+    why = []
+    if contras:
+        why.append(f"与已确立事实冲突 {len(contras)} 处")
+    if counts["high"] >= 2:
+        why.append(f"严重问题 {counts['high']} 条")
+    if penalty >= 40:
+        why.append(f"扣分合计 {penalty}")
+    return {"score": max(0, 100 - penalty), "penalty": penalty,
+            "counts": counts, "evidenced": len(solid), "claimed": len(issues),
+            "blocking": bool(why), "blocking_why": why}
 
 
 def parse(raw: str) -> Dict[str, Any]:
@@ -196,7 +249,13 @@ def parse(raw: str) -> Dict[str, Any]:
         return {}
     sc = d.get("scores") or {}
     vals = [v for v in sc.values() if isinstance(v, (int, float))]
-    d["overall"] = round(sum(vals) / len(vals)) if vals else None
+    # 维度平均分只作参考, 不再是闸门 —— 闸门看 judge() 算出来的 blocking
+    d["dim_avg"] = round(sum(vals) / len(vals)) if vals else None
+    j = judge(d)
+    d.update({"overall": j["score"], "blocking": j["blocking"],
+              "blocking_why": j["blocking_why"], "penalty": j["penalty"],
+              "severity_counts": j["counts"],
+              "evidenced": j["evidenced"], "claimed": j["claimed"]})
     return d
 
 

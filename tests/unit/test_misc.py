@@ -24,7 +24,11 @@ class TestCriticParse:
     def test_parse_with_noise(self):
         raw = '前言噪音 {"scores":{"a":80,"b":60},"issues":[]} 尾巴'
         d = parse(raw)
-        assert d["overall"] == 70
+        # 模型给的维度平均只作参考, 挪到 dim_avg
+        assert d["dim_avg"] == 70
+        # overall 现在是**程序按扣分表**算的: 没有问题就不扣分
+        assert d["overall"] == 100
+        assert d["blocking"] is False
 
     def test_parse_garbage(self):
         assert parse("完全不是 json") == {}

@@ -96,3 +96,45 @@ def test_每条登记都写清楚了为什么():
         if spec["severity"] != I.AUTO:
             assert spec.get("next_action"), f"{code} 没写该怎么办"
     assert I.FALLBACK["severity"] == I.MUST, "兜底必须是拦停，这是整条机制的根"
+
+
+# ───────── 模型不许打分：分数与放行由程序算 ─────────
+
+def test_模型给的分不再是闸门():
+    """原来是让模型给 0-100、取平均、拿平均卡门 —— 等于让被考的人自己填分。
+
+    同一篇稿子重评一遍能差十几分，而且它可以「问题照列、分照给高」，
+    两者之间没有任何约束。
+    """
+    from server.critic import parse
+    # 模型把每一维都打了 95，却列出两条严重问题
+    raw = ('{"scores":{"人物":95,"设定":95},"issues":['
+           '{"dim":"设定","severity":"high","what":"甲又活了",'
+           ' "evidence":"甲站起身"},'
+           '{"dim":"人物","severity":"high","what":"性格突变",'
+           ' "evidence":"他忽然温柔起来"}]}')
+    d = parse(raw)
+    assert d["dim_avg"] == 95           # 模型自己给的分
+    assert d["overall"] == 70           # 程序按扣分表算: 100 - 15*2
+    assert d["blocking"] is True        # 两条严重 → 拦下
+    assert "严重问题 2 条" in "；".join(d["blocking_why"])
+
+
+def test_没有正文原句为证的问题不扣分():
+    """这条逼着模型给证据：空口说的问题不算数。"""
+    from server.critic import parse
+    raw = ('{"scores":{"a":80},"issues":['
+           '{"dim":"a","severity":"high","what":"感觉不太行","evidence":""}]}')
+    d = parse(raw)
+    assert d["claimed"] == 1 and d["evidenced"] == 0
+    assert d["overall"] == 100 and d["blocking"] is False
+
+
+def test_与已确立事实冲突一票拦下():
+    """冲突一旦固化就一路错到底，是最贵的一类。"""
+    from server.critic import parse
+    raw = ('{"scores":{"a":90},"issues":[],'
+           '"contradictions":[{"fact":"甲已死","evidence":"甲开口说道"}]}')
+    d = parse(raw)
+    assert d["blocking"] is True
+    assert d["overall"] == 65           # 100 - 35
