@@ -62,26 +62,33 @@ def main():
         txt = "\n\n".join(f"【{k}】\n{v}" for k, v in seed.items() if v)
         say(f"种子 {len(txt)} 字 → 根节点合同")
         fix = ""
+        best, best_bad = None, None      # 三次里违约最少的那一版
         for i in range(3):
             raw = c(tr.p_root(txt, a.chapters) + fix)
             root = tr.parse_root(raw, a.chapters)
             # Contract 改成账本制(accounts/threads/facts/notes)之后, hero 这一栏
             # 就没了 —— 这里一直没跟着改, 于是**重建树必崩**。之所以拖到现在才
             # 发现, 是因为树是重构前建好的, 没人再走这条路。
-            _ok = root is not None and (
+            _ok = root is not None and bool(
                 root.entry.accounts or root.entry.facts or root.entry.notes)
-            if _ok:
+            if root is not None and _ok:
                 # 进口必须落在第 1 章开场那一刻。这条只写在提示词里时被违反了
                 # 100%(实测 entry 直接跳到第六章末尾的世界)。程序查得出来的
                 # 事就别指望模型自觉。
                 bad = tr.check_root_entry(root, txt)
+                # 留着最好的一版。上一轮吃过亏: 第 2 版只剩一处(还是误报),
+                # 却因为「没全对」被打回, 第 3 版反而更差, 最后用的是最差的。
+                if best is None or len(bad) < len(best_bad or []):
+                    best, best_bad = root, bad
                 if bad and i < 2:
-                    say(f"  根合同第 {i+1} 次进口不对：{bad[0][:100]}")
+                    say(f"  根合同第 {i+1} 次进口不对（{len(bad)} 处）：{bad[0][:90]}")
                     fix = ("\n\n── 上一版哪里错了, 重写时必须改掉 ──\n"
                            + "\n".join("· " + b for b in bad))
                     continue
                 if bad:
-                    say(f"  ⚠ 三次都没改对, 先用着：{bad[0][:80]}")
+                    say(f"  ⚠ 三次都没全对, 取最好的一版（还剩 {len(best_bad)} 处）："
+                        f"{(best_bad or [''])[0][:80]}")
+                    root = best
                 nodes["R"] = root
                 save()
                 say(f"根节点：《{root.title}》{root.line[:50]}")
