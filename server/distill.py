@@ -86,12 +86,15 @@ def distill(text: str, limit: int, what: str,
     if len(t) <= limit:
         return t
 
-    # 只超一点点：提炼的损失大于收益，直接按句子边界收尾
-    if len(t) < limit * 1.2 or ask is None:
+    # 压缩比不到 RATIO(3:1) 就不调模型 —— 这是用户定的门槛, 也有实测依据:
+    # 张力账那次输入 16536 字、要压到 12000(只有 1.4:1), 模型面对这种弱要求
+    # 不但没压, 反而重写扩写成 18702 字, 比原文还长。
+    # 提炼要有「压得动」的余量才值得花一次调用; 余量不够就按句子边界收尾。
+    if len(t) < limit * RATIO or ask is None:
         cut = _soft_cut(t, limit)
         print(f"  [提炼] {what}: {len(t)} → {len(cut)} 字"
-              f"（{'超出不多，按句子收尾' if ask else '没有提炼器，按句子收尾'}）",
-              flush=True)
+              f"（压缩比 {len(t)/max(1,limit):.1f}:1 不到 {RATIO}:1，"
+              f"{'按句子收尾' if ask else '无提炼器，按句子收尾'}）", flush=True)
         return cut
 
     k = _key(t, limit, what)
@@ -104,10 +107,12 @@ def distill(text: str, limit: int, what: str,
     except Exception as e:
         out = ""
         print(f"  [提炼] {what} 失败({type(e).__name__})，退回按句子收尾", flush=True)
-    if not out or len(out) > limit * 1.5:
+    if not out or len(out) > limit * 1.2 or len(out) >= len(t):
         cut = _soft_cut(t, limit)
-        print(f"  [提炼] {what}: 提炼没成（收到 {len(out)} 字），"
-              f"退回 {len(cut)} 字", flush=True)
+        why = ("空输出" if not out else
+               f"越压越长（{len(out)} ≥ 原文 {len(t)}）" if len(out) >= len(t)
+               else f"没压到位（{len(out)} 字，要 {limit}）")
+        print(f"  [提炼] {what}: 提炼没成 —— {why}，退回 {len(cut)} 字", flush=True)
         return cut
     print(f"  [提炼] {what}: {len(t)} → {len(out)} 字"
           f"（压缩比 {len(t)/max(1,len(out)):.1f}:1）", flush=True)

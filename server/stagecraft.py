@@ -404,7 +404,10 @@ def build_tensions(*, outline: str, characters: str = "", title: str = "",
         '"why_unsolvable":"为什么不可能两全","state":"压着",'
         '"cost":"压着期间谁在付什么代价"}]}\n'
         f"state 只能取：压着 / 已爆发 / 已了结。没有就输出 {{\"tensions\":[]}}。\n\n"
-        f"{_fit(src, 12000, '总纲(张力账)')}")
+        # 限额按输入实际需要给, 不拍一个 12000 就把角色卡切掉一半 ——
+        # 实测输入 16536 字(总纲 1599 + 角色卡 14935), 切到 12000 丢掉的
+        # 正是后几个角色, 而张力恰恰是**人与人之间**的事, 少一个人就少一组张力。
+        f"{_fit(src, max(12000, len(src)), '总纲(张力账)')}")
     data = parse_json(ask(prompt), "tensions")
     out = []
     for t in (data.get("tensions") or [])[:8]:
