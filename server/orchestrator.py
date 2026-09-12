@@ -2104,58 +2104,54 @@ class Novelist:
         return txt
 
     def seed_faction_names(self) -> List[str]:
-        """种子里作者点名的势力。这是**现成的数据**, 不该问模型要。
+        """种子里作者点名的势力。**模型认一次, 程序存下来, 之后永远用存的。**
 
-        实测: 种子点名十个(缥缈阁/青霄派/太虚院/紫薇阁/相国寺/狐族/蛇族/
-        六圣/法海/罗刹海), 跑到第 25 章只用上一个「相国寺」, 另外三家是
-        「紫霄宫·执法堂」(把青霄派和紫薇阁揉出来的形近新名)、「百药堂」、
-        「玄阴教」—— 全是自造的。
-        seed_factions() 已经把种子全篇送进提示词了, 还是没用上 —— 又一次
-        「写在提示词里但程序不查」。而这些名字程序抠得出来。
+        —— 为什么不用正则 ——
+
+        我先写的是「势力后缀表 + 虚词表 + 只在某几节里找」三道筛, 改了四版:
+          · 只有后缀规则时抠出 39 个, 一大半是「才不会」「从佛门」这种句中片段
+          · 加了词首边界, 又漏了破折号 ——「佛门——相国寺」里的相国寺抠不出来
+          · 加了虚词表, 把**太虚院**误杀了(「太」在表里)
+        每补一条限定词就换一种错法。根子是: **从一段话里认出哪些词是势力名,
+        是语义判断**, 不是字符串模式。拿正则去套语义, 永远差一条限定词。
+
+        正确的分工是三段:
+          模型认一次  → 语义的活归模型
+          程序存下来  → seed_cast.json
+          程序钉进去  → 之后每次都用存的那份, 不再问模型
+        「程序能定死的不要问模型」说的是**定死**这一步归程序, 不是说程序要
+        自己去猜内容。
         """
+        cached = self.p._load("seed_cast.json", None)
+        if isinstance(cached, dict) and isinstance(cached.get("factions"), list):
+            return [str(x) for x in cached["factions"] if str(x).strip()]
         txt = str((self.p.meta.get("fields") or {}).get("premise") or "")
-        # 三道筛, 少一道都不行(逐道试出来的):
-        #   一 只在**点名势力的那几节**里找。整份种子里找, 「横练、拳脚、气血」
-        #     这类功法串会被顿号规则整串抠出来。
-        #   二 只认势力后缀。
-        #   三 前面必须是词首边界。只有后缀规则时, 「才不会」「从佛门」
-        #     「被法海」这种句中片段全被当成名字(实测抠出 39 个, 一大半是垃圾)。
-        secs = []
-        for tag in ("【天下四条路", "【天下格局", "【预装情绪"):
-            i = txt.find(tag)
-            if i < 0:
-                continue
-            j = txt.find("\n【", i + 4)
-            secs.append(txt[i:j if j > 0 else len(txt)])
-        body = "\n".join(secs) or txt
-        out: List[str] = []
-        for m in re.finditer(
-                # 破折号也是边界 —— 种子里写的是「佛门——相国寺、法海」,
-                # 少了它「相国寺」就抠不出来(单测当场抓到)。
-                r"(?:^|[、，。；：（）「」\s\n】／/—–·|])"
-                r"([一-鿿]{2,4}(?:阁|派|院|宗|寺|族|教|堂|司|窟|海))",
-                body, re.M):
-            out.append(m.group(1))
-        #: 这些尾字对了但不是势力 —— 「罗刹海」是地名兼试炼场, 留着;
-        #: 「四合大院」「石室」这类场景不留。
-        drop = {"四合大院", "大院", "后院", "庭院"}
-        # 含虚词的不是势力名 —— 实测「所以法海」(「所以法海一眼认得出他」的
-        # 片段, 以「海」结尾)混了进来。跟名物表那次是同一个办法。
-        # 虚词表要收紧到「几乎不可能出现在专名里」。第一版抄了名物表那份,
-        # 里面有「太」, 把**太虚院**误杀了(单测当场抓到)。
-        # 「中/人/上/下/第/点」同理会误伤中州、上清、第一宗这类名字, 都去掉。
-        func = set("的了是在和与也就都而但把被给从对向这那之其于及或则"
-                   "已未不无有会能要再又还只我你他她它们为以所因此如若使让"
-                   "来去出进过更")
-        seen, keep = set(), []
-        for x in out:
-            if x in drop or x in seen or len(x) < 2:
-                continue
-            if any(ch in func for ch in x):
-                continue
-            seen.add(x)
-            keep.append(x)
-        return keep
+        if not txt.strip():
+            return []
+        try:
+            raw = self._ask_planner(
+                "下面是一本小说的种子。把作者在里面**点名**的势力、门派、"
+                "组织、势力性质的地名列出来。\n\n"
+                "只列种子里原样出现过的名字，不许改写、不许合并、不许自己发明。\n"
+                "人名不算势力；功法、招式、行当（横练、采补、丹符剑阵）不算势力。\n"
+                "只输出 JSON 数组，不要解释：[\"甲阁\",\"乙派\"]\n\n"
+                f"── 种子 ──\n{txt}")
+        except Exception as e:
+            self._ledger(e, "种子势力识别失败")
+            return []
+        m = re.search(r"\[.*\]", raw or "", re.S)
+        names: List[str] = []
+        if m:
+            try:
+                names = [str(x).strip() for x in json.loads(m.group(0))
+                         if str(x).strip() and str(x).strip() in txt]
+            except Exception as e:
+                self._ledger(e, "种子势力解析失败")
+        # 只留**种子原文里真出现过**的 —— 这一条程序验得了, 挡住模型顺手改写
+        self.p.write("seed_cast.json",
+                     json.dumps({"factions": names}, ensure_ascii=False, indent=2))
+        self._log(f"种子势力识别：{len(names)} 家（{'、'.join(names[:8])}）")
+        return names
 
     def pin_seed_factions(self) -> int:
         """把种子点名的势力**直接写进 factions.json**, 不问模型。
