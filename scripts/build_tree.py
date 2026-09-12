@@ -38,6 +38,12 @@ def main():
     a = ap.parse_args()
 
     out = Path(a.resume or a.out)
+    # --out 要的是**目录**。传成 .../tree.json 的话, 下面这句 mkdir 会建出一个
+    # 叫 tree.json 的目录, 然后下一轮以 IsADirectoryError 崩在读取处 —— 报错
+    # 位置离真因隔了十万八千里。就地拦住。
+    if out.suffix == ".json":
+        print(f"--out 要的是目录, 不是文件: {out}\n   大概想写: --out {out.parent}")
+        return 2
     out.mkdir(parents=True, exist_ok=True)
     f_tree = out / "tree.json"
     nodes = {}
@@ -58,7 +64,12 @@ def main():
         for i in range(3):
             raw = c(tr.p_root(txt, a.chapters))
             root = tr.parse_root(raw, a.chapters)
-            if root and (root.entry.hero or root.entry.facts):
+            # Contract 改成账本制(accounts/threads/facts/notes)之后, hero 这一栏
+            # 就没了 —— 这里一直没跟着改, 于是**重建树必崩**。之所以拖到现在才
+            # 发现, 是因为树是重构前建好的, 没人再走这条路。
+            _ok = root is not None and (
+                root.entry.accounts or root.entry.facts or root.entry.notes)
+            if _ok:
                 nodes["R"] = root
                 save()
                 say(f"根节点：《{root.title}》{root.line[:50]}")
