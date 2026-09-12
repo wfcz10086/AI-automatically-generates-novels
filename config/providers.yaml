@@ -145,7 +145,10 @@ search:
 # ⚠ 但「档位越高越好」目前**没有数据支持**：单次采样里 medium(1744 思考 tok)
 #   反而比 low(4096) 差(3/7 vs 6/7)，这个端点上 effort 似乎不单调。
 #   要改档位先跑 /tmp/efforttest.py 那套多次采样，别凭直觉调。
-# 2026-09-11 全部切到 gw6(自建 Qwen3.8-Flash-Next)。聚合网关 gw4/gw5 从 09-10
+# 2026-09-12 全部切到 gw1(gw1.internal, 用户自己的机器, 模型 Qwen3.8-Flash-Next)。
+# 之前我切到 gw6 是**认错了网关** —— 用户说的「自建」是 gw1, gw6 是阿里百炼
+# 付费独占实例。两个都叫 Qwen3.8-Flash, 我没核对域名就当成同一个,
+# 白白在阿里跑了十七个小时, 而用户自己那台一直闲着。聚合网关 gw4/gw5 从 09-10
 # 22:32 起返回 401 Invalid token, 空转 15 小时 686 次。而且树式分解把每次调用的
 # 上下文压到几千字, 正配自建实例: 窗口小、便宜、可以随便发。
 #
@@ -160,15 +163,15 @@ profiles:
   # 思考实开实测(2026-09-11 18:07): 两条 planning 连着空输出 0 字, 角色档案
   # 步骤卡死 —— 和聚合网关同一病根: 思考吃光 max_tokens, content 为空。
   # 自建实例不是解药, 预算才是。等我把 thinking_budget 单独测通再开。
-  planning:   {gateway: gw6, thinking: false, temperature: 1.0}
-  drafting:   {gateway: gw6, thinking: false, temperature: 1.0}
-  polishing:  {gateway: gw6, thinking: false, temperature: 0.95}
+  planning:   {gateway: gw1, thinking: false, temperature: 1.0}
+  drafting:   {gateway: gw1, thinking: false, temperature: 1.0}
+  polishing:  {gateway: gw1, thinking: false, temperature: 0.95}
   # judging 原来关着思考，理由是「推理与答案共用 max_tokens，2000 的判定任务
   # 会被推理吃光、可见输出 0 字符」。但 call() 里已经有兜底：开思考且网关是
   # effort 型时会自动把 max_tokens 放大（×倍数、下限 6000、封顶网关上限），
   # 所以那个风险已经被堵住了。而评审现在多挂了本书文风包声明的 5 条维度
   # （当众失态／温度／把规矩讲透／叙述者戳破／有人算错），要真读出这些更需要推理。
   # 如果发现评审又出现「首次输出为空、靠关思考重试才拿到结果」，把这里改回 false。
-  judging:    {gateway: gw6, thinking: false, temperature: 0.30}
+  judging:    {gateway: gw1, thinking: false, temperature: 0.30}
 
 default_profile: drafting
