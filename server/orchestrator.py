@@ -2156,9 +2156,22 @@ class Novelist:
         lines = [f"🎬【开局落点·第 {n} 章起按这几条写，一条一章，不许合并也不许跳过】"]
         for k in range(n, min(n + count, len(beats) + 1)):
             lines.append(f"　第{k}章：{beats[k-1][1].strip()}")
-        lines.append("　⚠ 这是作者亲手写的开局骨架。**每一条的地点、人物、动作都要落到正文里**——"
-                     "写在现代世界的那几章照常用现代地名与器物（那是主角真实的来处）。"
-                     "写完这几条再接里程碑的主线。")
+        lines.append("　⚠ 这是作者亲手写的开局骨架。**每一条的地点、人物、动作都要落到正文里**。")
+        # 专名要原样出现 —— 实测模型会自动把「纽约」写成「曼哈顿」、
+        # 「FBI」写成「联邦调查局行动」, 因为题材包的禁忌(不许用现代思维嘲笑
+        # 古人)被它泛化成了「整本书别提现代词」。禁的是姿态, 不是词。
+        names = [w for w in re.findall(
+            r"[A-Z]{2,6}|[\u4e00-\u9fff]{2,6}(?=，|。|\s|$)", " ".join(
+                b[1] for b in beats[max(0, n - 1):n + count - 1]))
+            if re.fullmatch(r"[A-Z]{2,6}", w)]
+        raw_names = re.findall(r"[A-Z]{2,8}", " ".join(b[1] for b in beats))
+        if raw_names:
+            lines.append("　⚠ 骨架里点名的专名**原样写进正文**，不许换成同义说法"
+                         f"（{'、'.join(dict.fromkeys(raw_names))} 这类照写）——"
+                         "这几章发生在主角穿越之前的现实世界，现代地名、机构、"
+                         "器物本来就该出现；题材包里「不许用现代思维嘲笑古人」"
+                         "禁的是**姿态**，不是词。")
+        lines.append("　写完这几条再接里程碑的主线。")
         return "\n".join(lines)
 
     def milestone_ctx(self, n: int) -> str:
