@@ -6258,7 +6258,37 @@ class Novelist:
         # 实测把 97 分的返修稿记成 0 分
         a = audit(new, extra_blacklist=self.hard_blacklist(), target_words=target)
         a["target_words"] = target      # 交付率要用: 没有它就算不出模型少写了多少
+        # **改完要复审。** 原来这里用一份不含评审、不含问题台账的裸 audit 直接
+        # 覆盖掉原来的 —— 于是返修之后「这一章现在到底怎么样」没有任何人知道:
+        # 修好了还一直报警, 或者没修好却被当成修好了。实测第 12 章返修到 70 分,
+        # audit 里还写着「需人工」, 队列里也没出队, 下一批接着修同一章。
+        # (这正是我在别人仓库里批评过的「修完不复审」, 我们自己也有。)
+        self.iss = _iss.Ledger()
+        try:
+            crit = self.step_critique(n, new)
+            if crit and not crit.get("error"):
+                a["critique"] = {k: crit.get(k) for k in
+                                 ("overall", "dim_avg", "scores", "issues",
+                                  "contradictions", "tics", "blocking",
+                                  "blocking_why", "penalty", "severity_counts")}
+                a["score"] = min(a["score"], int(crit.get("overall") or 0))
+                if crit.get("blocking"):
+                    self.iss.record("critique_blocking",
+                                    "；".join(crit.get("blocking_why") or []))
+        except Exception as e:
+            self._ledger(e, "返修复审失败")
+        cw = self.style.get("chapterWords")
+        _lo, _hi = ((int(cw[0]), int(cw[1]))
+                    if isinstance(cw, (list, tuple)) and len(cw) == 2
+                    else (self.g["chapter_words_min"], self.g["chapter_words_max"]))
+        if not (_lo <= a["stats"]["cn"] <= _hi):
+            self.iss.record("words_off_target",
+                            f"{a['stats']['cn']} 字，区间 {_lo}-{_hi}")
+        a["issues"] = self.iss.to_dict()
+        a["repaired"] = True
         self.p.write(f"audit/{n:03d}.json", json.dumps(a, ensure_ascii=False, indent=2))
+        self._log(f"  返修第{n}章复审：{self.iss.status()}"
+                  f"（{self.iss.brief() or '无问题'}）")
         self.p.state.setdefault("summaries", {})[str(n)] = self._extract_state(n, new)
         self.p.mem.add("plot", f"ch{n}", f"第{n}章", new)
 
@@ -6274,6 +6304,7 @@ class Novelist:
         self._log(f"第{n}章 {mode} 重写 → {a['stats']['cn']}字 得分{a['score']}"
                   + (f"，可能影响后续 {affected}" if affected else ""))
         return {"ok": True, "mode": mode, "score": a["score"],
+                "status": self.iss.status(), "issues": self.iss.brief(),
                 "chars": a["stats"]["cn"], "backup": f".ckpt/{n:03d}_v{ver}.md",
                 "affected": affected}
 

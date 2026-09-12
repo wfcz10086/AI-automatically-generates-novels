@@ -362,3 +362,26 @@ def test_指标打分要有梯度而不是命中与否():
     src2 = inspect.getsource(o.Novelist.step_chapter)
     assert 'self.iss.record("metric_blowout"' in src2, \
         "塌方算出来了却没接进问题台账 —— 又是「算了但没人用」"
+
+
+def test_返修之后必须复审并按结果决定出队():
+    """「修完不复审」—— 我在别人仓库里批评过的毛病，我们自己也有。
+
+    实测第 12 章：[repair] 第12章 -> 70（修到 70 分），而 audit 里还写着
+    「需人工」、队列里也没出队。因为 rewrite_chapter 用一份**不含评审、
+    不含问题台账**的裸 audit 直接覆盖了原来的，返修之后「这一章现在到底
+    怎么样」没有任何人知道：修好了还一直报警，或者没修好却被当成修好了。
+    """
+    import inspect
+    from server import orchestrator as o
+    src = inspect.getsource(o.Novelist.rewrite_chapter)
+    assert "self.step_critique(n, new)" in src, "返修之后没有复审"
+    assert 'a["issues"] = self.iss.to_dict()' in src, "返修之后没有重建问题台账"
+    assert '"status": self.iss.status()' in src, "返修结果没把状态带回去"
+
+    from pathlib import Path
+    sh = (Path(o.__file__).resolve().parent.parent
+          / "scripts" / "run_until.sh").read_text(encoding="utf-8")
+    assert "q[2:]" not in sh, "还在无条件丢掉前两条 —— 没修好的也当修好了"
+    assert "tries" in sh and "不再自动重试" in sh, \
+        "要么会无限重修同一章，要么没有次数上限"

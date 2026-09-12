@@ -47,13 +47,29 @@ p = Project(sys.argv[1])
 q = p._load('repair_queue.json', [])
 if q:
     nv = Novelist(p)
+    rest = list(q[2:])
     for item in q[:2]:
+        # 修完要复审才知道该不该出队。原来无条件 q[2:] 丢掉前两条 ——
+        # 没修好的也当修好了; 而 audit 那边状态又不更新, 于是「修好了还一直
+        # 报警」和「没修好却被丢出队列」两种错同时存在。
+        tries = int(item.get('tries') or 0) + 1
         try:
             r = nv.rewrite_chapter(item['ch'], mode='polish', note=item['note'])
-            print(f"[repair] 第{item['ch']}章 -> {r.get('score')}")
+            st = r.get('status') or '?'
+            print(f"[repair] 第{item['ch']}章 -> {r.get('score')} / {st}"
+                  f" ({r.get('issues') or '无问题'})")
+            if st in ('需人工', '失败') and tries < 2:
+                item['tries'] = tries
+                rest.append(item)          # 还没好, 留着下一批再修一次
+            elif st in ('需人工', '失败'):
+                print(f"[repair] 第{item['ch']}章修了 {tries} 次仍未过，"
+                      f"留给人工，不再自动重试")
         except Exception as e:
             print(f"[repair] 第{item['ch']}章失败: {e}")
-    p.write('repair_queue.json', json.dumps(q[2:], ensure_ascii=False, indent=2))
+            if tries < 2:
+                item['tries'] = tries
+                rest.append(item)
+    p.write('repair_queue.json', json.dumps(rest, ensure_ascii=False, indent=2))
 PYQ
   fi
 done
