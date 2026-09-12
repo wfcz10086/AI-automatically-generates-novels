@@ -6,6 +6,9 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 TITLE="${1:?书名}"; EVERY="${2:-180}"; BATCH="${3:-20}"
+#: 停这么多分钟不涨章就判定挂起并重启。单次模型调用有 CALL_BUDGET 兜底,
+#: 一章再慢也到不了这个数。
+STALL_MIN="${STALL_MIN:-20}"
 SLUG=$(python3 -c "import sys;sys.path.insert(0,'.');from server.orchestrator import slugify;print(slugify('$TITLE'))")
 LOG="reports/guard.log"; mkdir -p reports
 
@@ -46,11 +49,29 @@ while :; do
     setsid bash scripts/run_until.sh "$TITLE" "$TGT" "$BATCH" >> "$LOG" 2>&1 < /dev/null 8>&- &
     disown
   else
-    # 活着但长时间不涨章 —— 只报警不重启，免得把正在写的那一章打断
+    # 活着但长时间不涨章。原来**只报警不重启**, 理由是「免得打断正在写的
+    # 那一章」—— 可实测挂过一次: 模型那边最后一个 chunk 之后再无动静, 连接
+    # 一直 ESTABLISHED, 整条流水线干等, 而这一层只会每半小时打一行提示,
+    # 没有任何人会来救它。
+    # 现在 provider 那边给单次调用钉了总时长上限(CALL_BUDGET), 一章再慢也
+    # 不该超过 STALL_MIN 分钟。超了就是真挂了, 该重启。
     if [ "$NOW" -le "$LAST" ]; then
       STUCK=$((STUCK+1))
-      [ $((STUCK % 10)) -eq 0 ] && \
-        echo "[$(date '+%T')] 进度停在 $NOW 章已 $((STUCK*EVERY/60)) 分钟（high 档单章本来就慢，仅提示）" | tee -a "$LOG"
+      MINS=$((STUCK*EVERY/60))
+      if [ "$MINS" -ge "$STALL_MIN" ]; then
+        echo "[$(date '+%T')] 进度停在 $NOW 章已 $MINS 分钟，判定挂起，重启长跑" | tee -a "$LOG"
+        # 用 pidfile + 进程组停, 不用 pkill -f —— 它会误杀哨兵自己的命令行
+        # (这个坑踩过三次, 仓库里有测试守着)。run_until 是 setsid 起的,
+        # 是进程组长, 杀进程组能连带 run_novel。
+        bash scripts/stop_run.sh >> "$LOG" 2>&1
+        sleep 3
+        if pgrep -f "run[_]until\.sh $TITLE" >/dev/null 2>&1; then
+          echo "[$(date '+%T')] ⚠ 停不掉, 下一轮再试" | tee -a "$LOG"
+        fi
+        STUCK=0
+      elif [ $((STUCK % 5)) -eq 0 ]; then
+        echo "[$(date '+%T')] 进度停在 $NOW 章已 $MINS 分钟（$STALL_MIN 分钟后重启）" | tee -a "$LOG"
+      fi
     else
       STUCK=0
       echo "[$(date '+%T')] 进度 $NOW/$TGT" | tee -a "$LOG"

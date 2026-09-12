@@ -16,6 +16,10 @@ from .base import BaseProvider, Delta, ProviderError
 class OpenAICompatProvider(BaseProvider):
     #: 发送阶段的重试次数（瞬时写超时用）
     SEND_RETRIES = 3
+    #: 流式响应**块与块之间**允许的最长静默。两个 chunk 隔这么久就是挂了。
+    READ_TIMEOUT = 120
+    #: 单次调用的总时长上限。防「每隔 50 秒吐一个字」这类慢性挂起。
+    CALL_BUDGET = 480
 
     id = "openai_compat"
     name = "OpenAI 兼容"
@@ -97,7 +101,13 @@ class OpenAICompatProvider(BaseProvider):
                     headers=self._headers(),
                     json=body,
                     stream=True,
-                    timeout=(60, 600),
+                    # (连接, **块与块之间**)。原来读超时给的是 600s ——
+                    # 流式生成里两个 chunk 隔十分钟从来不是正常情况, 这个值
+                    # 等于没有超时。实测挂过一次: 最后一个 chunk 停在 15:58:26,
+                    # 连接一直 ESTABLISHED, 整条流水线干等, 而守护那一层的
+                    # 设计是「活着但不涨章只报警不重启」(免得打断正在写的章),
+                    # 于是没有任何人会来救它。
+                    timeout=(60, self.READ_TIMEOUT),
                 )
                 break
             except (requests.exceptions.Timeout,
@@ -126,7 +136,16 @@ class OpenAICompatProvider(BaseProvider):
         # 会整段变成 æä»£ä¸ç³ç±³ 这样的乱码 —— 不是模型的问题, 是解码的问题
         if not resp.encoding or resp.encoding.lower() in ("iso-8859-1", "latin-1"):
             resp.encoding = "utf-8"
+        # 第二层: 单次调用的总时长上限。块间超时只管「一直没有下一块」,
+        # 管不了「每隔 50 秒吐一个字」这种慢性挂起 —— 那种情况块间超时永远
+        # 不触发, 而这一章能写到天亮。
+        _t0 = time.time()
         for raw in resp.iter_lines(decode_unicode=True):
+            if time.time() - _t0 > self.CALL_BUDGET:
+                resp.close()
+                raise ProviderError(
+                    f"单次调用超过 {self.CALL_BUDGET}s 仍未结束（已出 "
+                    f"{self.last_finish or '未完'}），判定挂起并中止")
             if not raw or not raw.startswith("data: "):
                 continue
             payload = raw[6:].strip()
