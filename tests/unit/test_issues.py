@@ -452,3 +452,39 @@ def test_脱敏不许碰文件名也不许改坏JSON():
     out = redact(raw)
     json.loads(out)                      # 读得出来才算数
     assert "example.com" not in out
+
+
+def test_到期伏笔要有自己的一栏和分数():
+    """三档规矩的第三次验证。
+
+    · 第 1 档（只写在提示词里）：日志连着报「本批细纲一条都没碰」
+    · 查 trace 确认那段话**确实在** 5 万字的提示词里 —— 模型看见了没照做
+    · 第 2 档（进格式表）：开局落点上验证过 —— 插进表之后五章全写了
+    """
+    import inspect
+    from server import orchestrator as o
+    src = inspect.getsource(o.Novelist.step_chapter_outlines)
+    assert "回收伏笔：" in src, "到期伏笔没有自己的栏位，模型填完十栏就收工"
+    assert "self.overdue_foreshadows(start)" in src
+    # 格式表那一栏和约束里点名的必须是同一份清单，否则模型只会填「无」
+    assert src.count("self.overdue_foreshadows(start)") >= 1
+    assert "pend = " in src, "未收伏笔清单没定义"
+
+    sc = inspect.getsource(o.Novelist.outline_score)
+    assert "回收伏笔" in sc, "有栏没分 —— 模型会全填「无」"
+    assert "-20.0" in sc, "本批一条都没收要重罚"
+
+
+def test_伏笔匹配按前15字而不是全等():
+    """模型抄的是前 15 字，不会一字不差抄完整条。"""
+    from server.orchestrator import _norm_key
+    want = "远处传来清脆的笑声，并非野兽，而是女人，笑声中透着诡异的甜香"
+
+    def hit(v):
+        got = _norm_key(v)
+        w = _norm_key(want[:15])
+        return bool(w and w in got) or bool(got[:10] and got[:10] in _norm_key(want))
+
+    assert hit("远处传来清脆的笑声，并非野兽")          # 抄了前 15 字
+    assert not hit("狐媚交出了妖丹")                    # 不相干的不算
+    assert _norm_key("远处，传来。清脆") == "远处传来清脆"   # 标点不影响

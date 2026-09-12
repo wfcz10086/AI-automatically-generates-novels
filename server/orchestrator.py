@@ -26,6 +26,11 @@ from . import issues as _iss
 from . import voice as _voice
 
 
+def _norm_key(v: str) -> str:
+    """比对伏笔用的归一化: 去标点空白, 只留字。"""
+    return re.sub(r"[\s，。、；：,.;:（）()【】\[\]「」『』\"'!！?？~—-]+", "", str(v or ""))
+
+
 def _soft(t: str, n: int, what: str = "") -> str:
     """不硬切的收尾。全模块统一走这里 —— 半句话切断, 模型会顺着补完,
     补出来的是它编的, 而下游看不出这段是编的。"""
@@ -2239,6 +2244,45 @@ class Novelist:
                          "禁的是**姿态**，不是词。")
         lines.append("　写完这几条再接里程碑的主线。")
         return "\n".join(lines)
+
+    def overdue_foreshadows(self, start: int) -> List[Dict[str, Any]]:
+        """本批该收的到期伏笔(最老的三条)。同一批只算一次, 结果缓存。
+
+        排纲要用它两次: 一次决定格式表里加不加「回收伏笔」那一栏,
+        一次拼那段点名的约束。算两遍会打两次库, 而且两次结果必须一致 ——
+        表上有那一栏、约束里却没点名, 模型只会填「无」。
+        """
+        if getattr(self, "_ovf_at", None) == start:
+            return self._ovf
+        out: List[Dict[str, Any]] = []
+        try:
+            pend = self.p.mem.pending_foreshadow()
+            if pend:
+                _fd = self.style.get("foreshadowDue") or {}
+                _due = int(_fd.get("章数") or 12)
+                arcs = []
+                f = self.p.dir / "tree.json"
+                if f.exists():
+                    import server.tree as _tr
+                    for _v in json.loads(f.read_text(encoding="utf-8")).values():
+                        for _side in ("entry", "exit"):
+                            for _t in ((_v.get(_side) or {}).get("open_threads") or []):
+                                arcs.append(str(_t.get("what") or ""))
+
+                def _is_arc(txt: str) -> bool:
+                    for a in arcs:
+                        keys = re.findall(r"[一-鿿]{3,}", a)[:5]
+                        if keys and sum(1 for k in keys if k in txt) >= 2:
+                            return True
+                    return False
+
+                out = [x for x in pend
+                       if start - int(x["planted"]) >= _due and not _is_arc(x["text"])]
+                out = sorted(out, key=lambda x: int(x["planted"]))[:3]
+        except Exception as e:
+            self._ledger(e, "到期伏笔计算跳过")
+        self._ovf_at, self._ovf = start, out
+        return out
 
     def beat_for(self, n: int) -> str:
         """第 n 章该落的那一条开局落点。超出范围返回空串。"""
@@ -4893,14 +4937,22 @@ class Novelist:
             plots_per_chapter=max(3, int(
                 self.target_words() / (int(self.style.get("blockWords") or 500) * 0.8))),
             style_pack=self.style,
-            # 本批里有开局落点的章, 就把那一栏插进**格式表**。只写在正文
-            # 叮嘱里不行 —— 实测连要抄的原文都列出来了, 三稿还是一个都没写,
-            # 因为模型是照着格式表逐栏填的, 表上没有的栏它就不填。
-            outline_extra_head=(
-                "开局落点：（**只有前几章有这一栏**。上面【开局落点】里属于本章的"
-                "那一条，作者原文一字不改地抄在这里；程序会逐字核对。"
-                "不属于开局落点的章节不写这一栏。）"
-                if self.beat_for(start) else ""))
+            # 额外的栏必须插进**格式表**。只写在正文叮嘱里不行 —— 模型是照着
+            # 格式表逐栏填的, 表上没有的栏它就不填。这条在开局落点上验证过:
+            # 提示词里连要抄的原文都逐条列出来了、还写明程序会逐字核对,
+            # 三稿细纲一个都没写; 插进格式表之后五章全写了。
+            # 到期伏笔同理: 那段话现在确实进了提示词(trace 里查过),
+            # 可日志还是「本批细纲一条都没碰」—— 因为它也不在填写路径上。
+            outline_extra_head="\n".join(x for x in [
+                ("开局落点：（**只有前几章有这一栏**。上面【开局落点】里属于本章的"
+                 "那一条，作者原文一字不改地抄在这里；程序会逐字核对。"
+                 "不属于开局落点的章节不写这一栏。）"
+                 if self.beat_for(start) else ""),
+                ("回收伏笔：（本章兑现了上面【到期伏笔】里的哪一条？把那条的前 15 字"
+                 "抄过来，并在「剧情」里真的把结果写出来。这一章不兑现就写「无」——"
+                 "但**本批至少要有一章不是「无」**，程序会核对。）"
+                 if self.overdue_foreshadows(start) else ""),
+            ] if x))
         # 细纲生成之前也要召回已确立的事实 —— 否则会写出自相矛盾的剧情。
         # 实测: 第 25 章把玉佩指向皇子赵琰, 第 33 章又说是东平府通判赵家之物,
         # 因为细纲生成压根没接记忆层, 模型看不到前面已经定死的结论。
@@ -4916,40 +4968,17 @@ class Novelist:
         # 伏笔回收必须在**排纲**安排 —— 正文没法凭空造一个兑现。
         # 原来这句写的是「本批**可择机**兑现」: 建议不是判据, 实测 67 章
         # 151 条真伏笔只收 30 条(80% 未收)。改成点名 + 硬要求 + 程序核对。
-        pend = self.p.mem.pending_foreshadow()
-        if pend:
+        # 清单由 overdue_foreshadows() 算并缓存 —— 格式表那一栏也要用它,
+        # 两边必须是同一份: 表上有「回收伏笔」栏、约束里却没点名, 模型只会填「无」。
+        overdue = self.overdue_foreshadows(start)
+        pend = []
+        try:
+            pend = self.p.mem.pending_foreshadow()
+        except Exception as e:
+            self._ledger(e, "未收伏笔清单读取跳过")
+        if pend or overdue:
             _fd = self.style.get("foreshadowDue") or {}
-            _due = int(_fd.get("章数") or 12)
             _need = int(_fd.get("每批至少收") or 2)
-            # 全书级大悬念不催 —— 它们归合同树的 open_threads 管(带 due 指到
-            # 具体某一卷)。实测未收清单里躺着「高空云层之上的冷漠注视者身份」,
-            # 拿 12 章的统一到期去催它, 等于逼它在第 13 章揭底, 会毁掉这本书。
-            # 到期只管**章级钩子和中等伏笔**。
-            arcs = []
-            try:
-                import server.tree as _tr
-                _f = self.p.dir / "tree.json"
-                if _f.exists():
-                    _nodes = json.loads(_f.read_text(encoding="utf-8"))
-                    for _v in _nodes.values():
-                        for _side in ("entry", "exit"):
-                            for _t in ((_v.get(_side) or {}).get("open_threads") or []):
-                                arcs.append(str(_t.get("what") or ""))
-            except Exception:
-                pass
-
-            def _is_arc(txt: str) -> bool:
-                for a in arcs:
-                    keys = re.findall(r"[一-鿿]{3,}", a)[:5]
-                    if keys and sum(1 for k in keys if k in txt) >= 2:
-                        return True
-                return False
-
-            overdue = [f for f in pend
-                       if start - int(f["planted"]) >= _due and not _is_arc(f["text"])]
-            # 点名太多反而一条都收不掉(实测点 6 条只收 1 条)。只点最老的三条,
-            # 集中火力。
-            overdue = sorted(overdue, key=lambda f: int(f["planted"]))[:3]
             if overdue:
                 k = min(_need, len(overdue))
                 self._overdue_names = [f["text"][:36] for f in overdue]
@@ -5243,7 +5272,7 @@ class Novelist:
                        exist.get(str(start - 1), ""), re.M)
         if m0:
             prev_hook = m0.group(1)[:40]
-        score, ok_ch, acct = 0.0, 0, 0
+        score, ok_ch, acct, hit_f = 0.0, 0, 0, 0
         for i, part in enumerate(parts[:count]):
             body = self.clean_outline(part)
             lack = [f for f in need
@@ -5255,6 +5284,15 @@ class Novelist:
             # 开局落点漏了直接重罚 —— 那是作者亲手写的骨架, 不是建议
             for _m in self.beat_missed(start + i, body):
                 score -= 30.0
+            # 「回收伏笔」栏填了真东西就加分 —— 本批一条都没收要扣。
+            # 这一栏是刚插进格式表的; 光有栏没有分, 模型会全填「无」。
+            mf = re.search(r"^\s*回收伏笔\s*[:：]\s*(.+)$", body, re.M)
+            if mf and not re.match(r"^\s*(无|没有|不适用|-|—)\s*$", mf.group(1)):
+                want = getattr(self, "_overdue_names", None) or []
+                got = _norm_key(mf.group(1))
+                if any(_norm_key(w[:15]) and _norm_key(w[:15]) in got
+                       or got[:10] and got[:10] in _norm_key(w) for w in want):
+                    hit_f += 1
             # 账目那一栏真的动了账(有数字或 → 箭头), 不是写「形势更严峻」
             ma = re.search(r"^\s*账目\s*[:：]\s*(.+)$", body, re.M)
             if ma and re.search(r"[0-9一二三四五六七八九十百千]|→|->", ma.group(1)):
@@ -5264,6 +5302,10 @@ class Novelist:
             if mh and prev_hook and prev_hook[:14] and prev_hook[:14] in mh.group(1):
                 score -= 4.0
         score += ok_ch * 3.0
+        # 本批点名了到期伏笔却一条都没收 —— 重罚。伏笔回收是这套东西里最难
+        # 自动发生的一项(上一版埋 151 收 30, 只有 20%), 三选一里能收一条就该赢。
+        if getattr(self, "_overdue_names", None):
+            score += 8.0 * min(2, hit_f) if hit_f else -20.0
         # 燃料配比: **只罚低于目标, 不罚高于目标**。
         # 原来写成 abs(实际 - 目标), 于是「章章都动账」反被当成偏离扣分,
         # 单章测试里不动账的那份竟然赢了 —— 动账多是好事, 不该罚。
