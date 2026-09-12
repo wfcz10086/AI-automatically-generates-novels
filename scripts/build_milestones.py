@@ -17,14 +17,38 @@ def say(m):
     print(f"[{time.strftime('%H:%M:%S')}] {m}", flush=True)
 
 
-def one_candidate(tag: str, root, k: int):
+def seed_chain(project_dir) -> str:
+    """从种子里抠出【但是链】和【开局落点】—— 作者亲手写的主线骨架。
+
+    实测教训: 不把它当硬约束, 模型会拆出「斩追兵／藏身形／误认主」这类
+    通用填充节, 用户那条「法海收服→相国寺苦力→保护许仙→白蛇抓去当鼎炉→
+    丢给青蛇→守果园→押贡品→罗刹海」的人物线整个丢掉。
+    """
+    import json as _j
+    from pathlib import Path as _P
+    f = _P(project_dir) / "project.json"
+    if not f.exists():
+        return ""
+    txt = str((_j.loads(f.read_text(encoding="utf-8")).get("fields") or {})
+              .get("premise") or "")
+    out = []
+    for tag in ("【但是链】", "【开局落点"):
+        i = txt.find(tag)
+        if i < 0:
+            continue
+        j = txt.find("\n【", i + 4)
+        out.append(txt[i:j if j > 0 else i + 1400])
+    return "\n\n".join(out)
+
+
+def one_candidate(tag: str, root, k: int, chain: str = ""):
     t = time.time()
     try:
         # 失败重试 2 次(用户要求): 空输出/解析不出都算失败。温度拉满时
         # 偶发空输出是常态, 一次失败就弃权等于白白少一个候选。
         ms, r = [], None
         for attempt in range(3):
-            r = call("planning", tr.p_milestones(root, k), max_tokens=16000)
+            r = call("planning", tr.p_milestones(root, k, chain), max_tokens=16000)
             ms = tr.parse_milestones((r.text or ""), root)
             if ms:
                 break
@@ -64,7 +88,10 @@ def main():
     root = nodes["R"]
     say(f"《{root.title}》根合同 → {a.k} 节里程碑 × {a.n} 候选(温度已拉满, 各自会长得不一样)")
     with cf.ThreadPoolExecutor(max_workers=a.n) as ex:
-        cands = list(ex.map(lambda t: one_candidate(t, root, a.k),
+        chain = seed_chain(d)
+        if chain:
+            say(f"种子里的主线骨架 {len(chain)} 字, 作为硬约束")
+        cands = list(ex.map(lambda t: one_candidate(t, root, a.k, chain),
                             [chr(65 + i) for i in range(a.n)]))
     cands.sort(key=lambda x: -x[3])
     tag, ms, errs, sc = cands[0]

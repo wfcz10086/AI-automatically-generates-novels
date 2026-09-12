@@ -535,7 +535,10 @@ MILESTONE_EXAMPLE = """\
 错算：主角凭「红脸大胡子站在使者身边」把刘彦宗错当成郭药师射杀, 金军认定宋人设局, 彻底翻脸"""
 
 
-def p_milestones(root: "Node", k: int) -> str:
+def p_milestones(root: "Node", k: int, seed_chain: str = "") -> str:
+    chain_seed = (("── 种子里的但是链（作者亲手写的主线骨架，必须逐条落地）──\n"
+                   + seed_chain.strip()) if seed_chain.strip()
+                  else "（种子里没给但是链，按下面的规矩自己拆）")
     return f"""全书要拆成 {k} 节里程碑。这是整本书的推进链, 不是目录。
 
 【全书】《{root.title}》{root.line}
@@ -546,6 +549,13 @@ def p_milestones(root: "Node", k: int) -> str:
 
 【终局账本】
 {root.exit.brief(700)}
+
+**先读这条**：下面【种子里的但是链】是作者亲手写的主线骨架。
+你的 {k} 节必须是**它的细分**，不是另起炉灶：每一条都要落到某一节上，
+顺序不许调换，里面点名的人物和场所（谁收服他、他去哪做什么、谁把他丢给谁）
+一个都不许丢。凭空造「斩追兵」「藏身形」这类通用填充节，等于没拆。
+
+{chain_seed}
 
 每一节写六样（口味参考, 这是从同类名作里实测反推的一节——
 {MILESTONE_EXAMPLE}
