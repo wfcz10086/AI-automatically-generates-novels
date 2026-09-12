@@ -64,10 +64,27 @@ class Memory:
         if len(blocks) < 2:
             blocks = [text[i:i + chunk] for i in range(0, len(text), chunk)]
         n = 0
-        for i, b in enumerate(blocks):
+        # 一块太长就**再切**, 而不是砍掉尾巴 —— 砍掉的那半永远召不回来。
+        # 实测: 一章正文 4022 字, 原来 b[:2000] 直接丢掉一半, 库里只剩前半。
+        sized: List[str] = []
+        for b in blocks:
+            if len(b) <= 2000:
+                sized.append(b)
+                continue
+            # 按句号断, 凑够 ~1600 字成一块, 保证不切在句子中间
+            buf, cur = [], ""
+            for seg in re.split(r"(?<=[。！？」』])", b):
+                if len(cur) + len(seg) > 1600 and cur:
+                    buf.append(cur); cur = seg
+                else:
+                    cur += seg
+            if cur.strip():
+                buf.append(cur)
+            sized += buf
+        for i, b in enumerate(sized):
             head = b.splitlines()[0] if b.splitlines() else ""
             head = re.sub(r"[#*`>\-]|^\s*\d+[、.]\s*", "", head).strip(" :：")[:40]
-            self.add(kind, f"{ref_prefix}#{i}", head, b[:2000])
+            self.add(kind, f"{ref_prefix}#{i}", head, b)
             n += 1
         return n
 
@@ -103,7 +120,10 @@ class Memory:
                 "SELECT body FROM mem WHERE kind=? AND ref=?",
                 (kind.replace("_raw", "") + "_raw", ref)).fetchone()
             out.append({"kind": key[0], "ref": ref, "title": title,
-                        "text": (raw[0] if raw else "")[:1200], "score": s})
+                        # 取出不再砍: 入库已按语义切好块, 每块本来就 ≤2000。
+                        # 这里再砍一刀等于把同一段信息切两次, 而下游(提示词层)
+                        # 还有第三刀 —— 一章 4022 字的正文到评审手里只剩 260 字。
+                        "text": (raw[0] if raw else ""), "score": s})
             if len(out) >= k:
                 break
         return out

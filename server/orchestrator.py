@@ -1978,7 +1978,9 @@ class Novelist:
             fs = sc.build_factions(self.asset("outline.md"),
                                    [c["name"] for c in self.roster()],
                                    self.p.meta.get("title", ""),
-                                   self._ask_planner)
+                                   self._ask_planner,
+                                   seed=self.seed_factions(),
+                                   kinds=self.genre.get("factionKinds"))
         except Exception as e:
             print(f"[factions] 生成失败: {e}")
             return cached or []
@@ -1986,6 +1988,63 @@ class Novelist:
             self.p.write("factions.json", json.dumps(fs, ensure_ascii=False, indent=2))
             self._log("势力 %d 家：%s" % (len(fs), "、".join(f["name"] for f in fs)))
         return fs
+
+    def seed_factions(self) -> str:
+        """种子里点名的势力 —— 势力表必须先用这些名字, 不许另造同类新名。
+
+        实测: 不给约束时模型造了「太清宗/万妖会/百鬼行」, 而种子写着
+        青霄派/太虚院/紫薇阁/狐族/蛇族/炼尸/养蛊/鬼修/六圣。和里程碑跑偏
+        同一个病 —— 种子里有, 但没当硬约束。
+        """
+        txt = str((self.p.meta.get("fields") or {}).get("premise") or "")
+        if not txt:
+            return ""
+        # 抠出「四条路」「势力」这类段落; 抠不到就整份种子截一段
+        # 种子全篇送进去, 不截断。种子是全书最该完整到达的东西(总共才两三千字),
+        # 我却给它加过 1200 字上限 —— 截掉的正好是后半段点名的势力。
+        return txt
+
+    def grow_factions(self, n: int) -> int:
+        """势力随剧情推进生长 —— 主角走到新地盘, 那一片的势力才登场。
+
+        原来开书时定死 5~7 家就一辈子不变, 而种子里还有十几个国家和罗刹海、
+        缥缈阁这些后期才登场的。世界不该在第 1 章就把全部玩家摆上桌。
+        """
+        cfg = self.style.get("factionGrowth") or {}
+        every = int(cfg.get("every") or 0)
+        if not every:
+            return 0
+        cur = self.p._load("factions.json", []) or []
+        if len(cur) >= int(cfg.get("cap") or 16):
+            return 0
+        grown = self.p.state.setdefault("faction_grown", [])
+        vol = self.volume_of(n)
+        key = str(vol.get("index") or 0)
+        if not vol or key in grown:
+            return 0
+        arena = f"{vol.get('name','')}：{vol.get('solves','')}"
+        try:
+            more = sc.build_factions(
+                self.asset("outline.md"), [c["name"] for c in self.roster()],
+                self.p.meta.get("title", ""), self._ask_planner,
+                seed=self.seed_factions(),
+                exist=[f.get("name", "") for f in cur],
+                arena=arena, want=int(cfg.get("perVolume") or 2),
+                kinds=self.genre.get("factionKinds"))
+        except Exception as e:
+            print(f"[factions] 扩充失败: {e}")
+            return 0
+        names = {f.get("name") for f in cur}
+        add = [f for f in more if f.get("name") and f["name"] not in names]
+        if not add:
+            return 0
+        cur += add
+        self.p.write("factions.json", json.dumps(cur, ensure_ascii=False, indent=2))
+        grown.append(key)
+        self.p.save()
+        self._log(f"势力扩充 +{len(add)} 家（进入{vol.get('name','新卷')}）："
+                  + "、".join(f["name"] for f in add) + f"，共 {len(cur)} 家")
+        return len(add)
 
     @staticmethod
     def _same_move(a: str, b: str) -> bool:
@@ -2146,6 +2205,7 @@ class Novelist:
         last = max((int(k) for k in turns), default=0)
         if n - last < every and turns:
             return turns.get(str(last), "")
+        self.grow_factions(n)
         fs = self.factions()
         if not fs:
             return ""

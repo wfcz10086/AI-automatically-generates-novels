@@ -369,6 +369,15 @@ def p_decompose(node: "Node", parent, left, right, k: int,
 {SCHEMA_HINT}"""
 
 
+def _clip(t: str, n: int, what: str) -> str:
+    """切了就吼 —— 静默截断是今天反复吃亏的那一类病。"""
+    t = t or ""
+    if len(t) <= n:
+        return t
+    print(f"  [clip] {what}: {len(t)} → {n} 字", flush=True)
+    return t[:n]
+
+
 def p_repair(node: "Node", errs: List[str], last: str) -> str:
     return f"""你刚才给的拆法有 {len(errs)} 处违约。程序逐字段核对的结果：
 
@@ -377,7 +386,7 @@ def p_repair(node: "Node", errs: List[str], last: str) -> str:
 只修这几处，别的不要动。仍然只输出 JSON，格式同前。
 
 ── 你上一版 ──
-{last[:6000]}"""
+{_clip(last, 6000, "上一版拆法")}"""
 
 
 def nd_id(node: "Node", i: int) -> str:

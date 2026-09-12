@@ -263,7 +263,7 @@ def build_stages(*, outline: str, total_chapters: int, title: str = "",
         '"roles":{"giver":["甲"],"blocker":["乙"],"rival":[],'
         '"traitor":[],"cost":["丙"],"witness":["丁"]},'
         '"exit":"离开本阶段时的状态线"}]}\n\n'
-        f"#总纲\n{outline[:14000]}")
+        f"#总纲\n{clip(outline, 14000, '总纲(阶段骨架)')}")
     data = parse_json(ask(prompt), "stages")
     out: List[Dict[str, Any]] = []
     for s in (data.get("stages") or [])[:12]:
@@ -395,7 +395,7 @@ def build_tensions(*, outline: str, characters: str = "", title: str = "",
         '"why_unsolvable":"为什么不可能两全","state":"压着",'
         '"cost":"压着期间谁在付什么代价"}]}\n'
         f"state 只能取：压着 / 已爆发 / 已了结。没有就输出 {{\"tensions\":[]}}。\n\n"
-        f"{src[:12000]}")
+        f"{clip(src, 12000, '总纲(张力账)')}")
     data = parse_json(ask(prompt), "tensions")
     out = []
     for t in (data.get("tensions") or [])[:8]:
@@ -501,7 +501,7 @@ def build_promises(*, outline: str, title: str = "",
         '{"promises":[{"kind":"成长线","text":"一句话",'
         '"done_when":"具体到可验证的事件",'
         '"keywords":["用于粗筛的关键词","别名"]}]}\n\n'
-        f"{outline[:14000]}")
+        f"{clip(outline, 14000, '总纲(承诺清单)')}")
     data = parse_json(ask(prompt), "promises")
     out = []
     for i, p in enumerate((data.get("promises") or [])[:14]):
@@ -645,7 +645,7 @@ def build_ladders(*, outline: str, total_chapters: int, title: str = "",
         '"pleasure":[...],"persona":[...]}\n'
         f"（上面列出的每一条线都要给，一条都不能省）\n"
         f"by 是章号（1-{total_chapters}），必须递增。\n\n"
-        f"#总纲\n{outline[:12000]}")
+        f"#总纲\n{clip(outline, 12000, '总纲(支线)')}")
     data = parse_json(ask(prompt))
     out: Dict[str, List[Dict[str, Any]]] = {}
     for k in (x["key"] for x in all_kinds):
@@ -781,7 +781,7 @@ def build_threads(*, outline: str, stages: Sequence[Dict[str, Any]],
         '"leverage":"双向把柄",'
         '"beats":["节点1","节点2"],"ending":"这条线最后怎么收"}]}\n\n'
         f"可用角色：{'、'.join(roster or []) or '（见总纲）'}\n\n"
-        f"#总纲\n{outline[:12000]}")
+        f"#总纲\n{clip(outline, 12000, '总纲(支线)')}")
     data = parse_json(ask(prompt), "threads")
     out = []
     for i, x in enumerate((data.get("threads") or [])[:10]):
@@ -1183,11 +1183,34 @@ def setback_missing(stages: Sequence[Dict[str, Any]],
 # 完全不管主角在干什么。走出来的结果再当作下一批排纲的输入。
 
 def build_factions(outline: str, roster: Sequence[str], title: str,
-                   ask: Callable[[str], str]) -> List[Dict[str, Any]]:
-    """从总纲里抽出「会自己往前走」的势力。"""
+                   ask: Callable[[str], str], seed: str = "",
+                   exist: Sequence[str] = (), arena: str = "",
+                   want: int = 7, kinds: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """从种子和总纲里抽出「会自己往前走」的势力。
+
+    两条实测教训:
+    1. **必须锚定种子点名的势力**。不给约束时模型会造「太清宗/万妖会/百鬼行」
+       这些种子里没有的名字, 而种子写着青霄派/太虚院/紫薇阁/狐族/蛇族/炼尸/
+       养蛊/鬼修/六圣 —— 和里程碑跑偏是同一个病: 种子里有, 但没当硬约束。
+    2. **势力要随剧情推进生长**, 不是开书时定死 6 家就一辈子 6 家。主角走到
+       新地盘(相国寺→商路→罗刹海→缥缈阁), 那一片的势力才该登场。
+    """
+    seed_line = ""
+    if seed.strip():
+        seed_line = (f"\n【种子里点名的势力（**优先用这些名字，不许另造同类新名**）】\n"
+                     f"{seed.strip()}\n")
+    exist_line = ""
+    if exist:
+        exist_line = (f"\n【已经建好的势力（不要重复，这次只补新的）】\n"
+                      f"{'、'.join(exist)}\n")
+    arena_line = (f"\n【当前故事走到了这里，优先补这一片的势力】\n{arena.strip()}\n"
+                  if arena.strip() else "")
     prompt = (
         f"下面是长篇作品《{title}》的总纲。\n\n"
-        f"请列出 5~7 个**非主角势力** —— 门派、宗族、朝廷、妖族、商会、教团都算。\n"
+        + seed_line + exist_line + arena_line +
+        + (f"\n【这个题材里的「{(kinds or {}).get('称呼','势力')}」通常有这几类，按需挑】\n"
+           f"{'、'.join((kinds or {}).get('候选类型') or [])}\n" if kinds else "")
+        + f"\n请列出 {want} 个**非主角{(kinds or {}).get('称呼','势力')}**。\n"
         f"关键要求：这些势力必须是**主角不在场时也会自己往前走**的东西，"
         f"不是等着主角来推的背景板。\n\n"
         f"每个势力给出：\n"
@@ -1296,6 +1319,21 @@ def reshell_prompt(vol: Dict[str, Any], shell: str, left: int, n: int) -> str:
         f"（例如从杂役升执事不算换壳，从宗门跑去做商队护卫才算）。\n"
         f"- 换壳这件事要有人**看错**：至少一方以为他是被赶走的丧家犬，"
         f"因此对他做出错误的动作。")
+
+
+def clip(text: str, limit: int, what: str) -> str:
+    """带记账的截断 —— 切了就吼。
+
+    截断本身不是病，**静默截断**才是: 上限不触发时它没有代价, 一旦触发就
+    悄悄丢掉信息, 而下游拿到的东西看起来是完整的。今天已经因为这类静默故障
+    吃过六次亏(评审丢半把尺子、细纲空壳、搜索三千次 403 ……)。
+    该压缩的压缩, 但压了必须留痕。
+    """
+    t = text or ""
+    if len(t) <= limit:
+        return t
+    print(f"  [clip] {what}: {len(t)} → {limit} 字（切掉 {len(t)-limit}）", flush=True)
+    return t[:limit]
 
 
 def sc_title_examples(style_pack) -> str:

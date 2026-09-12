@@ -126,7 +126,9 @@ def build_prompt(*, title: str, n: int, text: str, prev_texts: List[str],
         f"（第{c.get('chapter','?')}章确立）" for c in canon[-80:])
 
     recall_lines = "\n".join(
-        f"- [{h.get('kind','')}] {h.get('title','')}：{str(h.get('text',''))[:260]}"
+        # 260 太狠: 一条召回的往期剧情在这里只剩两三句, 评审据此判「与前文矛盾」
+        # 等于凭残片判案。给到 1200, 仍远小于 budget_chars 的总盘子。
+        f"- [{h.get('kind','')}] {h.get('title','')}：{str(h.get('text',''))[:1200]}"
         for h in (recalled or [])[:20])
     role_lines = "；".join(
         f"{k}（第{v.get('at')}章）{v.get('state','')}"

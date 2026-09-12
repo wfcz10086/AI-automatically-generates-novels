@@ -127,7 +127,11 @@ class MemoryController:
         lines, used = [], 0
         label = {"world": "世界观", "role": "角色", "plot": "往期剧情", "fore": "伏笔"}
         for h in recall:
-            line = f"[{label.get(h['kind'], h['kind'])}] {h['title']}：{h['text'][:900]}"
+            # 不截断单条 —— 这一层的设计（见上一行注释）就是「超预算时少召回几条」。
+            # 原来写死 [:900] 与这个设计自相矛盾: 入库已按语义切好块(每块≤2000),
+            # 这里再砍一刀, 加上评审层的 [:260], 一章 4022 字的正文召回到评审
+            # 手里只剩 260 字 —— 召回了等于没召回。
+            line = f"[{label.get(h['kind'], h['kind'])}] {h['title']}：{h['text']}"
             t = est_tokens(line)
             if used + t > cap:
                 break
