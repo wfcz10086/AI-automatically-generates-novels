@@ -838,22 +838,59 @@ def window_drift(texts: List[str], style_pack: Optional[Dict[str, Any]] = None) 
     if not ms:
         return ""
     avg = {k: sum(m.get(k, 0) for m in ms) / len(ms) for k in mets}
-    devs = []
+    # 光看均值会漏掉「大多数章都偏, 少数章拉回来」这种形态。
+    # 实测对白占比: 最近 10 章均值 0.164 稳稳落在 0.16~0.34 区间内, 而逐章看
+    # **只有 3 章真的在区间内**, 另外 7 章在 0.017~0.127 之间 —— 均值是被
+    # 0.26、0.36 那两三章拉进去的。于是这一项 45 章里 30 章偏低, 纠偏机制
+    # 一次都没报过。均值在区间内 ≠ 这本书在区间内。
+    out_frac = {}
     for k, spec in mets.items():
-        v, lo, hi = avg.get(k, 0), spec.get("lo"), spec.get("hi")
+        lo, hi = spec.get("lo"), spec.get("hi")
+        if lo is None or hi is None:
+            continue
+        bad = sum(1 for m in ms if not (lo <= m.get(k, 0) <= hi))
+        out_frac[k] = bad / len(ms)
+    # 排序判据和力度判据要分开 ——
+    #   力度看「偏出去几个带宽」(ratio): 决定措辞轻重和阻尼, 这个是对的
+    #   排序看「离最近那条边差几成」(rel): 决定谁进 topK
+    # 原来两件事都用 ratio, 后果实测到了: 对白占比区间宽(0.16~0.34, 宽 0.18),
+    # 实测 0.09 已经低到不足下限的六成, 按带宽算却只有 0.39, 排在段均字数
+    # (低 20% 但带宽窄, 算出 0.64)后面, 被 topK=2 切掉 —— **连着 25 章一次
+    # 都没进过纠偏**, 而它是这本书最该救的一项(对白是网文的骨架)。
+    devs = []
+    # 三分之二以上的章都偏 → 即便均值在区间内也要纠。拿离它最近的那条边
+    # 当目标(多数章偏低就往下限算)。
+    for k, spec in mets.items():
+        lo, hi = spec.get("lo"), spec.get("hi")
+        if (out_frac.get(k, 0) >= 0.67 and lo is not None and hi is not None
+                and lo <= avg.get(k, 0) <= hi):
+            below = sum(1 for m in ms if m.get(k, 0) < lo)
+            side = "低" if below * 2 >= len(ms) else "高"
+            devs.append((0.5, 0.5 + out_frac[k], k, side, avg.get(k, 0),
+                         dict(spec, _spread=f"{len(ms)} 章里 "
+                              f"{int(out_frac[k]*len(ms))} 章不在区间内，"
+                              f"均值是被少数几章拉回来的")))
+            continue
+        v = avg.get(k, 0)
         width = max(1e-9, (hi - lo)) if (lo is not None and hi is not None) else 1.0
         if lo is not None and v < lo:
-            devs.append(((lo - v) / width, k, "低", v, spec))
+            devs.append(((lo - v) / width, (lo - v) / max(1e-9, abs(lo)),
+                         k, "低", v, spec))
         elif hi is not None and v > hi:
-            devs.append(((v - hi) / width, k, "高", v, spec))
+            devs.append(((v - hi) / width, (v - hi) / max(1e-9, abs(hi)),
+                         k, "高", v, spec))
     if not devs:
         return ""
-    devs.sort(reverse=True)
+    devs.sort(key=lambda d: -d[1])          # 按「离边差几成」排
     # 死区：漂出区间不到区间宽度 15% 的不值得纠 —— 单章方差本来就大，
     # 为这点噪声去动提示词只会引入新的漂移。
     devs = [d for d in devs if d[0] >= 0.15] or devs[:1]
     out = []
-    for ratio, k, d, v, spec in devs[:int(wf.get("topK") or 2)]:
+    # topK 至少 3。文风包里写的是 2, 而实测同时有三项明显偏离(段均字数、
+    # 叹号、对白占比), 取 2 就永远轮不到第三项 —— 对白占比连着 25 章没进过
+    # 纠偏就是这么来的。两项的原始标定是为了「别一次纠太多」, 但那道保险
+    # 已经由阻尼(按偏移幅度分三档措辞)和 dont_sacrifice 提供了。
+    for ratio, _rel, k, d, v, spec in devs[:max(3, int(wf.get("topK") or 3))]:
         if ratio < 0.4:
             force, tone = "稍微", "轻微偏离，微调即可，不要用力过猛"
         elif ratio < 1.2:
@@ -864,7 +901,14 @@ def window_drift(texts: List[str], style_pack: Optional[Dict[str, Any]] = None) 
         keep = spec.get("dont_sacrifice") or []
         keep_line = ("　（纠的时候别把这几样一起砍了：" + "、".join(keep) + "）"
                      if keep and d == "高" else "")
-        out.append(f"· {k}偏{d}（最近 {len(ms)} 章 {v:.2f}，目标 "
-                   f"{spec.get('lo')}~{spec.get('hi')}｜{tone}）\n"
-                   f"　这一章请：{force}{act}" + ("\n" + keep_line if keep_line else ""))
+        # 离散度触发的那一类要把真实理由说出来 —— 否则写成
+        # 「最近 10 章 0.16，目标 0.16~0.34」, 模型看到的是一句自相矛盾的话
+        # (均值明明在区间内, 却说它偏低), 只会当成噪声。
+        spread = spec.get("_spread")
+        head = (f"· {k}：{spread}（{tone}）"
+                if spread else
+                f"· {k}偏{d}（最近 {len(ms)} 章 {v:.2f}，目标 "
+                f"{spec.get('lo')}~{spec.get('hi')}｜{tone}）")
+        out.append(head + f"\n　这一章请：{force}{act}"
+                   + ("\n" + keep_line if keep_line else ""))
     return "\n".join(out)
