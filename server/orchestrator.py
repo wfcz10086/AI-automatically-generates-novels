@@ -2234,6 +2234,24 @@ class Novelist:
         return [f"第{n}章细纲里没有「开局落点：」那一行，或没照抄作者原文。"
                 f"应原样写上：{beat[:60]}"]
 
+    def beat_names_missing(self, n: int, text: str) -> List[str]:
+        """开局落点里点名的**专名**，正文里必须原样出现。
+
+        实测两版都栽在同一处: 种子写「FBI 围楼」, 出来的是「联邦调查局」。
+        原因是题材包那条「不许用现代思维嘲笑古人」被模型泛化成了「整本书
+        别提现代词」—— 禁的是**姿态**, 不是词。而这几章本来就发生在主角
+        穿越之前的现实世界。
+        提示词里已经写了「FBI 这类照写」, 照样被换掉 —— 又是只说不查。
+        专名是可枚举的(连续大写字母), 程序查得了。
+        """
+        beat = self.beat_for(n)
+        if not beat:
+            return []
+        names = list(dict.fromkeys(re.findall(r"[A-Z]{2,8}", beat)))
+        miss = [w for w in names if w not in (text or "")]
+        return ([f"第{n}章：开局落点点名的专名「{'、'.join(miss)}」没原样写进去"
+                 f"（多半被换成了同义的中文说法）"] if miss else [])
+
     def milestone_ctx(self, n: int) -> str:
         """本章所属里程碑的合同 + 左右节 —— 排纲的主供料。
 
@@ -4795,7 +4813,15 @@ class Novelist:
             outline_cap=self.outline_cap(),
             plots_per_chapter=max(3, int(
                 self.target_words() / (int(self.style.get("blockWords") or 500) * 0.8))),
-            style_pack=self.style)
+            style_pack=self.style,
+            # 本批里有开局落点的章, 就把那一栏插进**格式表**。只写在正文
+            # 叮嘱里不行 —— 实测连要抄的原文都列出来了, 三稿还是一个都没写,
+            # 因为模型是照着格式表逐栏填的, 表上没有的栏它就不填。
+            outline_extra_head=(
+                "开局落点：（**只有前几章有这一栏**。上面【开局落点】里属于本章的"
+                "那一条，作者原文一字不改地抄在这里；程序会逐字核对。"
+                "不属于开局落点的章节不写这一栏。）"
+                if self.beat_for(start) else ""))
         # 细纲生成之前也要召回已确立的事实 —— 否则会写出自相矛盾的剧情。
         # 实测: 第 25 章把玉佩指向皇子赵琰, 第 33 章又说是东平府通判赵家之物,
         # 因为细纲生成压根没接记忆层, 模型看不到前面已经定死的结论。
@@ -5636,6 +5662,10 @@ class Novelist:
                   + (f" 溢出:{','.join(rep['overflow'])}" if rep["overflow"] else "")
                   + ("（已重写）" if a.get("rewritten") else ""))
         # 字数不在区间、到期伏笔没着落这类, 补记进台账(它们原来只打一行日志)
+        # 开局落点点名的专名(FBI 这类)有没有原样写进正文
+        for _d in self.beat_names_missing(n, text):
+            self.iss.record("beat_name_swapped", _d)
+            self._log("  " + _d)
         # 自称漂没漂 —— 声明了就得查
         _hero = self.hero_name()
         _want = _voice.card_self_address(self.p.read("characters.md"), _hero)

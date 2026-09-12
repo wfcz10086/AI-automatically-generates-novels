@@ -197,3 +197,40 @@ def test_开局落点必须逐字抄进细纲(tmp_path, monkeypatch):
     assert nv.beat_missed(1, bad)
     # 超出落点范围的章节不受这条管
     assert nv.beat_missed(9, "随便写的") == []
+
+
+def test_开局落点这一栏必须进格式表():
+    """只在正文里叮嘱不管用 —— 模型是照着格式表逐栏填的。
+
+    实测：提示词里把要抄的原文都逐条列出来了、还写明「程序会逐字核对」，
+    三稿细纲**一个都没写那一行**，三份并列 -135 分，三选一退化成取第一稿。
+    因为「开局落点」不在字段契约里，模型填完表上的十栏就收工了。
+    """
+    from server.prompt_compiler import outline_format_block
+    blk = outline_format_block(6, 0, None, "开局落点：（照抄作者原文）")
+    lines = blk.split("\n")
+    assert lines[0].startswith("第N章")
+    assert lines[1].startswith("开局落点："), "额外栏要紧跟标题行，不能垫在最后"
+    assert "一句话" in blk                      # 原有的栏一个不少
+    # 不传就不该冒出来
+    assert "开局落点" not in outline_format_block(6, 0, None)
+
+
+def test_专名不许被换成同义中文():
+    """种子写「FBI 围楼」，两版都写成了「联邦调查局」。
+
+    题材包那条「不许用现代思维嘲笑古人」被模型泛化成「整本书别提现代词」——
+    禁的是姿态，不是词；何况这几章发生在主角穿越之前的现实世界。
+    """
+    from server.orchestrator import Novelist
+
+    class _P:
+        meta = {"fields": {"premise":
+                           "【开局落点】\n一 纽约曼哈顿，FBI 围楼，CIA 也来了。\n"}}
+
+    nv = Novelist.__new__(Novelist)
+    nv.p = _P()
+    assert nv.beat_names_missing(1, "联邦调查局破门而入")          # 换掉了 → 报
+    assert nv.beat_names_missing(1, "FBI 破门")                    # CIA 还缺
+    assert nv.beat_names_missing(1, "FBI 与 CIA 同时破门") == []   # 都在 → 放行
+    assert nv.beat_names_missing(9, "随便写") == []                # 无落点的章不管

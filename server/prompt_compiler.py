@@ -603,7 +603,8 @@ def outline_required(style_pack: Optional[Dict[str, Any]] = None):
 
 
 def outline_format_block(plots_per_chapter: int = 6, cap: int = 0,
-                         style_pack: Optional[Dict[str, Any]] = None) -> str:
+                         style_pack: Optional[Dict[str, Any]] = None,
+                         extra_head: str = "") -> str:
     """按字段契约生成「每章按此格式输出」那一段。
 
     `cap` 是单章细纲的字数上限。不给上限的话细纲会一路发胖：实测某书
@@ -612,6 +613,11 @@ def outline_format_block(plots_per_chapter: int = 6, cap: int = 0,
     成品会像注水的细纲。
     """
     lines = ["第N章 章节名"]
+    # 额外的栏必须进**模板**, 不能只在正文里叮嘱。实测: 开局落点那条规矩
+    # 提示词里写得清清楚楚(连要抄的原文都列出来了), 三稿全没写 ——
+    # 模型是照着这张格式表逐栏填的, 表上没有的栏它就不填。
+    if extra_head:
+        lines.append(extra_head)
     for name, _req, hint in outline_fields(style_pack):
         if name == "剧情1":
             lines.append(f"剧情1：{hint}")
@@ -700,7 +706,8 @@ def compile_outline_prompt(*, title: str, start: int, count: int,
                            outline_cap: int = 0,
                            character_rules: Optional[List[str]] = None,
                            used_titles: Optional[List[str]] = None,
-                           style_pack: Optional[Dict[str, Any]] = None) -> str:
+                           style_pack: Optional[Dict[str, Any]] = None,
+                           outline_extra_head: str = "") -> str:
     """编译分章细纲提示词 —— 输出编号剧情清单，而不是散文。"""
     # 先算好可选段落再拼；直接在 f-string 序列里插 `+ (...)` 会打断隐式拼接
     used_block = (f"#已用过的章节名（本批一律不得重复，也不得只改一两个字）\n"
@@ -729,7 +736,7 @@ def compile_outline_prompt(*, title: str, start: int, count: int,
         f"{rules_block}"
         f"每章严格按下面格式输出，章与章之间用一行 ###fenge 分隔：\n\n"
         f"{title_spec_block(style_pack)}\n\n"
-        f"{outline_format_block(plots_per_chapter, outline_cap, style_pack)}\n"
+        f"{outline_format_block(plots_per_chapter, outline_cap, style_pack, outline_extra_head)}\n"
         f"（本批第一章的「承接」要接住【前情】里给出的上一章结尾）\n"
         f"⚠ {len(outline_required(style_pack))} 个字段一个都不能少："
         f"{'、'.join('**' + x + '**' for x in outline_required(style_pack)[-4:])} "

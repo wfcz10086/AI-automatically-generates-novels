@@ -98,6 +98,13 @@ CATALOG: Dict[str, Dict[str, Any]] = {
         "why": "卡是模型编的，种子里的台词是作者亲手写的。两者不一致时，"
                "正文会在两个选项之间摇摆。",
         "next_action": "已按种子自动改回；确认一下 characters.md。"},
+    "beat_name_swapped": {
+        "severity": CONFIRM, "auto_handle": False,
+        "title": "开局落点点名的专名被换掉了",
+        "why": "种子写「FBI 围楼」，正文写成了「联邦调查局」。题材包那条"
+               "「不许用现代思维嘲笑古人」被泛化成了「整本书别提现代词」——"
+               "禁的是姿态，不是词；何况这几章发生在穿越之前的现实世界。",
+        "next_action": "把专名改回原样。"},
     "seam_violation": {
         "severity": CONFIRM, "auto_handle": False,
         "title": "合同接缝没咬合",
