@@ -162,6 +162,14 @@ CATALOG: Dict[str, Dict[str, Any]] = {
         "why": "按扣分表算，这一章有证据的问题多到过线（严重≥2 条，或扣分"
                "≥40，或与已确立事实冲突）。重写过一轮仍没降下来。",
         "next_action": "看 audit/NNN.json 的 critique.issues，每条都带正文原句。"},
+    "canon_fact_suspect": {
+        "severity": MUST, "auto_handle": False,
+        "title": "同一条既定事实被反复推翻，该事实本身存疑",
+        "why": "一条事实被三章以上连撞，多半是它写得比作者的原话更绝对"
+               "（抽取时加重了），而故事本身需要另一种读法。一章章返修治不了 —— "
+               "要么改那条事实，要么认定前面几章写错了。",
+        "next_action": "看 canon_conflicts.json 与 canon.json 里的这一条，"
+                       "由人定夺改哪一边。"},
     "contract_broken": {
         "severity": MUST, "auto_handle": False,
         "title": "已定死的事实被推翻",

@@ -1753,6 +1753,29 @@ class Novelist:
             return False
         return True
 
+    def _bump_conflict(self, n: int, fact: str) -> None:
+        """记一次「某条既定事实被推翻」, 撞够次数就报上来让人定夺。
+
+        重复的冲突不是重复的疏忽: 同一条事实被三章连撞, 多半是这条事实写得
+        比作者的原话更绝对(抽取时加重了), 而故事本身需要另一种读法。
+        一章章返修治不了这个 —— 得有人回头改那条事实, 或者认定前面几章写错了。
+        """
+        key = re.sub(r"[\s（）()【】\[\]「」,，。;；:：]+", "", fact)[:60]
+        if not key:
+            return
+        f = "canon_conflicts.json"
+        log = self.p._load(f, {})
+        rec = log.get(key) or {"fact": fact[:200], "chapters": []}
+        if n not in rec["chapters"]:
+            rec["chapters"].append(n)
+        log[key] = rec
+        self.p.write(f, json.dumps(log, ensure_ascii=False, indent=2))
+        if len(rec["chapters"]) >= 3:
+            self.iss.record(
+                "canon_fact_suspect",
+                f"「{fact[:60]}」已被第 {'、'.join(map(str, rec['chapters']))} 章"
+                f"连撞 {len(rec['chapters'])} 次")
+
     def canon_window(self, cn: List[Dict[str, Any]],
                      cap: int = 40) -> List[Dict[str, Any]]:
         """挑哪几条不可逆事实进提示词。
@@ -5820,6 +5843,14 @@ class Novelist:
         # 而旧打分器只是「没命中」, 不报也不扣。
         for _b in (getattr(self, "_metric_blowout", None) or []):
             self.iss.record("metric_blowout", _b)
+        # 同一条事实被反复推翻 —— 那是事实本身有问题的信号, 不是又一次疏忽。
+        # 实测「玉佩(穿越媒介)在纽约战斗中彻底崩碎消失」这一条被第 10、12、16
+        # 章连撞三次。而种子原话只说「玉佩崩碎, 光华卷走他」, 没说碎片也没了 ——
+        # 这条事实是抽取时**替作者加重**的。撞三次说明故事本身要那几块碎片。
+        # 现在的机制只会一章章返修下去, 没有任何人回头质疑这条事实。
+        for _c in (crit.get("contradictions") or []):
+            if isinstance(_c, dict):
+                self._bump_conflict(n, str(_c.get("fact") or ""))
         # 评审判定该拦, 就不许这一章报「完成」。
         # blocking 是程序按扣分表算出来的(只认有正文原句为证的问题), 它原来
         # 只用来触发一次重写, **没有接进问题台账** —— 于是实测第 4 章
