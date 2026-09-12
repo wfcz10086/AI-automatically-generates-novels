@@ -445,7 +445,7 @@ Node { id, level, index, title, body, meta, status, children[] }
 
 | # | 用例 | 断言 |
 |---|---|---|
-| 1 | 冒烟：`/` 和 `/legacy` 都能开 | 200 + 关键 DOM 存在（防 #16 复现） |
+| 1 | 冒烟：`/` 和老入口都能开 | 200 + 关键 DOM 存在（防 #16 复现） |
 | 2 | Provider 切换 | 选 qwen-vllm → 面板显示模型名 + 健康检查通过 |
 | 3 | **流式输出非空** | 点"生成大纲"，30s 内正文框字数 > 200（**回归 1.3 的空白 bug**） |
 | 4 | 思考/正文分离 | reasoning 进折叠面板，正文框内无 `<answer>` 残留 |
@@ -473,7 +473,7 @@ Node { id, level, index, title, body, meta, status, children[] }
 ```
 AI-automatically-generates-novels/
 ├── server/
-│   ├── app.py                 # Flask 入口，/ 和 /legacy 都注册
+│   ├── app.py                 # Flask 入口，/ 和老入口都注册
 │   ├── providers/             # ★ 插件：一文件一供应商
 │   │   ├── base.py            #   BaseProvider + Delta + 适配器契约
 │   │   ├── qwen_vllm.py       #   ★ 含 reasoning 适配
@@ -506,7 +506,7 @@ AI-automatically-generates-novels/
 
 | 阶段 | 内容 | 验收 | 工期 |
 |---|---|---|---|
-| **P0 止血** | requirements 补 `openai`；`/` 与 `/legacy` 双注册；key 移 `.env` + **吊销已泄露的旧 key**；删 `app各大模型/` 与 `nohup.out`；补 `.gitignore` | E2E #1 通过；关掉 #17 #16 #13 #6 | 1 天 |
+| **P0 止血** | requirements 补 `openai`；`/` 与老入口双注册；key 移 `.env` + **吊销已泄露的旧 key**；删 `app各大模型/` 与 `nohup.out`；补 `.gitignore` | E2E #1 通过；关掉 #17 #16 #13 #6 | 1 天 |
 | **P1 Provider 插件化** | `BaseProvider` + 适配器；8 个 app 合并；接 **qwen3.8-max/flash + 自建 Qwen3.6，修复三种 reasoning 字段命名**；分层调度 profiles；加 302.AI(#15)；顺手修 #9 | E2E #1-4 通过；qwen3.6 稳定出字 | 3 天 |
 | **P2 状态收口 + 引擎化** | `store.js` 单一状态源（节点树），DOM 降为渲染层；`prompt-engine`（全局替换+预算）；`pipeline` 按 `levels` 驱动，取代三个写死函数 | 行为与老版一致（回归全绿）；**#12 加"小纲"仅改配置** | 5 天 |
 | **P3 类型包 + 题材包** | ContentType schema；`novel` 固化；新增 **screenplay/shortdrama/comic**；23 个 skill → genre pack；面板 fields 驱动；拆书结果落知识库(#5) | E2E #5-8、#14 通过；**剧本上线** | 7 天 |
@@ -525,7 +525,7 @@ AI-automatically-generates-novels/
 | 23 个 skill 转 JSON 有信息损耗 | 保留 `raw` 字段存原文，结构化字段只提关键约束；人工抽查 5 个题材 |
 | qwen3.6 单点故障（自建 vLLM） | Provider 多路 + 健康检查 + 自动降级到备用 profile |
 | 80K 上下文写长篇溢出 | 上下文预算器硬裁 + L2 滚动摘要；P4 用 100 章压测 |
-| 大重构期间主干不可用 | 每阶段独立分支 + E2E 全绿才合并；老入口 `/legacy` 全程保留 |
+| 大重构期间主干不可用 | 每阶段独立分支 + E2E 全绿才合并；老入口全程保留 |
 | API key 已在 git 历史泄露 | P0 立刻吊销 `app.py:10` 那把 key（改代码不够，历史里还在） |
 
 ---
