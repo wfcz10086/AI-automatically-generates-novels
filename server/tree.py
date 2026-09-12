@@ -818,8 +818,15 @@ def parse_milestones(raw: str, root: "Node") -> List["Node"]:
         # 的「此刻主角在哪」全是根节点那句「曼哈顿某废弃大楼顶层」。
         # 排纲拿它当「进这一卷时」的处境, 读到的是一句彻头彻尾的假话。
         # 程序替模型编它没说过的话, 比留空危险得多。
-        for kk, vv in Contract._as_map(c.get("notes")).items():
-            ex.notes[str(kk)] = str(vv)
+        #
+        # **整栏替换, 不是逐键合并。** 合并版实测过一轮: 模型写的位置/身边
+        # 覆盖掉了, 根节点其余的键(环境/状态/关键物/威胁/心态)却一路留着 ——
+        # 第 7 卷位置已经是「罗刹海核心试炼场」, 环境还写着「暴雨夜, 枪火
+        # 通明, 包围圈已收紧」。notes 是**某一刻的快照**, 快照不能打补丁:
+        # 两个时刻的键拼在一起, 比其中任何一个单独拿出来都糟。
+        _nt = Contract._as_map(c.get("notes"))
+        if _nt:
+            ex.notes = {str(k): str(v) for k, v in _nt.items()}
         closed = {str(x) for x in (c.get("close") or [])}
         ex.open_threads = [t for t in ex.open_threads
                            if str(t.get("id")) not in closed]

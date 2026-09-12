@@ -362,6 +362,10 @@ def test_没写notes的那一节要报():
     assert not any("没写 notes" in e and "R.3" in e for e in errs)
     assert ms[0].exit.notes == ms[0].entry.notes          # 没写只能照抄上一节
     assert ms[1].exit.notes.get("位置") == "城南破庙"      # 写了的就读进来
+    # 整栏替换而不是逐键合并 —— 上一节留下的键不许混进来。
+    # 合并版实测出过这种拼接货: 位置已经是「罗刹海核心试炼场」, 环境还写着
+    # 「暴雨夜, 枪火通明, 包围圈已收紧」(那是全书开篇那一刻)。
+    assert set(ms[1].exit.notes) == {"位置"}
 
 
 def test_开局的线没人收要报():
