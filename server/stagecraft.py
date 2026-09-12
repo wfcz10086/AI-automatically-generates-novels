@@ -263,7 +263,7 @@ def build_stages(*, outline: str, total_chapters: int, title: str = "",
         '"roles":{"giver":["甲"],"blocker":["乙"],"rival":[],'
         '"traitor":[],"cost":["丙"],"witness":["丁"]},'
         '"exit":"离开本阶段时的状态线"}]}\n\n'
-        f"#总纲\n{clip(outline, 14000, '总纲(阶段骨架)')}")
+        f"#总纲\n{_fit(outline, 14000, '总纲(阶段骨架)')}")
     data = parse_json(ask(prompt), "stages")
     out: List[Dict[str, Any]] = []
     for s in (data.get("stages") or [])[:12]:
@@ -371,6 +371,15 @@ def arc_frozen(stages: Sequence[Dict[str, Any]], min_span: int = 3,
 
 # ---------------------------------------------------------------- 张力账
 
+#: 需要提炼时由调用方注入（Novelist.shrink）。不注入就退回带记账的 clip。
+#: 规矩见 server/distill.py：不许硬切，超长先提炼，提炼不成才按句子收尾。
+SHRINK: Optional[Callable[[str, int, str], str]] = None
+
+
+def _fit(text: str, limit: int, what: str) -> str:
+    return SHRINK(text, limit, what) if SHRINK else clip(text, limit, what)
+
+
 def build_tensions(*, outline: str, characters: str = "", title: str = "",
                    ask: Callable[[str], str]) -> List[Dict[str, Any]]:
     """从总纲与人物档案里读出不可调和的关系张力。
@@ -395,7 +404,7 @@ def build_tensions(*, outline: str, characters: str = "", title: str = "",
         '"why_unsolvable":"为什么不可能两全","state":"压着",'
         '"cost":"压着期间谁在付什么代价"}]}\n'
         f"state 只能取：压着 / 已爆发 / 已了结。没有就输出 {{\"tensions\":[]}}。\n\n"
-        f"{clip(src, 12000, '总纲(张力账)')}")
+        f"{_fit(src, 12000, '总纲(张力账)')}")
     data = parse_json(ask(prompt), "tensions")
     out = []
     for t in (data.get("tensions") or [])[:8]:
@@ -501,7 +510,7 @@ def build_promises(*, outline: str, title: str = "",
         '{"promises":[{"kind":"成长线","text":"一句话",'
         '"done_when":"具体到可验证的事件",'
         '"keywords":["用于粗筛的关键词","别名"]}]}\n\n'
-        f"{clip(outline, 14000, '总纲(承诺清单)')}")
+        f"{_fit(outline, 14000, '总纲(承诺清单)')}")
     data = parse_json(ask(prompt), "promises")
     out = []
     for i, p in enumerate((data.get("promises") or [])[:14]):
@@ -645,7 +654,7 @@ def build_ladders(*, outline: str, total_chapters: int, title: str = "",
         '"pleasure":[...],"persona":[...]}\n'
         f"（上面列出的每一条线都要给，一条都不能省）\n"
         f"by 是章号（1-{total_chapters}），必须递增。\n\n"
-        f"#总纲\n{clip(outline, 12000, '总纲(支线)')}")
+        f"#总纲\n{_fit(outline, 12000, '总纲(支线)')}")
     data = parse_json(ask(prompt))
     out: Dict[str, List[Dict[str, Any]]] = {}
     for k in (x["key"] for x in all_kinds):
@@ -781,7 +790,7 @@ def build_threads(*, outline: str, stages: Sequence[Dict[str, Any]],
         '"leverage":"双向把柄",'
         '"beats":["节点1","节点2"],"ending":"这条线最后怎么收"}]}\n\n'
         f"可用角色：{'、'.join(roster or []) or '（见总纲）'}\n\n"
-        f"#总纲\n{clip(outline, 12000, '总纲(支线)')}")
+        f"#总纲\n{_fit(outline, 12000, '总纲(支线)')}")
     data = parse_json(ask(prompt), "threads")
     out = []
     for i, x in enumerate((data.get("threads") or [])[:10]):
@@ -1207,7 +1216,7 @@ def build_factions(outline: str, roster: Sequence[str], title: str,
                   if arena.strip() else "")
     prompt = (
         f"下面是长篇作品《{title}》的总纲。\n\n"
-        + seed_line + exist_line + arena_line +
+        + seed_line + exist_line + arena_line
         + (f"\n【这个题材里的「{(kinds or {}).get('称呼','势力')}」通常有这几类，按需挑】\n"
            f"{'、'.join((kinds or {}).get('候选类型') or [])}\n" if kinds else "")
         + f"\n请列出 {want} 个**非主角{(kinds or {}).get('称呼','势力')}**。\n"
@@ -1225,7 +1234,7 @@ def build_factions(outline: str, roster: Sequence[str], title: str,
         f'只输出 JSON，不要代码围栏：\n'
         f'{{"factions":[{{"name":"某派","wants":"…","inner":"…","fears":"…",'
         f'"state":"…","reads_hero":"…"}}]}}\n\n'
-        f"可用角色：{'、'.join(roster or []) or '（见总纲）'}\n\n#总纲\n{clip(outline, 12000, '总纲(势力)')}")
+        f"可用角色：{'、'.join(roster or []) or '（见总纲）'}\n\n#总纲\n{_fit(outline, 12000, '总纲(势力)')}")
     data = parse_json(ask(prompt), "factions")
     out = []
     for i, x in enumerate((data.get("factions") or [])[:8]):

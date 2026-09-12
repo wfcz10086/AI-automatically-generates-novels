@@ -579,6 +579,9 @@ class Novelist:
         bind_model(m.get("model"))
         # 提炼缓存挂仓库级 —— 同一段世界观/题材规范被多本书提炼, 只花一次
         dst.bind_cache(Path(__file__).resolve().parents[1] / ".cache" / "distill")
+        # 骨架生成那几步(阶段/支线/张力账/承诺/势力)也走提炼, 不硬切 ——
+        # 实测张力账那步触发过「15251 → 12000, 切掉 3251」。
+        sc.SHRINK = self.shrink
         self.genre = self._with_overrides(
             registry.genres.get(m.get("genre_id")) or {}, "genre")
         self.style = self._with_overrides(
