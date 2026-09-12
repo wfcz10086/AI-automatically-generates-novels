@@ -565,12 +565,12 @@ def p_decompose(node: "Node", parent, left, right, k: int,
 
 
 def _clip(t: str, n: int, what: str) -> str:
-    """切了就吼 —— 静默截断是今天反复吃亏的那一类病。"""
-    t = t or ""
-    if len(t) <= n:
-        return t
-    print(f"  [clip] {what}: {len(t)} → {n} 字", flush=True)
-    return t[:n]
+    """不硬切 —— 交给提炼层: 够 3:1 就真提炼, 不够就按句子边界收尾。
+
+    原来是 t[:n], 半句话拦腰斩断, 而下游拿到的东西看起来是完整的。
+    """
+    from server.distill import distill
+    return distill(t, n, what)
 
 
 def p_repair(node: "Node", errs: List[str], last: str) -> str:

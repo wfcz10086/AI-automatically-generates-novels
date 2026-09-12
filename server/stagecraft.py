@@ -1341,11 +1341,8 @@ def clip(text: str, limit: int, what: str) -> str:
     吃过六次亏(评审丢半把尺子、细纲空壳、搜索三千次 403 ……)。
     该压缩的压缩, 但压了必须留痕。
     """
-    t = text or ""
-    if len(t) <= limit:
-        return t
-    print(f"  [clip] {what}: {len(t)} → {limit} 字（切掉 {len(t)-limit}）", flush=True)
-    return t[:limit]
+    from server.distill import distill
+    return distill(text or "", limit, what)
 
 
 def sc_title_examples(style_pack) -> str:
