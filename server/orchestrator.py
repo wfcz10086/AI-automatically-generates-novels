@@ -4991,10 +4991,15 @@ class Novelist:
             if mh and prev_hook and prev_hook[:14] and prev_hook[:14] in mh.group(1):
                 score -= 4.0
         score += ok_ch * 3.0
-        # 燃料配比: 账目推进的章占比越接近实测的 35% 越好(少了扣, 多了不奖)
-        if ok_ch:
+        # 燃料配比: **只罚低于目标, 不罚高于目标**。
+        # 原来写成 abs(实际 - 目标), 于是「章章都动账」反被当成偏离扣分,
+        # 单章测试里不动账的那份竟然赢了 —— 动账多是好事, 不该罚。
+        # (实测原著 35% 的推进靠账目变动, 那是下限不是上限。)
+        if ok_ch >= 2:
             want = float((self.style.get("advanceFuel") or {}).get("账目变动") or 0.3)
-            score -= abs(acct / ok_ch - want) * 6.0
+            score -= max(0.0, want - acct / ok_ch) * 8.0
+        elif ok_ch == 1:
+            score += acct * 2.0          # 只有一章时: 动账就加分, 不谈比例
         # 到期伏笔有没有被安排回收
         names = getattr(self, "_overdue_names", None)
         if names:
