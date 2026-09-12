@@ -35,13 +35,25 @@ from typing import Any, Dict, List, Optional
 #: 后面每一次归档、打包、贴日志都可能把它带出去。在**写入的那一刻**就去掉,
 #: 比事后到处去搜可靠。
 _HOST = re.compile(
-    r"(?:https?://)?(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
-    r"[A-Za-z]{2,24}(?::\d{2,5})?")
+    r"(?<![\\\w.])(?:https?://)?(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+"
+    r"([A-Za-z]{2,24})(?::\d{2,5})?")
+
+#: 这些结尾的不是主机名, 是文件名。栈里全是 orchestrator.py / settings.yaml,
+#: 一律当主机名替换掉, 栈就看不懂了 —— 而且实测还改坏过 JSON:
+#: 「\nserver.py」里的「nserver.py」被匹配上, 替换后成了「\<host>」,
+#: 非法转义, 两个 audit 文件直接读不出来。
+_NOT_HOST = {
+    "py", "pyc", "json", "md", "sh", "txt", "log", "yaml", "yml", "js", "ts",
+    "html", "css", "ini", "cfg", "toml", "csv", "db", "sqlite", "lock", "bak",
+    "jsonl", "tmp", "alt", "ckpt",
+}
 
 
 def redact(text: str) -> str:
-    """把主机名、URL 换成占位符。保留端口信息以外的结构, 便于看出是哪一类错。"""
-    return _HOST.sub("<host>", str(text or ""))
+    """把主机名、URL 换成占位符。文件名、错误类型、中文一律不动。"""
+    def _sub(m):
+        return m.group(0) if m.group(1).lower() in _NOT_HOST else "<host>"
+    return _HOST.sub(_sub, str(text or ""))
 
 #: 三档。auto_handled 只作记录，不影响状态。
 MUST = "must_handle"

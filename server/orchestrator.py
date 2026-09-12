@@ -5809,7 +5809,13 @@ class Novelist:
             self.iss.record("words_off_target",
                             f"{a['stats']['cn']} 字，区间 {lo}-{hi}")
         st = self.iss.status(wrote_text=bool(a["stats"]["cn"]))
-        a["issues"] = self.iss.to_dict()
+        # 键名叫 ledger 不叫 issues。**a["issues"] 早就被 audit() 占了** ——
+        # 那是 AI 腔检测的问题**列表**([{level,type,detail,sample}, ...]),
+        # 而问题台账是个**字典**。上一版我直接写 a["issues"] = 台账, 一是把
+        # 检测结果整个覆盖掉了, 二是下游 [i["type"] for i in a["issues"]]
+        # 迭代字典拿到的是键(字符串), 于是自检抛
+        # TypeError: string indices must be integers。
+        a["ledger"] = self.iss.to_dict()
         self.p.write(f"audit/{n:03d}.json", json.dumps(a, ensure_ascii=False,
                                                        indent=2))
         if st != _iss.STATUS_DONE:
@@ -6329,7 +6335,7 @@ class Novelist:
         if not (_lo <= a["stats"]["cn"] <= _hi):
             self.iss.record("words_off_target",
                             f"{a['stats']['cn']} 字，区间 {_lo}-{_hi}")
-        a["issues"] = self.iss.to_dict()
+        a["ledger"] = self.iss.to_dict()      # 同上: issues 是 audit 的, 别占
         a["repaired"] = True
         self.p.write(f"audit/{n:03d}.json", json.dumps(a, ensure_ascii=False, indent=2))
         self._log(f"  返修第{n}章复审：{self.iss.status()}"

@@ -376,7 +376,7 @@ def test_返修之后必须复审并按结果决定出队():
     from server import orchestrator as o
     src = inspect.getsource(o.Novelist.rewrite_chapter)
     assert "self.step_critique(n, new)" in src, "返修之后没有复审"
-    assert 'a["issues"] = self.iss.to_dict()' in src, "返修之后没有重建问题台账"
+    assert 'a["ledger"] = self.iss.to_dict()' in src, "返修之后没有重建问题台账"
     assert '"status": self.iss.status()' in src, "返修结果没把状态带回去"
 
     from pathlib import Path
@@ -425,3 +425,30 @@ def test_台账窗口不许把开篇的根基事实挤掉():
             for i in range(1, 60)]
     w2 = nv.canon_window(many, cap=40)
     assert len(w2) == 59, "毁灭/死亡这类硬事实不许因为超预算被丢"
+
+
+def test_脱敏不许碰文件名也不许改坏JSON():
+    """实测把两个 audit/*.json 改坏过。
+
+    正则 (?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,24} 会匹配上「\\nserver.py」里的
+    「nserver.py」，替换之后成了「\\<host>」—— 非法转义，两个文件直接读不出来。
+    而且栈里全是 orchestrator.py / settings.yaml，一律当主机名换掉，栈就看不懂了。
+    """
+    import json
+    from server.issues import redact
+
+    assert "<host>" in redact("HTTPConnectionPool(host='gw.example.com', port=8000)")
+    assert "<host>" in redact("POST https://api.foo.co/v1/chat failed")
+
+    for keep in ('File "/opt/x/server/orchestrator.py", line 5859',
+                 "config/settings.yaml 读取失败",
+                 "chapter_outlines.json 缺字段",
+                 "评审第10章 26分 问题7 矛盾1"):
+        assert redact(keep) == keep, f"误伤了：{keep} → {redact(keep)}"
+
+    # 脱敏之后仍然是合法 JSON
+    raw = json.dumps({"trace": "a\\nserver.py b\nhost=gw.example.com"},
+                     ensure_ascii=False)
+    out = redact(raw)
+    json.loads(out)                      # 读得出来才算数
+    assert "example.com" not in out
