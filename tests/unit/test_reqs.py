@@ -154,3 +154,49 @@ def test_每个字段都说得清谁在读():
         if f.consumed.startswith("human:"):
             assert len(f.consumed) > len("human:"), \
                 f"{f.name} 标了 human 却没说看它做什么"
+
+
+# ───────── 种子点名的势力：又一条「现成的数据不该问模型要」 ─────────
+
+def test_种子点名的势力由程序抠出来():
+    """跑到第 25 章只用上 1 个种子势力，另外 3 家全是自造的。
+
+    「紫霄宫·执法堂」是把种子里的「青霄派」和「紫薇阁」揉出来的形近新名，
+    「百药堂」「玄阴教」纯属发明。而 seed_factions() 早就把种子全篇送进
+    提示词了 —— 又一次「写在提示词里但程序不查」。
+
+    三道筛是逐道试出来的，少一道都不行：
+      · 只在点名势力的那几节里找 —— 整份种子里找，「横练、拳脚、气血」
+        这类功法串会被顿号规则整串抠出来
+      · 只认势力后缀
+      · 前面必须是词首边界 —— 只有后缀规则时抠出 39 个，一大半是
+        「才不会」「从佛门」「被法海」这种句中片段
+    """
+    from server.orchestrator import Novelist
+
+    class _P:
+        meta = {"fields": {"premise":
+            "【天下四条路】\n一 道门——缥缈阁、青霄派、太虚院、紫薇阁。走丹、符、剑、阵。\n"
+            "二 佛门——相国寺、法海。走金身、禅定、降魔、横练。\n"
+            "四 武修——纯肉身，横练、拳脚、气血。\n"
+            "【天下格局】缥缈阁执掌天下；罗刹海是六圣的岛屿试炼场。\n"
+            "【基调】杀伐果断。\n"}}
+
+    nv = Novelist.__new__(Novelist)
+    nv.p = _P()
+    got = nv.seed_faction_names()
+
+    for want in ("缥缈阁", "青霄派", "太虚院", "紫薇阁", "相国寺", "罗刹海"):
+        assert want in got, f"种子点名的「{want}」没抠出来"
+    # 功法、句中片段一个都不许混进来
+    for junk in ("横练", "拳脚", "气血", "从佛门", "才不会", "被法海"):
+        assert junk not in got, f"垃圾「{junk}」混进了势力表"
+    assert len(got) <= 10, f"抠出来 {len(got)} 个，噪声太大：{got}"
+
+
+def test_势力表由程序钉入种子的名字():
+    import inspect
+    from server import orchestrator as o
+    src = inspect.getsource(o.Novelist.grow_factions)
+    assert "self.pin_seed_factions()" in src, \
+        "扩充之前没先把种子点名的势力钉进去 —— 模型会继续自造形近新名"

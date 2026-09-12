@@ -2103,6 +2103,76 @@ class Novelist:
         # 我却给它加过 1200 字上限 —— 截掉的正好是后半段点名的势力。
         return txt
 
+    def seed_faction_names(self) -> List[str]:
+        """种子里作者点名的势力。这是**现成的数据**, 不该问模型要。
+
+        实测: 种子点名十个(缥缈阁/青霄派/太虚院/紫薇阁/相国寺/狐族/蛇族/
+        六圣/法海/罗刹海), 跑到第 25 章只用上一个「相国寺」, 另外三家是
+        「紫霄宫·执法堂」(把青霄派和紫薇阁揉出来的形近新名)、「百药堂」、
+        「玄阴教」—— 全是自造的。
+        seed_factions() 已经把种子全篇送进提示词了, 还是没用上 —— 又一次
+        「写在提示词里但程序不查」。而这些名字程序抠得出来。
+        """
+        txt = str((self.p.meta.get("fields") or {}).get("premise") or "")
+        # 三道筛, 少一道都不行(逐道试出来的):
+        #   一 只在**点名势力的那几节**里找。整份种子里找, 「横练、拳脚、气血」
+        #     这类功法串会被顿号规则整串抠出来。
+        #   二 只认势力后缀。
+        #   三 前面必须是词首边界。只有后缀规则时, 「才不会」「从佛门」
+        #     「被法海」这种句中片段全被当成名字(实测抠出 39 个, 一大半是垃圾)。
+        secs = []
+        for tag in ("【天下四条路", "【天下格局", "【预装情绪"):
+            i = txt.find(tag)
+            if i < 0:
+                continue
+            j = txt.find("\n【", i + 4)
+            secs.append(txt[i:j if j > 0 else len(txt)])
+        body = "\n".join(secs) or txt
+        out: List[str] = []
+        for m in re.finditer(
+                # 破折号也是边界 —— 种子里写的是「佛门——相国寺、法海」,
+                # 少了它「相国寺」就抠不出来(单测当场抓到)。
+                r"(?:^|[、，。；：（）「」\s\n】／/—–·|])"
+                r"([一-鿿]{2,4}(?:阁|派|院|宗|寺|族|教|堂|司|窟|海))",
+                body, re.M):
+            out.append(m.group(1))
+        #: 这些尾字对了但不是势力 —— 「罗刹海」是地名兼试炼场, 留着;
+        #: 「四合大院」「石室」这类场景不留。
+        drop = {"四合大院", "大院", "后院", "庭院"}
+        # 含虚词的不是势力名 —— 实测「所以法海」(「所以法海一眼认得出他」的
+        # 片段, 以「海」结尾)混了进来。跟名物表那次是同一个办法。
+        func = set("的了是在和与也就都而但把被给从对向这那之其于及或并则"
+                   "已未不无有会能要很太再又还只我你他她它们个上下中人为以所"
+                   "因此如若使让第条来去出进过起点更非常")
+        seen, keep = set(), []
+        for x in out:
+            if x in drop or x in seen or len(x) < 2:
+                continue
+            if any(ch in func for ch in x):
+                continue
+            seen.add(x)
+            keep.append(x)
+        return keep
+
+    def pin_seed_factions(self) -> int:
+        """把种子点名的势力**直接写进 factions.json**, 不问模型。
+
+        模型只负责在种子名字用完之后往外扩。能由程序定死的, 不要问模型 ——
+        开局落点那条验证过, 这条同理。
+        """
+        cur = self.p._load("factions.json", []) or []
+        have = {str(f.get("name") or "") for f in cur}
+        add = [{"name": x, "kind": "种子点名", "note": "作者在种子里点名的势力"}
+               for x in self.seed_faction_names()
+               if not any(x in h for h in have)]
+        if not add:
+            return 0
+        cur = add + cur          # 种子的排前面, 模型扩的排后面
+        self.p.write("factions.json", json.dumps(cur, ensure_ascii=False, indent=2))
+        self._log(f"势力对表：把种子点名的 {len(add)} 家写进势力表"
+                  f"（{'、'.join(x['name'] for x in add[:8])}）")
+        return len(add)
+
     def grow_factions(self, n: int) -> int:
         """势力随剧情推进生长 —— 主角走到新地盘, 那一片的势力才登场。
 
@@ -2113,6 +2183,7 @@ class Novelist:
         every = int(cfg.get("every") or 0)
         if not every:
             return 0
+        self.pin_seed_factions()          # 种子点名的先钉进去, 再谈扩充
         cur = self.p._load("factions.json", []) or []
         if len(cur) >= int(cfg.get("cap") or 16):
             return 0
