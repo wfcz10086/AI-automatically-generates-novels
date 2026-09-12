@@ -170,6 +170,14 @@ CATALOG: Dict[str, Dict[str, Any]] = {
                "要么改那条事实，要么认定前面几章写错了。",
         "next_action": "看 canon_conflicts.json 与 canon.json 里的这一条，"
                        "由人定夺改哪一边。"},
+    "req_not_delivered": {
+        "severity": MUST, "auto_handle": False,
+        "title": "有要求根本没进提示词",
+        "why": "登记表声明这条要求要进提示词，可最终提示词里找不到它的标志串。"
+               "多半是算完之后被丢弃了（往一个已经固化的列表里追加、被后面的"
+               "赋值覆盖、槽位预算挤掉）。模型没看见的要求，措辞再重也没用。",
+        "next_action": "看 server/reqs.py 里这条的 marker，顺着它在组装链上找"
+                       "断点。"},
     "contract_broken": {
         "severity": MUST, "auto_handle": False,
         "title": "已定死的事实被推翻",

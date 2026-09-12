@@ -24,6 +24,7 @@ from . import stagecraft as sc
 from . import distill as dst
 from . import issues as _iss
 from . import voice as _voice
+from . import reqs as _reqs
 
 
 def _norm_key(v: str) -> str:
@@ -5044,6 +5045,17 @@ class Novelist:
         if bg:
             prompt += ("\n\n【现实参考资料 —— 本批剧情涉及的器物、行程、礼俗须符合下列常识；"
                        "资料里的朝代名不得出现在成稿里】\n" + self.shrink(bg, 5000, "剧情素材"))
+        # 回扫: 声明了要进提示词的要求, 标志串真的在里面吗。
+        # 专治 A 类「算了但没到达」—— 实测最贵的一次: 约束在第 4850 行就固化
+        # 进 prompt, 而到期伏笔与已确立事实是第 4934 行才 append 进 cons 的,
+        # 那一整块从来没到达过模型; 日志上一切正常, 只有下游「本批一条都没碰」
+        # 这个症状, 查了三轮才找到。有了回扫, 这种事当场指名道姓。
+        for _m in _reqs.missing_delivery(
+                prompt, "outline",
+                {"opening_beat": bool(self.beat_for(start)),
+                 "overdue_foreshadow": bool(overdue)}):
+            self._log(f"  ⚠ 要求没进提示词：{_m}")
+            self.iss.record("req_not_delivered", _m)
         r, parts = self.outline_best(prompt, count, start, on_delta)
         outlines = self.p._load("chapter_outlines.json", {})
         # 章号以**正文里写的**为准, 不能按顺序硬编号。实测要它排 37-54,
