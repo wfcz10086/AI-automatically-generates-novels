@@ -4691,15 +4691,43 @@ class Novelist:
             _fd = self.style.get("foreshadowDue") or {}
             _due = int(_fd.get("章数") or 12)
             _need = int(_fd.get("每批至少收") or 2)
-            overdue = [f for f in pend if start - int(f["planted"]) >= _due]
+            # 全书级大悬念不催 —— 它们归合同树的 open_threads 管(带 due 指到
+            # 具体某一卷)。实测未收清单里躺着「高空云层之上的冷漠注视者身份」,
+            # 拿 12 章的统一到期去催它, 等于逼它在第 13 章揭底, 会毁掉这本书。
+            # 到期只管**章级钩子和中等伏笔**。
+            arcs = []
+            try:
+                import server.tree as _tr
+                _f = self.p.dir / "tree.json"
+                if _f.exists():
+                    _nodes = json.loads(_f.read_text(encoding="utf-8"))
+                    for _v in _nodes.values():
+                        for _side in ("entry", "exit"):
+                            for _t in ((_v.get(_side) or {}).get("open_threads") or []):
+                                arcs.append(str(_t.get("what") or ""))
+            except Exception:
+                pass
+
+            def _is_arc(txt: str) -> bool:
+                for a in arcs:
+                    keys = re.findall(r"[一-鿿]{3,}", a)[:5]
+                    if keys and sum(1 for k in keys if k in txt) >= 2:
+                        return True
+                return False
+
+            overdue = [f for f in pend
+                       if start - int(f["planted"]) >= _due and not _is_arc(f["text"])]
+            # 点名太多反而一条都收不掉(实测点 6 条只收 1 条)。只点最老的三条,
+            # 集中火力。
+            overdue = sorted(overdue, key=lambda f: int(f["planted"]))[:3]
             if overdue:
                 k = min(_need, len(overdue))
-                self._overdue_names = [f["text"][:36] for f in overdue[:6]]
+                self._overdue_names = [f["text"][:36] for f in overdue]
                 established += (
                     f"\n【到期伏笔·本批必须收掉其中至少 {k} 条】\n"
                     + "\n".join(f"　· 第{f['planted']}章埋的：「{f['text'][:46]}」"
                                 f"（已过 {start - int(f['planted'])} 章）"
-                                for f in overdue[:6])
+                                for f in overdue)
                     + f"\n　收的方式：在某一章的剧情条里**正面交代**它的结果"
                       f"（那个人回来了／那件事被揭穿／那笔账被算清），"
                       f"并在该章「一句话」里写明收的是哪一条。\n"
@@ -5007,7 +5035,9 @@ class Novelist:
             hit = sum(1 for t in names
                       if any(w and w in blob
                              for w in re.findall(r"[一-鿿]{3,}", t)[:4]))
-            score += min(6.0, hit * 3.0)
+            # 伏笔回收权重给高 —— 它是这套东西最难自动发生的一项
+            # (上一版埋 151 收 30, 只有 20%)。三选一里能多收一条就该赢。
+            score += min(12.0, hit * 6.0)
         return score
 
     def draft_best(self, prompt: str, cap: int, target: int, on_delta=None):
@@ -5421,7 +5451,14 @@ class Novelist:
             try:
                 self.step_selfcheck()
             except Exception as e:
-                self._log(f"系统自检失败(不阻塞写作): {e}")
+                # 只打一行「失败」会把 NameError 这种**代码 bug** 和
+                # 「模型这次没答好」混为一谈 —— 实测 name 'cons' is not defined
+                # 就这么静默了很久。代码级异常要带类型和位置。
+                import traceback as _tb
+                self._log(f"系统自检失败(不阻塞写作): {type(e).__name__}: {e}")
+                if isinstance(e, (NameError, AttributeError, TypeError, KeyError)):
+                    self._log("  ↑ 这是代码 bug 不是模型问题：\n"
+                              + "".join(_tb.format_exc().splitlines(True)[-4:]))
         return {"chapter": n, "chars": a["stats"]["cn"], "score": a["score"],
                 "elapsed": r.elapsed, "rewritten": a.get("rewritten", False)}
 
@@ -6108,14 +6145,18 @@ class Novelist:
                 per.append({"n": n, "score": a.get("score"),
                             "cn": (a.get("stats") or {}).get("cn"),
                             "issues": [i["type"] for i in a.get("issues", [])]})
+        # 这两块本来就该进自检的提示词, 可它们 append 到了一个**这个函数里
+        # 根本不存在的 cons** —— 从别处复制过来忘了改名, 每次自检都抛
+        # NameError, 被上层 except 吞成一行「系统自检失败(不阻塞写作)」。
+        # 后果是自检看不见不可逆事实与红线, 判不了「约束失效」这一类。
+        extra = []
         cn = self.canon()
         if cn:
-            recent_facts = cn[-40:]
-            cons.append("【已确立的不可逆事实，绝对不得推翻】\n" + "；".join(
-                f"{c['subject']}{c['fact']}(第{c['chapter']}章)" for c in recent_facts))
+            extra.append("【已确立的不可逆事实，绝对不得推翻】\n" + "；".join(
+                f"{c['subject']}{c['fact']}(第{c['chapter']}章)" for c in cn[-40:]))
         era = self.era_card()
         if era:
-            cons.append("【时代红线·写进正文即穿帮】\n" + self.condense(era, 3000))
+            extra.append("【时代红线·写进正文即穿帮】\n" + self.condense(era, 3000))
         guide = self.p.read("style_guide.md")
         rules = self.learned_rules()
         target = self.target_words()
@@ -6130,7 +6171,8 @@ class Novelist:
             f"【当前机器规则】{json.dumps(rules, ensure_ascii=False)[:800]}\n\n"
             f"【当前写作守则】\n{self.shrink(guide, 1200, '当前写作守则')}\n\n"
             f"【最近一章正文节选】\n{self.shrink(chs[done[-1]], 2000, '最近一章正文')}\n\n"
-            "请判断：哪些问题**靠改提示词/守则解决不了**，是系统本身的缺陷？只看这四类：\n"
+            + ("\n\n".join(extra) + "\n\n" if extra else "")
+            + "请判断：哪些问题**靠改提示词/守则解决不了**，是系统本身的缺陷？只看这四类：\n"
             "1. 漏检 —— 正文里明显有问题但检测器没报出来\n"
             "2. 误报 —— 检测器报了但其实不是问题\n"
             "3. 约束失效 —— 约束写了但模型明显没遵守（说明位置或写法有问题）\n"
