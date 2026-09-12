@@ -312,7 +312,13 @@ def _mk_root():
              exit=C(accounts={"灵石": "万", "名分": "天下之主"}))
 
 
-def test_但是链断了要报_且判定是照抄不是相似():
+def test_但是链断了由程序钉平_不再只是报出来():
+    """契约升级：断链在解析时就被钉平，不可能存在。
+
+    「下节 solves 原样照抄上节 exposes」是**纯拷贝** —— 检查它不如直接写它。
+    实测三个候选里两个各断一到六处，最好的也剩一处；改成程序钉之后为零。
+    (种子给了成对但是链时走另一条路：逐对照抄种子，也是程序钉。)
+    """
     from server.tree import parse_milestones, check_milestones
     raw = ('{"milestones":['
            '{"title":"甲","solves":"活命","exposes":"名头传开了","start":1,"end":15,'
@@ -320,8 +326,9 @@ def test_但是链断了要报_且判定是照抄不是相似():
            '{"title":"乙","solves":"名声太大被盯上","exposes":"y","start":16,"end":30,'
            '"accounts":{"灵石":"万","名分":"天下之主"},"close":[],"open":[],"miscalc":"z"}]}')
     ms = parse_milestones(raw, _mk_root())
+    assert ms[1].solves == "名头传开了"          # 被钉成上节的 exposes
     errs = check_milestones(_mk_root(), ms)
-    assert any("但是链断了" in e for e in errs)   # 「名声太大被盯上」≠「名头传开了」
+    assert not any("但是链断了" in e for e in errs)
 
 
 def test_合法里程碑链零违约():
@@ -388,7 +395,9 @@ def test_三候选选优_合规是淘汰线_多样性加分():
             '"accounts":{"名分":"自由身"},"close":["t1"],"open":[],"miscalc":"x"},'
             '{"title":"乙","solves":"名头传开了","exposes":"y","start":16,"end":30,'
             '"accounts":{"灵石":"万","名分":"天下之主"},"close":[],"open":[],"miscalc":"z"}]}')
-    broken = good.replace('"solves":"名头传开了"', '"solves":"完全接不上的话"')
+    # 断链已由程序钉平, 不再是选优的区分项; 改用「漏收开局的线」当坏样本 ——
+    # 那是真语义缺陷, 程序补不了, 该由选优淘汰。
+    broken = good.replace('"close":["t1"]', '"close":[]')
     r = _mk_root()
     assert score_milestones(r, parse_milestones(good, r)) > \
            score_milestones(r, parse_milestones(broken, r))

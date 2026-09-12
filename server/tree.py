@@ -48,6 +48,7 @@ ACCOUNT_MAX = 20
 #: 注意不含 "R" —— 根合同的线按提示词要求本来就写 due:"R"(全书之内收掉),
 #: 那是正经节点 id, 误当收线标记会把根节点的线全删光。
 _DUE_CLOSED = {"c", "closed", "close", "end", "done", "final", "-", "无",
+               "solved", "resolved", "完成", "已解决",
                "已收", "已闭", "已结", "结束", "完结", "收掉"}
 
 
@@ -870,6 +871,13 @@ def parse_milestones(raw: str, root: "Node", chain: str = "") -> List["Node"]:
     if pairs and len(out) == len(pairs):
         for nd, (sv, ex_) in zip(out, pairs):
             nd.solves, nd.exposes = sv[:120], ex_[:120]
+    elif len(out) > 1:
+        # 种子没给成对的但是链时, 「下节 solves 原样照抄上节 exposes」这条
+        # 也**由程序钉**, 不靠模型自觉 —— 实测三个候选里两个各断一到六处,
+        # 最好的那个也剩一处。这是纯拷贝, 检查它不如直接写它。
+        for i in range(1, len(out)):
+            if _norm(out[i].solves) != _norm(out[i - 1].exposes):
+                out[i].solves = out[i - 1].exposes
     if out:
         # 幼子出口的账目/事实 = 根出口(程序定死)。但**线不覆盖** —— 线取链自己
         # 算出的结果: 若覆盖成根出口的线, 链上没人收的线会被一起洗掉,

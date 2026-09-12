@@ -310,7 +310,9 @@ def fewshot_block(style_pack: Optional[Dict[str, Any]] = None,
         return ""
     import json as _j
     from pathlib import Path as _P
-    f = _P(__file__).resolve().parent.parent / "packs" / "style" / f"{ref}.json"
+    # 放 packs/fewshot/ 不放 packs/style/ —— 范文不是文风包, 放 style/ 会被
+    # 包 registry 当损坏的包报警(实测: [registry] 跳过损坏的包 …: 'id')
+    f = _P(__file__).resolve().parent.parent / "packs" / "fewshot" / f"{ref}.json"
     if not f.exists():
         return ""
     try:

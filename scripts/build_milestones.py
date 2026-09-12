@@ -38,6 +38,12 @@ def seed_chain(project_dir) -> str:
             continue
         j = txt.find("\n【", i + 4)
         out.append(txt[i:j if j > 0 else i + 1400])
+    # 种子没写标签段(【但是链】【开局落点】)时, **整颗种子就是骨架**。
+    # 实测《大宋奸商西门庆》的种子只有 960 字, 里面「七级台阶: 阳谷起家 →
+    # 州府与东京 → … → 登基」就是作者的主线, 只因为没套标签格式就整个丢掉,
+    # 里程碑会拆成与作者台阶无关的 30 节。种子小到塞得下, 全给。
+    if not out and txt.strip():
+        return txt.strip()
     return "\n\n".join(out)
 
 
@@ -55,6 +61,10 @@ def chain_len(project_dir) -> int:
               .get("premise") or "")
     i = txt.find("【但是链】")
     if i < 0:
+        # 「七级台阶：甲 → 乙 → 丙」这种箭头链也是作者定的节数
+        m = re.search(r"[级級]台阶[：:](.+)", txt)
+        if m:
+            return len(re.split(r"→|->", m.group(1).split("\n")[0]))
         return 0
     j = txt.find("\n【", i + 4)
     body = txt[i:j if j > 0 else len(txt)]
