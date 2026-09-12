@@ -243,11 +243,26 @@ def _slot_of(block: str) -> tuple:
     return "", 0                      # 没登记的块不受定额管（世界观/记忆等）
 
 
-def enforce_slots(seg: List[str], on_drop=None) -> List[str]:
+#: 低于这个优先级的块，超预算时按章号**轮换**出局，而不是永远丢同一块。
+ROTATE_BELOW = 60
+
+
+def enforce_slots(seg: List[str], on_drop=None, index: int = 0) -> List[str]:
     """按槽位定额裁剪指令块：同槽超预算时，优先级低的先出局。
 
     这不是省 token —— 记忆层比这些大一个量级。这是**恢复优先级**：
     留下的每一块都在预算内，模型才分得清什么是真的必须做。
+
+    —— 为什么末位那几块要轮换 ——
+
+    纯按优先级丢, 垫底那块就**永远**丢。实测日志里
+        调子槽挤掉「🗣 这本书的说话方式」  × 66
+    连着六十多章都是它 —— 这本书的对白口吻等于从没进过提示词, 而「对白质感」
+    还是评审的一个维度。同一块连着被挤六十次, 那不叫预算, 那叫删除。
+
+    低优先级的几块(ROTATE_BELOW 以下)按章号轮着出局: 每一块都有若干章进得去,
+    没有哪一块被永久删掉。高优先级的仍然按优先级硬排 —— 轮换只发生在
+    「谁都可以让一让」的那一档里。
     """
     keep = [True] * len(seg)
     for slot, budget in SLOT_BUDGET.items():
@@ -257,8 +272,18 @@ def enforce_slots(seg: List[str], on_drop=None) -> List[str]:
         used = sum(len(seg[i]) for i in idx)
         if used <= budget:
             continue
-        # 低优先级先丢；同级丢长的（长的往往是可展开的样例，不是判据）
-        for i in sorted(idx, key=lambda i: (_slot_of(seg[i])[1], -len(seg[i]))):
+        low = [i for i in idx if _slot_of(seg[i])[1] < ROTATE_BELOW]
+        # 本章轮到谁先走: 按章号在末档里转一格
+        off = (index % len(low)) if low else 0
+
+        def rank(i):
+            pri, ln = _slot_of(seg[i])[1], len(seg[i])
+            if i in low:
+                # 末档内部按轮转位排序, 与原优先级脱钩
+                return (-1, (low.index(i) - off) % len(low), -ln)
+            return (0, -pri, -ln)      # 高优先级档: 分低的先走, 同分丢长的
+
+        for i in sorted(idx, key=rank):
             if used <= budget:
                 break
             keep[i] = False
@@ -520,7 +545,8 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
                f"直接输出正文，不要任何前言、标题或说明。")
     dropped: List[str] = []
     seg = enforce_slots(
-        seg, on_drop=lambda s_, h, n: dropped.append(f"{s_}槽挤掉「{h}」({n}字)"))
+        seg, on_drop=lambda s_, h, n: dropped.append(f"{s_}槽挤掉「{h}」({n}字)"),
+        index=index)
     if dropped:
         print("[prompt] " + "；".join(dropped))
     return "\n".join(seg)

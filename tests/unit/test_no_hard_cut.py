@@ -163,3 +163,42 @@ def test_合同树脚本的入口参数没写错():
 def test_收尾三件套都在(name):
     import server.distill as d
     assert hasattr(d, name), f"distill.{name} 不见了，硬切守门测试会失效"
+
+
+# ───────── 槽位末档轮换：连着挤同一块，那不叫预算，那叫删除 ─────────
+
+def test_末档轮换而不是永远丢同一块():
+    """实测日志：调子槽挤掉「🗣 这本书的说话方式」× 66。
+
+    连着六十多章都是它 —— 这本书的对白口吻等于从没进过提示词，而「对白质感」
+    还是评审的一个维度。纯按优先级丢，垫底那块就永远丢。
+    """
+    from collections import Counter
+    from server.prompt_compiler import enforce_slots
+
+    seg = ["🎯" + "A" * 2000, "📏" + "B" * 1500,
+           "✍" + "C" * 400, "🗣" + "D" * 400, "#正向提示词库" + "E" * 400]
+    got = Counter()
+    for ch in range(12):
+        kept = enforce_slots(list(seg), index=ch)
+        for b in kept:
+            got[b[0] if not b.startswith("#") else "#"] += 1
+    # 末档三块各自都进得去若干章，没有哪一块被永久删掉
+    for h in ("✍", "🗣", "#"):
+        assert got[h] > 0, f"{h} 一章都没进去 —— 又变成永久删除了"
+    assert max(got[h] for h in "✍🗣") - min(got[h] for h in "✍🗣") <= 2, \
+        "末档轮换不均匀"
+    # 高优先级的两块一次都不许被挤
+    assert got["🎯"] == 12 and got["📏"] == 12
+
+
+def test_高优先级不参与轮换():
+    """轮换只发生在「谁都可以让一让」那一档；主料该稳稳留着。"""
+    from server.prompt_compiler import enforce_slots, ROTATE_BELOW, SLOT_RULES
+    pri = {p: v for p, _s, v in SLOT_RULES}
+    assert pri["🎯"] >= ROTATE_BELOW and pri["📏"] >= ROTATE_BELOW
+    assert pri["🗣"] < ROTATE_BELOW          # 说话方式在末档，靠轮换进场
+    seg = ["🎯" + "A" * 3000, "📏" + "B" * 3000, "🗣" + "C" * 400]
+    for ch in range(6):
+        kept = enforce_slots(list(seg), index=ch)
+        assert any(b.startswith("🎯") for b in kept)
