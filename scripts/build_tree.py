@@ -34,7 +34,7 @@ def main():
     ap.add_argument("--seed"); ap.add_argument("--chapters", type=int, default=345)
     ap.add_argument("--out", default=""); ap.add_argument("--resume", default="")
     ap.add_argument("--max-level", default="unit",
-                    help="拆到哪一层为止（章合同由写作阶段逐章生成）")
+                    help="root=只建根合同; book/stage/volume/unit=拆到该层为止")
     a = ap.parse_args()
 
     out = Path(a.resume or a.out)
@@ -104,8 +104,12 @@ def main():
             say("根节点建不出来，退出"); return 1
 
     order = ["book", "stage", "volume", "unit"]
-    stop = order.index(a.max_level) if a.max_level in order else 3
-    for lvl in order[:stop + 1]:
+    # root = 只建根合同, 不往下拆。在用的架构是「根合同 + 一条但是链里程碑」
+    # (由 build_milestones.py 生成), 四层树是另一条路 —— 没有这个档位时只能
+    # 一路拆到 unit 再把多余的删掉, 白烧九十多次调用。
+    todo_levels = [] if a.max_level == "root" else order[
+        :(order.index(a.max_level) if a.max_level in order else 3) + 1]
+    for lvl in todo_levels:
         todo = [n for n in nodes.values() if n.level == lvl and not n.children]
         if not todo:
             continue

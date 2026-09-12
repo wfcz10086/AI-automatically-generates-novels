@@ -4,7 +4,7 @@
 用法: python3 scripts/build_milestones.py --tree <目录> [--k 30] [--n 3]
 """
 from __future__ import annotations
-import argparse, concurrent.futures as cf, json, sys, time
+import argparse, concurrent.futures as cf, json, re, sys, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,6 +41,26 @@ def seed_chain(project_dir) -> str:
     return "\n\n".join(out)
 
 
+def chain_len(project_dir) -> int:
+    """数种子里的【但是链】有几条。
+
+    每条形如「3 解决：… → 暴露：…」。数不出来返回 0, 由调用方兜底。
+    """
+    import json as _j
+    from pathlib import Path as _P
+    f = _P(project_dir) / "project.json"
+    if not f.exists():
+        return 0
+    txt = str((_j.loads(f.read_text(encoding="utf-8")).get("fields") or {})
+              .get("premise") or "")
+    i = txt.find("【但是链】")
+    if i < 0:
+        return 0
+    j = txt.find("\n【", i + 4)
+    body = txt[i:j if j > 0 else len(txt)]
+    return len(re.findall(r"(?m)^\s*\d+\s*(?=解决)", body))
+
+
 def one_candidate(tag: str, root, k: int, chain: str = ""):
     t = time.time()
     try:
@@ -75,7 +95,8 @@ def one_candidate(tag: str, root, k: int, chain: str = ""):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tree", required=True)
-    ap.add_argument("--k", type=int, default=30)
+    ap.add_argument("--k", type=int, default=0,
+                    help="0=数种子里【但是链】有几条就拆几节")
     ap.add_argument("--n", type=int, default=0, help="0=读配置 generation.candidates")
     a = ap.parse_args()
     if not a.n:
@@ -86,6 +107,12 @@ def main():
     nodes = {k: tr.Node.from_dict(v) for k, v in
              json.loads((d / "tree.json").read_text(encoding="utf-8")).items()}
     root = nodes["R"]
+    if not a.k:
+        # 拆几节由**种子自己**决定: 作者写了几条但是链就是几节, 一条一节。
+        # 写死 30 的后果实测过: 8 条但是链被摊成 24 节, 「但是」退化成
+        # 「然后」—— 多出来的十几节没有自己的翻转, 只能填通用过场。
+        a.k = chain_len(d) or 30
+        say(f"种子里有 {a.k} 条但是链 → 拆 {a.k} 节（一条一节）")
     say(f"《{root.title}》根合同 → {a.k} 节里程碑 × {a.n} 候选(温度已拉满, 各自会长得不一样)")
     with cf.ThreadPoolExecutor(max_workers=a.n) as ex:
         chain = seed_chain(d)
