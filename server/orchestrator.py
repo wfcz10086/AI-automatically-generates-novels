@@ -5893,6 +5893,24 @@ class Novelist:
         if not (lo <= a["stats"]["cn"] <= hi):
             self.iss.record("words_off_target",
                             f"{a['stats']['cn']} 字，区间 {lo}-{hi}")
+        # 逐章履约单。要求几条、到达几条、满足几条 —— **到达数 < 要求数就是
+        # A 类**(那段话根本没进提示词), 不用等下游症状。今天那个 cons bug 就是
+        # 只有下游症状可看, 查了三轮。
+        _reqs_on = {
+            "beat_proper_noun": bool(self.beat_for(n)),
+            "self_address": True,
+            "canon_no_contradiction": bool(self.canon()),
+            "word_range": True,
+        }
+        _want = [r for r in _reqs.for_stage("chapter") if _reqs_on.get(r.id, True)]
+        _miss = _reqs.missing_delivery(prompt or "", "chapter", _reqs_on)
+        _unmet = [i["title"] for i in self.iss.items
+                  if i["severity"] != _iss.AUTO]
+        a["contract"] = {"要求": len(_want), "到达": len(_want) - len(_miss),
+                         "未到达": _miss, "未满足": _unmet}
+        for _m in _miss:
+            self._log(f"  ⚠ 要求没进正文提示词：{_m}")
+            self.iss.record("req_not_delivered", _m)
         st = self.iss.status(wrote_text=bool(a["stats"]["cn"]))
         # 键名叫 ledger 不叫 issues。**a["issues"] 早就被 audit() 占了** ——
         # 那是 AI 腔检测的问题**列表**([{level,type,detail,sample}, ...]),
@@ -7100,6 +7118,11 @@ class Novelist:
         return out
 
     def _log(self, msg: str):
+        # 日志也要脱敏。上一轮只给问题台账做了, 结果网关超时那条异常照样从
+        # self._log(f"评审失败: {e}") 进了 state.json 和 reports/longrun.log ——
+        # 而**日志是最容易被贴出去的东西**(贴给人看、附在 issue 里、打包发出去)。
+        # 脱敏要做在所有出口上, 少一个出口等于没做。
+        msg = _iss.redact(msg)
         ts = time.strftime("%H:%M:%S")
         self.p.state.setdefault("log", []).append(f"[{ts}] {msg}")
         self.p.save()

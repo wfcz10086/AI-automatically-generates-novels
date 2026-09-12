@@ -186,3 +186,79 @@ def _reg_all():
 
 
 _reg_all()
+
+
+# ═══════════════ 落盘字段登记表（C 类：算了但没人用） ═══════════════
+#
+# 今天在 C 类上栽了三次，形状各不相同：
+#   · judge() 算好的分被 merged["overall"] = 各维平均**盖掉**
+#   · blocking 算出来了，状态派生那一层**不知道**
+#   · a["issues"] 键名撞车 —— audit() 产出的检测列表被问题台账**覆盖**，
+#     而下游 [i["type"] for i in ...] 迭代字典拿到键，抛 TypeError
+#
+# 「算了但没人用」比「没算」难发现得多：字段就在那儿，看起来是全的。
+# 所以字段也要登记：谁写、谁读、什么形状。两条由测试强制 ——
+#   · 写进 audit 的字段必须登记过（新字段逼你当场回答「谁读」）
+#   · 别人产出的字段不许在这里再写一次（撞车直接报错）
+
+
+@dataclass
+class Field:
+    name: str
+    kind: str                  # list / dict / num / str / bool
+    produced: str              # 谁写
+    consumed: str              # 谁读；给人看的写 "human:…" 并说明看它做什么
+    why: str = ""
+
+
+AUDIT_FIELDS: List[Field] = [
+    Field("score", "num", "evaluator.audit", "orchestrator 闸门 / 前端 / repair",
+          "AI 腔检测分，低于线触发重写"),
+    Field("issues", "list", "evaluator.audit", "orchestrator 自检 / 前端",
+          "检测出的问题列表 [{level,type,detail,sample}]。"
+          "**这个键归 audit() 所有** —— 问题台账叫 ledger，别再撞一次"),
+    Field("stats", "dict", "evaluator.audit", "orchestrator 字数判定 / 前端",
+          "字数、段数、对白占比"),
+    Field("ledger", "dict", "orchestrator.step_chapter", "run_novel 状态显示 / 前端",
+          "本章问题台账，状态由它派生"),
+    Field("contract", "dict", "orchestrator.step_chapter", "human:逐章履约单",
+          "本章要求几条、到达几条、满足几条 —— 到达数<要求数就是 A 类"),
+    Field("critique", "dict", "orchestrator.step_chapter", "human:查问题带原句",
+          "评审结果全量留档：每条 issue 都带正文原句，返修和复盘都靠它"),
+    Field("window", "dict", "orchestrator.step_chapter", "orchestrator 窗口漂移",
+          "最近十章的指标漂移，用来生成下一批的纠偏"),
+    Field("target_words", "num", "orchestrator.step_chapter",
+          "exporters / app / orchestrator 交付率", "没有它算不出模型少写了多少"),
+    Field("era", "str", "orchestrator.step_chapter", "orchestrator 时代校验", ""),
+    Field("recent_range", "str", "orchestrator.step_selfcheck", "orchestrator 自检", ""),
+    Field("recent_score", "num", "orchestrator.step_selfcheck", "orchestrator 自检", ""),
+    Field("rewritten", "bool", "orchestrator.step_chapter", "run_novel 显示 [已重写]", ""),
+    Field("expanded", "bool", "orchestrator.step_chapter", "human:查扩写有没有生效",
+          "配合日志「扩写第N轮」看扩写成果有没有被后面的重写抹掉"),
+    Field("repaired", "bool", "orchestrator.rewrite_chapter", "human:查这章返修过没有", ""),
+    Field("critique_rewritten", "bool", "orchestrator.step_chapter",
+          "human:查评审驱动的重写有没有发生", ""),
+    Field("dedup_rewritten", "bool", "orchestrator.step_chapter",
+          "human:查去重重写有没有发生", ""),
+    Field("positive_hits", "num", "orchestrator.step_chapter", "human:文风正向词命中", ""),
+    Field("positive_samples", "list", "orchestrator.step_chapter", "human:命中的词例", ""),
+]
+
+#: 这些字段归别人所有，orchestrator 里不许再赋值 —— 撞车就是覆盖。
+OWNED_ELSEWHERE = {f.name for f in AUDIT_FIELDS
+                   if f.produced.startswith("evaluator.")}
+
+
+def audit_fields() -> List[str]:
+    bad = []
+    seen = set()
+    for f in AUDIT_FIELDS:
+        if f.name in seen:
+            bad.append(f"字段 {f.name} 登记了两次")
+        seen.add(f.name)
+        if not f.consumed:
+            bad.append(f"字段 {f.name} 没有消费者 —— 要么删掉，"
+                       f"要么写明谁在读（给人看的写 human:…）")
+        if f.kind not in ("list", "dict", "num", "str", "bool"):
+            bad.append(f"字段 {f.name} 的 kind 不合法：{f.kind}")
+    return bad

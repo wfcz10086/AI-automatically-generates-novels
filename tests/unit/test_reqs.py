@@ -84,3 +84,73 @@ def test_三档送达都用上了():
     """能上 program 的不要停在 prompt。三档同时存在说明这个判断在被实际使用。"""
     kinds = {r.deliver for r in R.REGISTRY}
     assert kinds == {R.PROMPT, R.TABLE, R.PROGRAM}
+
+
+# ───────── C 类：落盘字段必须声明谁写谁读 ─────────
+
+def test_字段登记表自检全过():
+    bad = R.audit_fields()
+    assert not bad, "字段登记表不合格：\n  " + "\n  ".join(bad)
+
+
+def test_写进audit的字段必须登记过():
+    """新加一个字段就得当场回答「谁读」—— 否则它就是下一个 dimension_results。
+
+    实测三次「算了但没人用」：judge() 被维度平均盖掉、blocking 没进台账、
+    a["issues"] 键名撞车把检测结果覆盖了。共同点是字段就在那儿、看起来是全的。
+    """
+    import re
+    from pathlib import Path
+    from server import orchestrator as o
+
+    src = Path(o.__file__).read_text(encoding="utf-8")
+    written = set(re.findall(r'a\["([a-z_]+)"\]\s*=', src))
+    declared = {f.name for f in R.AUDIT_FIELDS}
+    undeclared = sorted(written - declared)
+    assert not undeclared, (
+        f"这些字段写进了 audit 却没登记：{undeclared}\n"
+        f"去 server/reqs.py 的 AUDIT_FIELDS 补一条，写明谁读它 —— "
+        f"没有读者的字段要么删掉，要么标成 human: 并说明看它做什么")
+
+
+def test_别人产出的字段不许在这里再写一次():
+    """a["issues"] 归 evaluator.audit 所有（检测问题**列表**）。
+
+    我把问题台账（一个**字典**）也写成 a["issues"]，一是把检测结果整个覆盖掉，
+    二是下游 [i["type"] for i in a["issues"]] 迭代字典拿到键，抛
+    TypeError: string indices must be integers。台账后来改叫 ledger。
+    """
+    import re
+    from pathlib import Path
+    from server import orchestrator as o
+
+    # 判据要分清**覆盖**和**收紧**：
+    #   a["score"] = min(a["score"], crit["overall"])  ← 读了旧值再取严，合法
+    #   a["issues"] = self.iss.to_dict()               ← 没读旧值，整个换掉，非法
+    # 右边引用了同一个字段就是收紧，没引用就是覆盖。
+    # 另外要剥掉注释 —— 注释里写着「上一版我直接写 a["issues"] = 台账」，
+    # 那是在讲教训，不该被当成违规（把教训逼删掉是最糟的结果）。
+    lines = []
+    for raw in Path(o.__file__).read_text(encoding="utf-8").splitlines():
+        t = raw.strip()
+        if t.startswith("#"):
+            continue
+        lines.append(raw.split("#", 1)[0])
+
+    clash = []
+    for n in R.OWNED_ELSEWHERE:
+        for ln in lines:
+            m = re.search(rf'a\["{n}"\]\s*=\s*(.+)$', ln)
+            if m and f'a["{n}"]' not in m.group(1):
+                clash.append(f'{n}: {ln.strip()[:70]}')
+    assert not clash, (
+        "这些键归别人所有，orchestrator 里整个换掉就是覆盖"
+        "（要收紧请写成 min/max(a[...], 新值)）：\n  " + "\n  ".join(clash))
+
+
+def test_每个字段都说得清谁在读():
+    for f in R.AUDIT_FIELDS:
+        assert f.consumed, f"{f.name} 没有消费者"
+        if f.consumed.startswith("human:"):
+            assert len(f.consumed) > len("human:"), \
+                f"{f.name} 标了 human 却没说看它做什么"
