@@ -196,6 +196,13 @@ def _reg_all():
             str(c.get("fact", "")) for c in (crit.get("contradictions") or [])]))
 
     register(Req(
+        id="fewshot_sample", source="文风包.fewshot(大罗罗范文)", stage="chapter",
+        deliver=PROMPT, on_fail=LEDGER, marker="人类作者的一段范文",
+        why="「说话方式」块曾被槽位静默挤掉 66 次而没人发现 —— 范文块 1.2k 字"
+            "更大, 更容易成为下一个受害者。登记 marker, 回扫保证它真的在。",
+        check=lambda nv, n, text: []))     # 范文只求到达, 不验正文
+
+    register(Req(
         id="word_range", source="文风包.chapterWords", stage="chapter",
         deliver=PROMPT, on_fail=LEDGER, marker="字",
         why="扩写达标 3163 字，低分重写砍回 2070 还被采纳 —— 守卫只防腰斩，"

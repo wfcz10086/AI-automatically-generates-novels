@@ -5986,6 +5986,7 @@ class Novelist:
         # A 类**(那段话根本没进提示词), 不用等下游症状。今天那个 cons bug 就是
         # 只有下游症状可看, 查了三轮。
         _reqs_on = {
+            "fewshot_sample": bool(self.style.get("fewshot")),
             "beat_proper_noun": bool(self.beat_for(n)),
             "self_address": True,
             "canon_no_contradiction": bool(self.canon()),

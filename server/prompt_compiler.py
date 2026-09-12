@@ -200,7 +200,8 @@ SLOT_RULES: List[tuple] = [
     ("🎯", "调子", 80), ("📏", "调子", 78),
     # 窗口漂移是按最近十章**实测**出来的纠偏, 且只对这几章有效, 过期作废 ——
     # 比任何静态词表都值钱, 原来排在最低位每章都被挤掉。
-    ("📐", "调子", 76), ("▍", "调子", 70), ("✍", "调子", 55), ("🗣", "调子", 50),
+    ("📐", "调子", 76), ("📖", "调子", 72), ("▍", "调子", 70),
+    ("✍", "调子", 55), ("🗣", "调子", 50),
     # 用户自定义指令进任务槽(不限额) —— 实测它顶着「优先级最高」的名头,
     # 却按通用 ⚠️ 的 40 分被纪律槽第一个挤掉。用户亲手写的话永远不许被程序丢。
     ("⚠️ 【本书追加指令", "任务", 98),
@@ -293,6 +294,37 @@ def enforce_slots(seg: List[str], on_drop=None, index: int = 0) -> List[str]:
             if on_drop:
                 on_drop(slot, seg[i].lstrip("\n").split("\n")[0][:36], len(seg[i]))
     return [b for b, k in zip(seg, keep) if k]
+
+
+def fewshot_block(style_pack: Optional[Dict[str, Any]] = None,
+                  index: int = 0) -> str:
+    """人类范文段。抽象地说「不要有 AI 味」没用, 给一段真人写的、说明**好在哪**,
+    模仿密度和留白比这管用得多(用户建议, 实践共识也如此)。
+
+    三段范文按章号轮换, 一章只注一段(~1.2k 字) —— 三段全上要 3.4k, 会把
+    调子槽别的东西挤出去。范文来自文风包声明的 fewshot 文件, 不写死在代码里:
+    每本书该学谁由包说了算。
+    """
+    ref = (style_pack or {}).get("fewshot")
+    if not ref:
+        return ""
+    import json as _j
+    from pathlib import Path as _P
+    f = _P(__file__).resolve().parent.parent / "packs" / "style" / f"{ref}.json"
+    if not f.exists():
+        return ""
+    try:
+        samples = _j.loads(f.read_text(encoding="utf-8")).get("samples") or []
+    except Exception:
+        return ""
+    if not samples:
+        return ""
+    x = samples[index % len(samples)]
+    return ("\n📖 【人类作者的一段范文·模仿它的密度和留白，不是抄它的内容】\n"
+            f"（这段好在哪：{x.get('why','')}）\n"
+            "────\n" + str(x.get("text", "")).strip() + "\n────\n"
+            "　照这个味道写本章：对话真的来回、账目真的报数、旁白一句反讽就收。"
+            "**人物、剧情、朝代都用本书自己的，引号样式跟本书正文一致。**")
 
 
 def compile_chapter_prompt(*, title: str, index: int, target_words: int,
@@ -537,6 +569,9 @@ def compile_chapter_prompt(*, title: str, index: int, target_words: int,
         if bits:
             seg.append("\n🗣 【这本书的说话方式·分栏取用，不要平均地撒】\n"
                        + "\n".join(bits))
+    fs = fewshot_block(sp, index)
+    if fs:
+        seg.append(fs)
 
     ofb = outline_fields_block(chapter_outline, sp)
     if ofb:
