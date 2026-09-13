@@ -88,19 +88,22 @@ def main() -> int:
     hs["_history"] = hist[-10:]
     hs_f.write_text(json.dumps(hs, ensure_ascii=False, indent=1), encoding="utf-8")
 
-    # 止损看**方向**, 不是次数。实测一夜两轮回炉(n0: 7→14, 章数 7→27) ——
-    # 那是磨着前进, 不是乒乓; 按「近 6 次自愈回炉 ≥3」一刀切, 第三轮就会把
-    # 正常前进误判成乒乓标 MANUAL。乒乓的定义是**没有进度**:
-    #   n0 不再前进(回滚点倒退或原地), 或距上次回炉净增章数 < 3。
+    # 止损看**方向**, 不是次数。乒乓 = 没有进度。
+    # 尺子第一版量错了(04:03 误标 MANUAL): 拿本次高水位减**上次记录的高水位**,
+    # 而上次记的是回滚前的虚高值(回滚到 14 前书已 35 章, 记了 35), 这轮
+    # 36-35=1 被判「没进度」—— 可实际是从地板 13 重建到 36, 净进 23 章。
+    # 正确的尺: 本次高水位 对 **上次回滚后的地板**(prev.n0 - 1) 比 ——
+    # 上次砸到地板后又盖起来多少层, 那才是这一轮的真实产出。
+    prev_floor = (int(prev.get("n0") or 1) - 1) if prev else 0
     ping_pong = bool(prev) and (
         n0 <= int(prev.get("n0") or 0)
-        or hw - int(prev.get("hw") or 0) < 3)
+        or hw - prev_floor < 3)
 
     if hs[key] > MAX_REROLL_PER_SEGMENT or ping_pong:
         # ── 三级: 真的等人 ──
         why = (f"同段回炉 {hs[key]-1} 次" if hs[key] > MAX_REROLL_PER_SEGMENT
                else f"回炉没有进度(回滚点 {prev.get('n0')}→{n0}, "
-                    f"章数 {prev.get('hw')}→{hw})，在打乒乓")
+                    f"自上次地板 {prev_floor} 只盖到 {hw})，在打乒乓")
         halt.write_text(
             halt.read_text(encoding="utf-8")
             + f"\n\nMANUAL: {why}，仍连片被拦。"
