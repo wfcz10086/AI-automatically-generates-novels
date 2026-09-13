@@ -5679,14 +5679,25 @@ class Novelist:
         """
         cons = [c for c in (crit.get("contradictions") or [])
                 if isinstance(c, dict) and str(c.get("evidence") or "").strip()]
+        # 推广到**带原句的 high 问题** —— 实测第 18 章只剩「视角越界」一类
+        # (罚 43 险过线), 罪句可引用、改法局部(把别人的内心戏改成视角人物
+        # 看得见的言行), 却因为不是「矛盾」而修补不管, 只能整章重掷骰子,
+        # 修了几轮过不去。凡是能指着原句说错的, 都配得上最小替换。
+        for i in (crit.get("issues") or []):
+            if (isinstance(i, dict) and i.get("severity") == "high"
+                    and str(i.get("evidence") or "").strip() and len(cons) < 4):
+                cons.append({"evidence": i["evidence"],
+                             "fact": f"[{i.get('dim','')}] "
+                                     + str(i.get("what") or "")[:80]})
         if not cons:
             return text, False
         items = "\n".join(
             f"{i+1}. 原句片段：「{str(c['evidence'])[:90]}」\n"
-            f"   与它冲突的既定事实：{str(c.get('fact') or '')[:90]}"
+            f"   问题：{str(c.get('fact') or '')[:90]}"
             for i, c in enumerate(cons[:4]))
         r = call("polishing",
-                 "下面几处正文与本书已定死的事实冲突。给出**最小改动**的替换：\n"
+                 "下面几处正文有硬伤（与既定事实冲突，或视角越界等带原句的"
+                 "严重问题）。给出**最小改动**的替换：\n"
                  "只改冲突那一句话（可以微调紧邻的半句以保通顺），其余内容一个字"
                  "都不许动，也不许新增剧情。\n\n" + items + "\n\n"
                  "只输出 JSON 数组，不要解释：\n"
@@ -6120,7 +6131,10 @@ class Novelist:
                 # 替换。整章重写是重掷骰子 —— 从同一个错误分布再抽一次,
                 # 新错换旧错, 「重写之后仍然该拦」永不收敛(实测打了 100 分钟
                 # 乒乓, 净进度为零)。修中且复审降分就采纳; 仍拦才整章重写。
-                if crit.get("blocking") and (crit.get("contradictions") or []):
+                _patchable = (crit.get("contradictions") or []) or any(
+                    i.get("severity") == "high" and str(i.get("evidence") or "").strip()
+                    for i in (crit.get("issues") or []) if isinstance(i, dict))
+                if crit.get("blocking") and _patchable:
                     _pt, _hit = self.patch_contradictions(n, text, crit, on_delta)
                     if _hit:
                         _pc = self.step_critique(n, _pt)
