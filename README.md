@@ -1,8 +1,19 @@
-# AI 长篇小说流水线
+# AI 长文本创作流水线（小说 / 短剧 / 影视 / 动漫分镜）
 
 ## 这是什么
 
-一条把「一句话设定」写成长篇小说的自动流水线：
+一条把「一句话设定」写成成品长文本的自动流水线。**不只写小说** —— 四种内容类型共用同一套引擎（合同树、多候选选优、程序评审、自动返修），只是层级和成品不同：
+
+| 类型 | 层级流水线 | 成品 | 导出 |
+|---|---|---|---|
+| 长篇小说 | 总纲 → 分卷 → 逐章细纲 → 正文 | 章节正文 | txt / epub |
+| 短剧剧本 | 系列企划 → 分集 → 分镜台本 | 逐镜台本（钩子节奏） | 台本 |
+| 影视剧本 | 故事大纲 → 分幕分场 → 剧本页 | 标准剧本页 | Fountain / FDX |
+| 动漫分镜 | 企划大纲 → 分话 → 分镜表 | 镜号/景别/画面/台词/时长 | 分镜表 / 字幕 |
+
+类型定义在 `packs/type/*.json`（层级、字段、提示词模板、默认文风、导出器全部包内声明，加新类型不改引擎代码）。四类型均有守门测试（`tests/unit/test_content_types.py`）。
+
+以长篇小说为例的完整链路：
 
 ```
 种子（一句话设定）
@@ -175,7 +186,16 @@ NOVEL_GW7_MODEL=your-model-name
 - 跨书共享缓存：`.cache/facts.json`（同一时代同一件事别的书查过就直接用）
 - 联网检索的原始结果缓存（开外搜时）：`projects/<书名>/research/`
 
-**要打开外网搜索**：把 `config/settings.yaml` 的 `memory.web_search` 改为 `true`，并在 `.env` 配置检索源的密钥/地址——博查 AI 搜索填 `NOVEL_BOCHA_KEY`（按次计费，缓存命中不计费），或自建 SearXNG 填 `NOVEL_SEARCH_URL`。检索源定义在 `config/providers.yaml` 的 `search:` 段，与模型网关同一套配法。
+**支持的检索引擎**（`server/providers/search.py`，`config/providers.yaml` 的 `search:` 段声明，`default:` 指定用哪个）：
+
+| type | 说明 | 启用要什么 |
+|---|---|---|
+| `bocha` | 博查 AI 搜索（中文效果最好，按次计费；结果跨书缓存在 `.cache/search`，命中不计费，真实请求计数在 `search_usage.json`） | `.env` 填 `NOVEL_BOCHA_KEY` |
+| `searxng` | 自建/公共 SearXNG 实例（免费；实测公共实例质量参差——名义 85 家引擎实际只有 2 家在服务，bing 一半是短视频电商，只建议做兜底） | `.env` 填 `NOVEL_SEARCH_URL` 指向实例，配置里可用 `engines:` 列表指定引擎优先级 |
+| `http_json` | 任意返回 JSON 的开放搜索接口（OpenSearch 兼容），自定义字段映射 | 配置里给 `endpoint` 与字段映射 |
+| `null` | 空实现——没配任何检索源时的占位，上层代码不必判空 | 无 |
+
+**打开步骤**：① `config/settings.yaml` 把 `memory.web_search` 改 `true`；② `.env` 填对应密钥/地址；③（可选）`providers.yaml` 的 `search.default` 换默认源。单章外查条数由 `memory.web_max_per_chapter` 限制（默认 4），查过的全书复用。
 
 ## 部署
 

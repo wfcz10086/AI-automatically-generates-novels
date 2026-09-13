@@ -37,8 +37,6 @@ ALLOW = [
     ("app.py", 'str(e)[:400]', "给前端看的错误信息，本来就只看一眼"),
     ("providers/openai_compat.py", "resp.text[:300]",
      "HTTP 错误体，给人读的，不进提示词"),
-    ("providers/search.py", "content[:1200]",
-     "搜索结果落库上限；搜索当前是关的，且这是存储不是喂给模型"),
     ("retrieval.py", 'out["raw_preview"]', "带 preview 字样的预览字段"),
     ("retrieval.py", "self._bigrams(k + str(card)[:900])",
      "算 bigram 重合度用的，纯数值计算，不进提示词"),

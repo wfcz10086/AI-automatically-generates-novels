@@ -33,3 +33,11 @@ tests/e2e/trace/
 .vscode/
 config/settings.local.yaml
 .longrun.*
+
+# 本地助手目录与个人工作区 —— 不进仓库
+.claude/
+
+# 语料/样书 txt —— 版权物, 绝不上传(requirements.txt 除外)
+/*.txt
+!requirements.txt
+seeds/

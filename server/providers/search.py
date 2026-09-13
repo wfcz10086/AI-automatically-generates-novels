@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
+from server.distill import soft as _soft
 
 #: 结构性垃圾域名 —— 这类站点无论查什么都不可能是考据资料，零成本先滤掉，
 #: 省得占着名额去消耗模型的判定。语义上的答非所问不在这里管（规则判不准），
@@ -160,7 +161,8 @@ class BaseSearch:
                     r"[一-鿿]", it.get("title", "") + content):
                 continue
             out.append({"title": html.unescape(it.get("title", ""))[:120], "url": url,
-                        "content": content[:1200], "engine": it.get("engine", self.id)})
+                        # 搜索结果会经 L4 召回进提示词 —— 一样不许硬切
+                        "content": _soft(content, 1200), "engine": it.get("engine", self.id)})
             if len(out) >= self.CACHE_WIDTH:
                 break
         if cp:
