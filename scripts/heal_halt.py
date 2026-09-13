@@ -75,15 +75,26 @@ def main() -> int:
     n0 = min(int(x["ch"]) for x in rest)
     hs_f = p.dir / "heal_state.json"
     hs = json.loads(hs_f.read_text(encoding="utf-8")) if hs_f.exists() else {}
+    # 按段计数会被**起点漂移**绕过: 实测第一次回滚到 8、第二次到 7,
+    # heal_state 里 {"8":1,"7":1} 两个键各自没到上限, 乒乓可以打到天亮。
+    # 改成双闸: 同段两次(旧规矩) + **全书回炉总数**(近 6 次自愈里回炉 ≥3
+    # 就是在打乒乓, 不管起点漂到哪) —— 后者才是真的止损线。
     key = str(n0)
     hs[key] = int(hs.get(key) or 0) + 1
+    hist = list(hs.get("_history") or [])
+    hist.append({"n0": n0, "at": time.strftime("%m%d_%H%M")})
+    hs["_history"] = hist[-10:]
     hs_f.write_text(json.dumps(hs, ensure_ascii=False, indent=1), encoding="utf-8")
+    recent_rerolls = len(hist[-6:])
 
-    if hs[key] > MAX_REROLL_PER_SEGMENT:
+    if hs[key] > MAX_REROLL_PER_SEGMENT or recent_rerolls >= 3:
         # ── 三级: 真的等人 ──
+        why = (f"同段回炉 {hs[key]-1} 次" if hs[key] > MAX_REROLL_PER_SEGMENT
+               else f"近 {recent_rerolls} 次自愈全在回炉(起点 "
+                    f"{[h['n0'] for h in hist[-3:]]}，在打乒乓)")
         halt.write_text(
             halt.read_text(encoding="utf-8")
-            + f"\n\nMANUAL: 第 {n0} 章起的坏段已回炉 {hs[key]-1} 次仍连片被拦。"
+            + f"\n\nMANUAL: {why}，仍连片被拦。"
             f"\n发散治不了的多半是种子或合同本身的问题 —— 看 canon_conflicts.json"
             f" 里被反复推翻的事实，改种子/树或认可正文，然后删掉本文件。\n",
             encoding="utf-8")

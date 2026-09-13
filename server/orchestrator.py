@@ -5564,6 +5564,76 @@ class Novelist:
               flush=True)
         return best[2], best[3]
 
+    def patch_contradictions(self, n: int, text: str, crit: Dict[str, Any],
+                             on_delta=None) -> Tuple[str, bool]:
+        """定点修补: 只把与既定事实冲突的那几句改掉, 其余一字不动。
+
+        —— 为什么不整章重写 ——
+        实测的乒乓: 模型的接续滑差率就是每章一两处(骑马写成八抬大轿、黄昏
+        写成午时、沉塘的人又被拖进来), **replace 整章重写是重掷骰子** ——
+        从同一个错误分布里再抽一次, 新错换旧错, 「重写之后仍然该拦」永不
+        收敛, 于是熔断→回炉→再熔断打乒乓, 一小时四十分净进度为零。
+        错误面从「整章」缩到「那两句」, 才会收敛。
+
+        分工: 模型给最小替换(它懂怎么把轿改回马), **程序做替换**(exact
+        substring, 改不中就报没改) —— 应用环节零发挥。
+        """
+        cons = [c for c in (crit.get("contradictions") or [])
+                if isinstance(c, dict) and str(c.get("evidence") or "").strip()]
+        if not cons:
+            return text, False
+        items = "\n".join(
+            f"{i+1}. 原句片段：「{str(c['evidence'])[:90]}」\n"
+            f"   与它冲突的既定事实：{str(c.get('fact') or '')[:90]}"
+            for i, c in enumerate(cons[:4]))
+        r = call("polishing",
+                 "下面几处正文与本书已定死的事实冲突。给出**最小改动**的替换：\n"
+                 "只改冲突那一句话（可以微调紧邻的半句以保通顺），其余内容一个字"
+                 "都不许动，也不许新增剧情。\n\n" + items + "\n\n"
+                 "只输出 JSON 数组，不要解释：\n"
+                 '[{"old":"要被替换的原文（必须与正文逐字一致，含标点）",'
+                 '"new":"改后的句子"}]',
+                 on_delta, max_tokens=1800, no_continue=True)
+        m = re.search(r"\[.*\]", r.text or "", re.S)
+        if not m:
+            self._log("  定点修补: 模型没给出替换清单")
+            return text, False
+        try:
+            reps = json.loads(m.group(0))
+        except Exception:
+            self._log("  定点修补: 替换清单不是合法 JSON")
+            return text, False
+        done = 0
+        for rp in reps if isinstance(reps, list) else []:
+            if not isinstance(rp, dict):
+                continue
+            old, new = str(rp.get("old") or ""), str(rp.get("new") or "")
+            if not old or not new or old == new:
+                continue
+            if old in text:
+                text = text.replace(old, new, 1)
+                done += 1
+                continue
+            # 模型常把 evidence 转述一遍 —— 退回用 evidence 里最长的连续
+            # 片段(≥12 字)当锚去找
+            for c in cons:
+                ev = str(c.get("evidence") or "")
+                for L in range(min(len(ev), 60), 11, -4):
+                    for i in range(0, len(ev) - L + 1, 3):
+                        frag = ev[i:i + L]
+                        if frag in text:
+                            text = text.replace(frag, new, 1)
+                            done += 1
+                            break
+                    else:
+                        continue
+                    break
+                else:
+                    continue
+                break
+        self._log(f"  定点修补: {done}/{len(cons)} 处冲突句已就地替换")
+        return text, done > 0
+
     def _fix_self_address(self, card_md: str) -> str:
         """角色卡里主角的自称，以**种子里作者亲手写的台词**为准。
 
@@ -5931,10 +6001,32 @@ class Novelist:
                 # 拿模型的总分卡门等于让被考的人自己填分: 同一篇稿子重评能差
                 # 十几分, 而且它可以「问题照列、分照给高」, 两者之间没有约束。
                 # blocking 由可数的、带正文原句为证的东西推出来, 谁都能复核。
+                # 有冲突先**定点修补**(便宜且收敛): 只换冲突那几句, 程序做
+                # 替换。整章重写是重掷骰子 —— 从同一个错误分布再抽一次,
+                # 新错换旧错, 「重写之后仍然该拦」永不收敛(实测打了 100 分钟
+                # 乒乓, 净进度为零)。修中且复审降分就采纳; 仍拦才整章重写。
+                if crit.get("blocking") and (crit.get("contradictions") or []):
+                    _pt, _hit = self.patch_contradictions(n, text, crit, on_delta)
+                    if _hit:
+                        _pc = self.step_critique(n, _pt)
+                        if _pc and not _pc.get("error") and (
+                                _pc.get("penalty", 99) < crit.get("penalty", 99)):
+                            text, crit = _pt, _pc
+                            a["critique"] = {k: _pc.get(k) for k in
+                                             ("overall", "dim_avg", "scores",
+                                              "issues", "contradictions", "tics",
+                                              "blocking", "blocking_why",
+                                              "penalty", "severity_counts")}
+                            a["score"] = min(a["score"], int(_pc.get("overall") or 0))
+                            self.p.write(self.p.chapter_path(n), text)
+                            fix_note = self._critique_to_note(_pc)
+                            self._log(f"  定点修补后复审：扣分 {_pc.get('penalty')}"
+                                      f"，拦={_pc.get('blocking')}")
                 if crit.get("blocking") and fix_note:
                     self._log(f"  评审判定拦下：{'；'.join(crit.get('blocking_why') or [])}"
                               f"（扣分 {crit.get('penalty')}，"
                               f"有证据的问题 {crit.get('evidenced')}/{crit.get('claimed')} 条）")
+                if crit.get("blocking") and fix_note:
                     r3 = call("polishing",
                         f"下面这章被主编批了，问题如下，逐条改掉。剧情主线不变，"
                         f"字数保持 {target} 字左右。直接输出正文，无前言。\n\n"
