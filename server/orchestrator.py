@@ -1855,6 +1855,39 @@ class Novelist:
     def save_accounts(self, led) -> None:
         self.p.write("accounts.json", json.dumps(led, ensure_ascii=False, indent=1))
 
+    def learn_redline_terms(self, n: int, text: str,
+                            crit: Dict[str, Any]) -> int:
+        """评审抓到的红线词回流进本书黑名单 —— 下一章三选一就地淘汰。
+
+        实测 27~32 连败: 「枪管/膛线/法医」这类现代术语反复溢出, 评审每次都
+        抓(高严重+红线字样), 但抓完只扣分 —— **同一个词下一章照样出现**,
+        因为黑名单里没有它。机制都在(era 点名词自动进黑名单、自审能学新词),
+        缺的就是这条回流。
+        闸门: 只学评审在「时代红线/现代」类问题里**引号点名**、且真出现在
+        本章正文里、且不是台账人物名的 2~6 字词 —— learned_rules 读取时的
+        守门器(防「蔡德茂」事故)照常兜底。
+        """
+        terms = []
+        names = {c.get("name", "") for c in self.roster()}
+        for i in (crit.get("issues") or []):
+            blob = str(i.get("what") or "") + str(i.get("evidence") or "")
+            if not re.search(r"时代红线|现代(?:术语|词|枪械|法医|刑侦|战略)", blob):
+                continue
+            for w in re.findall(r"[「『‘\"“]([一-鿿A-Za-z]{2,6})[」』’\"”]", blob):
+                if w in (text or "") and w not in names and w not in terms:
+                    terms.append(w)
+        if not terms:
+            return 0
+        cur = self.p._load("rules.json", {})
+        have = list(cur.get("forbidden_terms") or [])
+        new = [w for w in terms if w not in have]
+        if not new:
+            return 0
+        cur["forbidden_terms"] = have + new
+        self.p.write("rules.json", json.dumps(cur, ensure_ascii=False, indent=2))
+        self._log(f"  红线词回流黑名单: {'、'.join(new)}（评审点名且正文实出）")
+        return len(new)
+
     def canon_upto(self, n: int) -> List[Dict[str, Any]]:
         """第 n 章视角的台账 —— 只含 chapter<=n 的事实。
 
@@ -6156,6 +6189,10 @@ class Novelist:
         for _c in (crit.get("contradictions") or []):
             if isinstance(_c, dict):
                 self._bump_conflict(n, str(_c.get("fact") or ""))
+        try:
+            self.learn_redline_terms(n, text, crit)
+        except Exception as e:
+            self._ledger(e, "红线词回流跳过")
         # 评审判定该拦, 就不许这一章报「完成」。
         # blocking 是程序按扣分表算出来的(只认有正文原句为证的问题), 它原来
         # 只用来触发一次重写, **没有接进问题台账** —— 于是实测第 4 章

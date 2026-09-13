@@ -630,3 +630,33 @@ def test_台账与硬账不许时间倒挂():
                         {"chapter": 27, "fact": "烟雾弹耗尽"}]
     got = [c["chapter"] for c in o.Novelist.canon_upto(nv, 21)]
     assert got == [0, 21], f"第21章视角不该看见第27章: {got}"
+
+
+def test_红线词回流_点名才学_语域不学():
+    """评审点名「枪管」「膛线」→ 学进黑名单，下一章三选一就地淘汰。
+    评审只说「现代语域/战略术语」没点名 → 学 0 个（语域问题归修补与纪律，
+    乱进黑名单会误杀正常词——「蔡德茂」事故的教训）。人物名恒不学。
+    """
+    from server.orchestrator import Novelist
+    nv = Novelist.__new__(Novelist)
+    nv.roster = lambda: [{"name": "武松"}]
+    nv._log = lambda m: None
+    store = {}
+    class _P:
+        def _load(self, f, d): return store.get(f, d)
+        def write(self, f, t):
+            import json; store[f] = json.loads(t)
+    nv.p = _P()
+
+    crit = {"issues": [
+        {"what": "严重违反时代红线，NPC使用现代枪械术语「枪管」「膛线」",
+         "evidence": "他摸着枪管说膛线磨平了"},
+        {"what": "旁白使用现代战略术语，违反认知红线",
+         "evidence": "基于一种冷酷的战略判断"},          # 没点名 → 不学
+        {"what": "时代红线：出现「武松」？", "evidence": "武松说"},  # 人物名 → 不学
+    ]}
+    text = "他摸着枪管说膛线磨平了。武松皱眉。"
+    n = Novelist.learn_redline_terms(nv, 5, text, crit)
+    got = store["rules.json"]["forbidden_terms"]
+    assert n == 2 and "枪管" in got and "膛线" in got
+    assert "武松" not in got and "战略判断" not in got
