@@ -543,3 +543,19 @@ def test_书级熔断三层都接了():
     assert '"$RC" -eq 4' in ru, "run_until 会把熔断当失败重试 —— 重试只会接着烧"
     gd = (root / "scripts/guard.sh").read_text(encoding="utf-8")
     assert "HALT.md" in gd, "哨兵会把刚熔断的长跑再点着，熔断等于没有"
+
+
+def test_硬账只对盘点句不对动作量():
+    """「开了一发」是动作量不是库存 —— 实测被当成库存报了 120→1 跳变。
+
+    只有「还剩/弹夹里/数了数 N 发」这种盘点句才对账；上下文词按单位扩同义
+    （第 10 章「拉开弹夹。十二发。」附近没有「沙漠之鹰」三个字，物名匹配漏掉）。
+    """
+    from server.accounts import check_prose
+    led = {"底牌": {"item": "底牌", "desc": "沙漠之鹰，120发", "value": 119,
+                    "unit": "发", "chapter": 5, "log": []}}
+    assert check_prose(led, "他拉开弹夹。数了数，还剩十二发。")
+    assert check_prose(led, "他拉开弹夹。十二发。")          # 弹夹本身就是盘点语境
+    assert check_prose(led, "他抬手开了一发，枪声如雷。") == []
+    assert check_prose(led, "弹夹里还剩一百一十九发。") == []
+    assert check_prose(led, "院里放了十二发炮仗。") == []

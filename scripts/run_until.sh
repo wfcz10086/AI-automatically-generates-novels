@@ -57,7 +57,12 @@ if q:
         # 报警」和「没修好却被丢出队列」两种错同时存在。
         tries = int(item.get('tries') or 0) + 1
         try:
-            r = nv.rewrite_chapter(item['ch'], mode='polish', note=item['note'])
+            # 冲突/时间线这类**结构病**, polish(只改语言)治不了 —— 实测 6 章
+            # 「重写之后仍然该拦」全是这一类。升 replace: 剧情可调, 衔接前后。
+            _mode = 'replace' if any(w in str(item.get('note') or '')
+                                     for w in ('冲突', '时间线', '矛盾', '跳变')) \
+                    else 'polish'
+            r = nv.rewrite_chapter(item['ch'], mode=_mode, note=item['note'])
             st = r.get('status') or '?'
             print(f"[repair] 第{item['ch']}章 -> {r.get('score')} / {st}"
                   f" ({r.get('issues') or '无问题'})")

@@ -123,14 +123,27 @@ def check_prose(led: Dict[str, Dict[str, Any]], text: str) -> List[str]:
     """
     bad = []
     t = text or ""
+    #: 库存陈述的标志 —— 只有「还剩/弹夹里/存着 N 发」这种**盘点句**才拿去
+    #: 对账。「开了一发」「一发擦过耳边」是动作量, 不是库存, 拿去对 120 的
+    #: 账就是误报(实测第 12 章「一发」被当成库存报了跳变)。
+    _STOCK = re.compile(r"还剩|只剩|尚余|剩余|还有|存着|库存|弹夹|夹里|匣里|"
+                        r"里面还|里头还|数了数|清点")
+    #: 上下文词按单位扩同义 —— 第 10 章「拉开弹夹。十二发。」附近没有
+    #: 「沙漠之鹰」三个字, 光靠台账物名当场漏掉, 是评审兜住的。
+    _UNIT_CTX = {"发": ["弹", "枪", "铳", "夹", "匣"],
+                 "贯": ["银", "钱", "款", "账"],
+                 "两": ["银", "金"]}
     for k, e in led.items():
-        # 物名取台账键与描述里的 2 字以上词
         names = [k] + re.findall(r"[一-鿿]{2,4}", e.get("desc", ""))
+        names += _UNIT_CTX.get(e["unit"], [])
         for m in _QTY.finditer(t):
             if m.group(2)[0] != e["unit"]:
                 continue
+            before = t[max(0, m.start() - 14):m.start()]
             around = t[max(0, m.start() - 24):m.end() + 8]
-            if not any(nm and nm in around for nm in names if len(nm) >= 2):
+            if not _STOCK.search(before):
+                continue                       # 不是盘点句, 不对账
+            if not any(nm and nm in around for nm in names if len(nm) >= 1):
                 continue
             n = cn_num(m.group(1))
             if n is None:
