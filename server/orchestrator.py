@@ -1888,6 +1888,32 @@ class Novelist:
         self._log(f"  红线词回流黑名单: {'、'.join(new)}（评审点名且正文实出）")
         return len(new)
 
+    def audit_account_changes(self, n: int, text: str) -> List[Dict[str, Any]]:
+        """专职记账微调用。评审顺带报账变的方案在该网关上**8/8 失败** ——
+        提示词加了必填令照样把尾栏整个吞掉。数目连续性太要紧(子弹 119→12
+        那类硬伤就是账断了), 不再指望顺带: 程序单独问, 只问账变, 300 token。
+        """
+        led = self.hard_accounts()
+        if not led:
+            return []
+        items = "；".join(f"{k}（{e['desc']}，当前 {e['value']}{e['unit']}）"
+                          for k, e in led.items())
+        r = call("judging",
+                 f"只做一件事：数出下面这章里这些物品的**消耗或获得**。\n"
+                 f"硬账物品：{items}\n\n"
+                 f"—— 正文 ——\n{dst.soft(text, 6000)}\n\n"
+                 f"只输出 JSON 数组（没有变动就输出 []，不要解释）：\n"
+                 f'[{{"item":"物品名","delta":-1,"why":"哪个事件"}}]',
+                 max_tokens=300, no_continue=True)
+        m = re.search(r"\[.*\]", r.text or "", re.S)
+        if not m:
+            return []
+        try:
+            out = json.loads(m.group(0))
+            return out if isinstance(out, list) else []
+        except Exception:
+            return []
+
     def canon_upto(self, n: int) -> List[Dict[str, Any]]:
         """第 n 章视角的台账 —— 只含 chapter<=n 的事实。
 
@@ -5243,6 +5269,11 @@ class Novelist:
             # 不是模型不听话, 是那句话它根本没看见。
             prompt += ("\n\n【已确立的事实，不得推翻或给出不同结论】\n"
                        + self.shrink(established, 2500, "已确立的事实"))
+        _ohb = _acc.brief(self.hard_accounts())
+        if _ohb:
+            # 硬账也要到排纲层 —— 正文层有它, 细纲层没有, 于是「子弹将尽」
+            # 的戏在细纲就种下了, 正文怎么写都跟台账撞
+            prompt += "\n\n" + _ohb
 
         bg = self.sanitize_facts(self.ground("plot", context=self.asset("outline.md")))
         # 再查一轮「剧情素材」—— plot 那轮查的是写得对不对(器物称谓物价),
@@ -6677,7 +6708,10 @@ class Novelist:
             # 只有**前沿章**才入账 —— 返修第 21 章时若再应用一次「-2 烟雾弹」,
             # 消耗就被记了两遍, 台账从此全错
             if _led and n >= _frontier:
-                for _ln in _acc.apply_changes(_led, d.get("account_changes") or [], n):
+                _chg = d.get("account_changes") or []
+                if not _chg:
+                    _chg = self.audit_account_changes(n, text)
+                for _ln in _acc.apply_changes(_led, _chg, n):
                     self._log("  " + _ln)
                 self.save_accounts(_led)
             cn, added = critic_mod.merge_canon(self.canon(), d.get("new_facts"), n)
