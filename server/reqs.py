@@ -203,6 +203,15 @@ def _reg_all():
         check=lambda nv, n, text: []))     # 范文只求到达, 不验正文
 
     register(Req(
+        id="hard_accounts", source="合同树根账本(子弹这类可计数状态)",
+        stage="chapter", deliver=PROMPT, on_fail=BLOCK, marker="【硬账",
+        why="子弹 119 发在第 15 章突然写成「还有十二发」, 中间没有任何消耗"
+            "情节 —— 链条上每一环都有人管, 唯独数目没有。程序记账、正则对数。",
+        check=lambda nv, n, text: __import__(
+            "server.accounts", fromlist=["x"]).check_prose(
+                nv.hard_accounts(), text)))
+
+    register(Req(
         id="word_range", source="文风包.chapterWords", stage="chapter",
         deliver=PROMPT, on_fail=LEDGER, marker="字",
         why="扩写达标 3163 字，低分重写砍回 2070 还被采纳 —— 守卫只防腰斩，"

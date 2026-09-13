@@ -178,6 +178,13 @@ CATALOG: Dict[str, Dict[str, Any]] = {
                "赋值覆盖、槽位预算挤掉）。模型没看见的要求，措辞再重也没用。",
         "next_action": "看 server/reqs.py 里这条的 marker，顺着它在组装链上找"
                        "断点。"},
+    "account_mismatch": {
+        "severity": MUST, "auto_handle": False,
+        "title": "硬账数目跳变",
+        "why": "正文里写的数量与程序台账对不上（实测：子弹 119 发在第 15 章"
+               "突然写成「还有十二发」，中间没有任何消耗情节）。数量是最该"
+               "程序管的东西 —— 加减是算术，对数是正则。",
+        "next_action": "看 accounts.json 的 log 与本章那句原文，改正文或补消耗。"},
     "meta_leak": {
         "severity": MUST, "auto_handle": False,
         "title": "正文里漏出了规划性词汇或章节回指",

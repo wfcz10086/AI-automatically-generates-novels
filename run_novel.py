@@ -196,7 +196,7 @@ def cmd_run(a):
         co = (p._load("chapter_outlines.json", {}).get(str(idx)) or "").strip()
         return len(co) > 40
 
-    bad_run = 0
+    bad_run, recent = 0, []
     while n <= end:
         outlines = p._load("chapter_outlines.json", {})
         if not _has(n):
@@ -237,7 +237,10 @@ def cmd_run(a):
         # 全建在坏状态上。连片的需人工不是 26 个独立问题, 是同一个根子
         # 在批量产废品 —— 该停下来等人, 不该继续烧。
         bad_run = bad_run + 1 if r.get("status") in ("需人工", "失败") else 0
-        if bad_run >= 5:
+        recent.append(1 if r.get("status") in ("需人工", "失败") else 0)
+        # 连败会被中间零星的「完成」打断 —— 实测 18 章里 12 章需人工, 最长
+        # 连败恰好 4, 卡在阈值之下, 熔断一次没响。加滑窗: 最近 10 章过 6 也停。
+        if bad_run >= 5 or sum(recent[-10:]) >= 6:
             halt = p.dir / "HALT.md"
             halt.write_text(
                 f"# 书级熔断 {time.strftime('%F %T')}\n\n"

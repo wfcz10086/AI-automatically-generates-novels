@@ -90,7 +90,9 @@ def schema_for(dim_names: List[str]) -> str:
             '"contradictions":[{"fact":"与哪条已确立事实冲突","evidence":"正文原句"}],'
             '"new_facts":[{"subject":"人物或事物","fact":"本章确立的不可逆事实",'
             '"kind":"death|rank|betray|marry|destroy|reveal|other"}],'
-            '"tics":["本章出现的、属于套路的叙述装置或句式"]}')
+            '"tics":["本章出现的、属于套路的叙述装置或句式"],'
+            '"account_changes":[{"item":"硬账物名(如 沙漠之鹰/子弹)",'
+            '"delta":-1,"why":"本章哪个事件造成的增减"}]}')
 
 
 CRITIQUE_SCHEMA = (
@@ -184,6 +186,8 @@ def build_prompt(*, title: str, n: int, text: str, prev_texts: List[str],
         f"⚠ scores 里上面列的 {len(dims_list)} 个维度**一个都不能少**，"
         f"每个都要给 0-100 的整数。少一个这次评审就作废。\n"
         f"issues 最多 6 条，只报**有正文原句为证**的。\n"
+        f"account_changes：本章若有【硬账】里物品的**消耗或获得**（开了几枪、"
+        f"花了几笔钱），如实报增减；没动就给空数组。程序会记账并逐章对数。\n"
         f"⚠ 你不判这一章过不过 —— 过不过由程序按你报的问题数和严重度算。\n"
         f"  所以不要为了「让它过」而少报问题，也不要为了「显得严格」而凑数：\n"
         f"  **没有正文原句能指出来的问题，一条都不要写**（写了也不算数，程序会"

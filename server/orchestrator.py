@@ -26,6 +26,7 @@ from . import issues as _iss
 from . import voice as _voice
 from . import reqs as _reqs
 from . import tics as _tics
+from . import accounts as _acc
 
 
 def _norm_key(v: str) -> str:
@@ -1809,6 +1810,22 @@ class Novelist:
                   f"（{'；'.join(r['fact'][:18] for r in rows[:3])}…）")
         return len(rows)
 
+    def hard_accounts(self) -> Dict[str, Dict[str, Any]]:
+        """硬账台账: 子弹这类可计数状态。没有就从合同树根账本种一份。"""
+        led = self.p._load("accounts.json", None)
+        if isinstance(led, dict) and led:
+            return led
+        led = _acc.seed_from_tree(self.p.dir / "tree.json")
+        if led:
+            self.p.write("accounts.json",
+                         json.dumps(led, ensure_ascii=False, indent=1))
+            self._log("硬账开账：" + "；".join(
+                f"{k}={e['value']}{e['unit']}" for k, e in led.items()))
+        return led or {}
+
+    def save_accounts(self, led) -> None:
+        self.p.write("accounts.json", json.dumps(led, ensure_ascii=False, indent=1))
+
     def canon_window(self, cn: List[Dict[str, Any]],
                      cap: int = 40) -> List[Dict[str, Any]]:
         """挑哪几条不可逆事实进提示词。
@@ -1924,6 +1941,9 @@ class Novelist:
                 cons.append(tb)
         except Exception as e:
             self._ledger(e, "措辞禁用表生成跳过")
+        _hb = _acc.brief(self.hard_accounts())
+        if _hb:
+            cons.append("\n" + _hb)
         cn = self.canon()
         if cn and self.con_on("canon"):
             cons.append("【已确立的不可逆事实，绝对不得推翻】\n" + "；".join(
@@ -5997,6 +6017,12 @@ class Novelist:
         for _leak in _tics.meta_leaks(text):
             self.iss.record("meta_leak", _leak)
             self._log(f"  元叙述泄漏：…{_leak}")
+        # 硬账对数: 正文里的「N 发/贯」必须与台账一致 —— 119→12 那类跳变
+        # 是通读 18 章抓出的最硬一条伤, 链条上每一环都有人管, 唯独数目没有。
+        _led = self.hard_accounts()
+        for _d in _acc.check_prose(_led, text):
+            self.iss.record("account_mismatch", _d)
+            self._log("  " + _d)
         # 开局落点点名的专名(FBI 这类)有没有原样写进正文
         for _d in self.beat_names_missing(n, text):
             self.iss.record("beat_name_swapped", _d)
@@ -6019,6 +6045,7 @@ class Novelist:
         # A 类**(那段话根本没进提示词), 不用等下游症状。今天那个 cons bug 就是
         # 只有下游症状可看, 查了三轮。
         _reqs_on = {
+            "hard_accounts": bool(self.hard_accounts()),
             "fewshot_sample": bool(self.style.get("fewshot")),
             "beat_proper_noun": bool(self.beat_for(n)),
             "self_address": True,
@@ -6450,6 +6477,11 @@ class Novelist:
                       f"（重写通过后再收）")
             added = 0
         else:
+            _led = self.hard_accounts()
+            if _led:
+                for _ln in _acc.apply_changes(_led, d.get("account_changes") or [], n):
+                    self._log("  " + _ln)
+                self.save_accounts(_led)
             cn, added = critic_mod.merge_canon(self.canon(), d.get("new_facts"), n)
             if added:
                 self.p.write("canon.json", json.dumps(cn, ensure_ascii=False, indent=2))
