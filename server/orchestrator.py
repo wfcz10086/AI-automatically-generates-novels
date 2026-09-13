@@ -5603,8 +5603,20 @@ class Novelist:
         except Exception:
             self._log("  定点修补: 替换清单不是合法 JSON")
             return text, False
+        def _sentence_at(t: str, pos: int) -> Tuple[int, int]:
+            """pos 所在整句的 [起, 止)。回退替换必须整句换整句 ——
+            实测拿 12 字碎片直接换成新句, 会把「握着黑色铁器…」的后半句
+            拼在新句后面, 制造出比原错更糟的病句。"""
+            a = max(t.rfind(ch, 0, pos) for ch in "。！？\n")
+            a = a + 1 if a >= 0 else 0
+            ends = [t.find(ch, pos) for ch in "。！？"]
+            ends = [e for e in ends if e >= 0]
+            b = (min(ends) + 1) if ends else len(t)
+            return a, b
+
         done = 0
-        for rp in reps if isinstance(reps, list) else []:
+        reps = reps if isinstance(reps, list) else []
+        for idx, rp in enumerate(reps):
             if not isinstance(rp, dict):
                 continue
             old, new = str(rp.get("old") or ""), str(rp.get("new") or "")
@@ -5614,24 +5626,28 @@ class Novelist:
                 text = text.replace(old, new, 1)
                 done += 1
                 continue
-            # 模型常把 evidence 转述一遍 —— 退回用 evidence 里最长的连续
-            # 片段(≥12 字)当锚去找
-            for c in cons:
-                ev = str(c.get("evidence") or "")
-                for L in range(min(len(ev), 60), 11, -4):
-                    for i in range(0, len(ev) - L + 1, 3):
+            # 回退: 只用**本条按序配对**的 contradiction 找锚(第一版扫全部
+            # cons, 把第 2 条的替换文安在第 1 条的句子上 —— 张冠李戴)。
+            # 锚不到就放弃这一条: 有些冲突本来就不是就地能修的(比如
+            # 「细纲要求开枪而正文没开」—— 那要加一场戏, 不是换一句话)。
+            if idx >= len(cons):
+                continue
+            ev = str(cons[idx].get("evidence") or "")
+            frag = ""
+            for L in range(min(len(ev), 40), 11, -4):
+                for i in range(0, len(ev) - L + 1, 3):
+                    if ev[i:i + L] in text:
                         frag = ev[i:i + L]
-                        if frag in text:
-                            text = text.replace(frag, new, 1)
-                            done += 1
-                            break
-                    else:
-                        continue
+                        break
+                if frag:
                     break
-                else:
-                    continue
-                break
-        self._log(f"  定点修补: {done}/{len(cons)} 处冲突句已就地替换")
+            if not frag:
+                continue
+            a, b = _sentence_at(text, text.index(frag))
+            text = text[:a] + new + text[b:]
+            done += 1
+        self._log(f"  定点修补: {done}/{len(cons)} 处冲突句已就地替换"
+                  + ("" if done == len(cons) else "（换不动的多半不是就地能修的, 留给重写）"))
         return text, done > 0
 
     def _fix_self_address(self, card_md: str) -> str:
