@@ -79,7 +79,9 @@ memory:
   foreshadow_show: 24            # 注入多少条未回收伏笔（分层挑选：告急+活跃+中段）
   l2_every: 10                   # 每 N 章压一次 L2 摘要
   index_chapters: true           # 正文入索引（支持「第 30 章埋的伏笔」检索）
-  web_search: true               # L4 召回是否联网补事实
+  # 用户定的: **不开外网搜索**, 用大模型自身知识当检索后端(fact_from_model)。
+  # 这里之前是 true —— 于是整夜每章都去打 bocha, 403 三连也照打, 纯烧时间。
+  web_search: false              # L4 召回是否联网补事实
   web_max_per_chapter: 4         # 单章最多补几个知识点，查过的全书复用
   # 五层记忆的预算配比（占 context_budget 的比例，合计建议 <= 0.96）
   #   改这里就能控制「模型记住什么」：想更贴合远期伏笔就加大 L4_recall，

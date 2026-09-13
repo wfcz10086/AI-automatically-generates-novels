@@ -196,6 +196,7 @@ def cmd_run(a):
         co = (p._load("chapter_outlines.json", {}).get(str(idx)) or "").strip()
         return len(co) > 40
 
+    bad_run = 0
     while n <= end:
         outlines = p._load("chapter_outlines.json", {})
         if not _has(n):
@@ -230,6 +231,24 @@ def cmd_run(a):
               f"{' [已重写]' if r['rewritten'] else ''} {r['elapsed']:.1f}s"
               + (f"  【{r['status']}：{r['issues']}】"
                  if r.get("status") and r["status"] != "完成" else ""))
+        # 书级熔断。逐章的「需人工」只是记一笔+进返修队列, 流水线照冲 ——
+        # 实测一夜写到 120 章, 其中 84 章需人工, 返修队列积压 87 条,
+        # 三振机制第 94 章就报了「事实本身存疑」, 之后还继续写了 26 章,
+        # 全建在坏状态上。连片的需人工不是 26 个独立问题, 是同一个根子
+        # 在批量产废品 —— 该停下来等人, 不该继续烧。
+        bad_run = bad_run + 1 if r.get("status") in ("需人工", "失败") else 0
+        if bad_run >= 5:
+            halt = p.dir / "HALT.md"
+            halt.write_text(
+                f"# 书级熔断 {time.strftime('%F %T')}\n\n"
+                f"连续 {bad_run} 章被判「需人工」（至第 {r['chapter']} 章）。\n"
+                f"这不是 {bad_run} 个独立问题，是同一个根子在批量产废品。\n\n"
+                f"看：audit/ 最近几章的 critique.issues（每条带正文原句）、\n"
+                f"canon_conflicts.json（被反复推翻的事实）、repair_queue.json。\n\n"
+                f"处理完删掉本文件，守护会自动续跑。\n", encoding="utf-8")
+            print(f"\n!! 书级熔断：连续 {bad_run} 章需人工，已写 HALT.md 并停跑。"
+                  f"根因处理完删掉它，守护自动续跑。")
+            sys.exit(4)
         n += 1
 
     done = len(p.state["done"])

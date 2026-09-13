@@ -500,3 +500,46 @@ def test_元叙述词汇类只在叙述里算_台词是戏内的():
     assert meta_leaks('他递来纸笔，“现在，写个草稿。字要大。”') == []
     assert meta_leaks('这一段只是草稿，后面还要修订。')
     assert meta_leaks('他说：“如前所述，前文提到过。”')
+
+
+# ───────── 状态型「事实」不许进不可逆台账 + 书级熔断 ─────────
+
+def test_状态型事实不入台账():
+    """实测的死亡螺旋：第 94 章把「双腿神经坏死，严禁站立」当不可逆事实入账，
+    之后主角每站起来一次就是冲突扣 35 分，章章被拦；台账越长拦得越多，
+    程序分从 41 崩到 21，84/120 章需人工。
+    错收一条毒 26 章，漏收一条只少一道闸 —— 代价不对称，宁可拒。
+    """
+    from server.critic import merge_canon
+    poison = [
+        {"subject": "甲", "fact": "双腿神经坏死，严禁站立、行走", "kind": "other"},
+        {"subject": "甲", "fact": "仅余现银二贯九百文", "kind": "other"},
+        {"subject": "甲", "fact": "伤势沉重暂时无法出门", "kind": "other"},
+    ]
+    for f in poison:
+        _, n = merge_canon([], [f], 5)
+        assert n == 0, f"状态型事实进账了：{f['fact']}"
+    real = [
+        {"subject": "王婆", "fact": "死于狮子楼枪下", "kind": "death"},
+        {"subject": "文书", "fact": "验尸文书已被当众烧毁", "kind": "destroy"},
+        {"subject": "潘金莲", "fact": "背叛西门庆投靠赵德昭", "kind": "betray"},
+    ]
+    for f in real:
+        _, n = merge_canon([], [f], 5)
+        assert n == 1, f"真不可逆的被误拒：{f['fact']}"
+
+
+def test_书级熔断三层都接了():
+    """逐章「需人工」只是记一笔+进返修，流水线照冲 —— 实测三振第 94 章就
+    报了「事实本身存疑」，之后还继续写了 26 章，全建在坏状态上。
+    连片需人工不是 N 个独立问题，是同一个根子在批量产废品。
+    """
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent.parent
+    rn = (root / "run_novel.py").read_text(encoding="utf-8")
+    assert "bad_run" in rn and "HALT.md" in rn and "sys.exit(4)" in rn, \
+        "run_novel 没有熔断"
+    ru = (root / "scripts/run_until.sh").read_text(encoding="utf-8")
+    assert '"$RC" -eq 4' in ru, "run_until 会把熔断当失败重试 —— 重试只会接着烧"
+    gd = (root / "scripts/guard.sh").read_text(encoding="utf-8")
+    assert "HALT.md" in gd, "哨兵会把刚熔断的长跑再点着，熔断等于没有"

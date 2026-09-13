@@ -294,6 +294,26 @@ def _alive_dead_conflict(canon: List[Dict[str, Any]], subj: str,
     return None
 
 
+#: 状态型「事实」的指纹 —— 这些是**会变的**, 进不可逆台账就是下毒。
+#: 实测的死亡螺旋: 第 94 章把「双腿神经坏死, 严禁站立」当不可逆事实入账,
+#: 之后主角每站起来一次就是「与既定事实冲突」扣 35 分, 章章被拦;
+#: 「仅余现银二贯九百文」同理 —— 钱花掉就变, 却被拿来拦后面所有用钱的戏。
+#: 台账越长拦得越多, 程序分从 41 一路崩到 21, 84/120 章需人工。
+#: 错收一条毒 26 章, 漏收一条只少一道闸 —— 代价不对称, 宁可拒。
+_STATEY = re.compile(
+    r"严禁|不得|禁止|不许|必须|暂时|目前|当前|尚未|正在|身处|躺在"          # 指令/临时
+    r"|伤势|重伤|受伤|灼伤|骨折|昏迷|失去知觉|坏死|虚弱|中毒|残废|瘫痪"      # 伤病(小说里都能治)
+    r"|现银|仅余|剩余|余额|[0-9一二三四五六七八九十百千]+[贯两文钱枚发颗]")  # 会变的数量
+
+
+def _is_statey(fact: str, kind: str) -> str:
+    """返回拒收原因; 空串=可入账。死亡不拦(死而复生该由生死矛盾那道闸管)。"""
+    if kind == "death":
+        return ""
+    m = _STATEY.search(fact or "")
+    return m.group(0) if m else ""
+
+
 def merge_canon(canon: List[Dict[str, Any]], new_facts: List[Dict[str, Any]],
                 chapter: int, limit: int = 300) -> tuple:
     """把本章确立的事实并进台账，返回 (新台账, 新增条数)。"""
@@ -304,6 +324,11 @@ def merge_canon(canon: List[Dict[str, Any]], new_facts: List[Dict[str, Any]],
             continue
         subj, fact = str(f.get("subject", "")).strip(), str(f.get("fact", "")).strip()
         if not subj or not fact or len(fact) > 80:
+            continue
+        sty = _is_statey(fact, str(f.get("kind") or ""))
+        if sty:
+            print(f"[canon] 拒收第{chapter}章「{subj}：{fact[:30]}」—— "
+                  f"含「{sty}」, 是状态不是不可逆事实（状态会变, 入账就是下毒）")
             continue
         clash = _alive_dead_conflict(canon, subj, fact)
         if clash:
