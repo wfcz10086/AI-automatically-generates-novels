@@ -140,6 +140,21 @@ class OpenAICompatProvider(BaseProvider):
         # 管不了「每隔 50 秒吐一个字」这种慢性挂起 —— 那种情况块间超时永远
         # 不触发, 而这一章能写到天亮。
         _t0 = time.time()
+        try:
+            yield from self._iter_stream(resp, _t0)
+        except ProviderError:
+            raise
+        except Exception as e:
+            # 流中途断(读超时/连接重置)是 requests/urllib3 的原始异常 ——
+            # 实测它一路炸穿 call→step_chapter→cmd_run, 整批被杀,
+            # 而且原始栈把网关主机名直接打进了日志(redact 只管 _log,
+            # 管不到默认异常打印)。转成脱敏的 ProviderError, from None 掐断
+            # 原始栈, 让上层能按「这次调用失败」处理而不是全军覆没。
+            from server.issues import redact
+            resp.close()
+            raise ProviderError(f"流中断: {redact(str(e))[:200]}") from None
+
+    def _iter_stream(self, resp, _t0):
         for raw in resp.iter_lines(decode_unicode=True):
             if time.time() - _t0 > self.CALL_BUDGET:
                 resp.close()

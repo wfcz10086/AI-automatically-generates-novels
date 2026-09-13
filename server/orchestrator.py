@@ -438,13 +438,23 @@ def call(profile: str, prompt: str, on_delta: Optional[Callable[[str], None]] = 
            [{"role": "user", "content": prompt}]
     t0 = time.time()
     text, think = [], []
-    for d in provider.stream(msgs, **kw):
-        if d.text:
-            text.append(d.text)
-            if on_delta:
-                on_delta(d.text)
-        if d.reasoning:
-            think.append(d.reasoning)
+    _stream_err = ""
+    try:
+        for d in provider.stream(msgs, **kw):
+            if d.text:
+                text.append(d.text)
+                if on_delta:
+                    on_delta(d.text)
+            if d.reasoning:
+                think.append(d.reasoning)
+    except Exception as e:
+        # 流中断不炸穿。半截产物够长就用(下游的字数闸/评审会兜),
+        # 一个字没有就走空输出重试。实测一次读超时把整批杀掉,
+        # 当前章白写 —— 中断只该损失这一次调用, 不该损失整批。
+        _stream_err = str(e)[:120]
+        print(f"  [call] {profile} 流中断（{_stream_err}），"
+              f"已收 {sum(len(x) for x in text)} 字"
+              + ("，用半截产物继续" if text else "，按空输出处理"), flush=True)
     out = "".join(text).strip()
     rsn = "".join(think)
     raw_usage = getattr(provider, "last_usage", {}) or {}
@@ -452,6 +462,12 @@ def call(profile: str, prompt: str, on_delta: Optional[Callable[[str], None]] = 
         out = provider.salvage(rsn)
         if on_delta and out:
             on_delta(out)
+    if not out and _stream_err and _retry:
+        # 流中断且颗粒无收 —— 重试一次(网关抖一下很常见, 不重试等于把
+        # 偶发抖动放大成整章失败)
+        print(f"  [call] {profile} 流中断且无产出，重试一次", flush=True)
+        return call(profile, prompt, on_delta, system, max_tokens,
+                    _retry=False, no_continue=no_continue)
     if not out and _retry:       # ★ 兜底 2: 关思考重试, 把 token 全给正文
         # 这条兜底救得了单次调用，却会**把双倍开销藏起来**：实测细纲审阅每一段
         # 都先烧光预算只产出思考、再靠这次重试拿结果，日志上只有一行「输出为空」，
