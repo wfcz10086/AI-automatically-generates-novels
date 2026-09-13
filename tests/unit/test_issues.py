@@ -602,6 +602,9 @@ def test_自愈三级递进都在():
     # 是磨着前进; 按次数一刀切会把正常前进误判成乒乓
     assert "ping_pong" in heal and "hw" in heal, \
         "止损退回按次数计了 —— 会把有进度的回炉误判成乒乓"
+    # 止损唯一判据是高水位单调 —— 回到同一坏点但盖得更高不算乒乓
+    assert "hw <= prev_hw" in heal, \
+        "止损又按回滚点判了 —— 同坑盖高会被误判(05:31 教训)"
     gd = (root / "scripts/guard.sh").read_text(encoding="utf-8")
     assert "heal_halt.py" in gd, "守护没接自愈, 熔断还是纯等人"
     assert "grep -q MANUAL" in gd, "MANUAL 档没被尊重, 会绕过人工"

@@ -88,22 +88,23 @@ def main() -> int:
     hs["_history"] = hist[-10:]
     hs_f.write_text(json.dumps(hs, ensure_ascii=False, indent=1), encoding="utf-8")
 
-    # 止损看**方向**, 不是次数。乒乓 = 没有进度。
-    # 尺子第一版量错了(04:03 误标 MANUAL): 拿本次高水位减**上次记录的高水位**,
-    # 而上次记的是回滚前的虚高值(回滚到 14 前书已 35 章, 记了 35), 这轮
-    # 36-35=1 被判「没进度」—— 可实际是从地板 13 重建到 36, 净进 23 章。
-    # 正确的尺: 本次高水位 对 **上次回滚后的地板**(prev.n0 - 1) 比 ——
-    # 上次砸到地板后又盖起来多少层, 那才是这一轮的真实产出。
-    prev_floor = (int(prev.get("n0") or 1) - 1) if prev else 0
-    ping_pong = bool(prev) and (
-        n0 <= int(prev.get("n0") or 0)
-        or hw - prev_floor < 3)
+    # 止损唯一判据: **高水位涨不涨**。乒乓 = 盖不动了, 不是「回到同一个坑」。
+    # 尺子改了两版才对:
+    #   v1 拿本次 hw 减上次记录的 hw(回滚前虚高值)—— 误判净进 23 章的一轮(04:03)
+    #   v2 加了 n0<=prev.n0 单独一条 —— 又把 19→32→19→46(同坑但盖高 14 章)
+    #      判成乒乓(05:31)。回到同一个坏点不是罪, 盖不起来才是。
+    # v3: 只看 hw 是否超过上一轮的 hw。它单调不减 = 每轮都比上轮盖得高 =
+    # 在推进(热弧长, 本就要多轮); hw 停住 = 真原地打转。
+    # 极端保险: 同段回炉超过 4 次(而不是 2)才强制收手, 防「每轮 +1 章」的
+    # 病态慢爬 —— 正常一轮净产出十几章, 到不了这个数。
+    prev_hw = int(prev.get("hw") or 0) if prev else 0
+    ping_pong = bool(prev) and hw <= prev_hw
 
-    if hs[key] > MAX_REROLL_PER_SEGMENT or ping_pong:
+    if hs[key] > 4 or ping_pong:
         # ── 三级: 真的等人 ──
-        why = (f"同段回炉 {hs[key]-1} 次" if hs[key] > MAX_REROLL_PER_SEGMENT
-               else f"回炉没有进度(回滚点 {prev.get('n0')}→{n0}, "
-                    f"自上次地板 {prev_floor} 只盖到 {hw})，在打乒乓")
+        why = (f"同段回炉 {hs[key]-1} 次(病态慢爬)" if hs[key] > 4
+               else f"回炉盖不动了(上轮高水位 {prev_hw}, 这轮 {hw}, 没超过)，"
+                    f"在打乒乓")
         halt.write_text(
             halt.read_text(encoding="utf-8")
             + f"\n\nMANUAL: {why}，仍连片被拦。"
