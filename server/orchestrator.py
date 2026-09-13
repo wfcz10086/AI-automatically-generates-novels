@@ -1855,6 +1855,22 @@ class Novelist:
     def save_accounts(self, led) -> None:
         self.p.write("accounts.json", json.dumps(led, ensure_ascii=False, indent=1))
 
+    def canon_upto(self, n: int) -> List[Dict[str, Any]]:
+        """第 n 章视角的台账 —— 只含 chapter<=n 的事实。
+
+        **时间倒挂**是返修永远过不了的真凶: 返修第 21 章时评审拿全书台账,
+        「第 27 章确立: 烟雾弹已消耗最后两枚」把第 21 章正常用烟雾弹拦成
+        矛盾。顺写时全部事实本来就 <=n, 此过滤零影响; 返修/重写老章时,
+        未来的事实不许穿越回来当判据。种子事实(chapter=0)恒在。
+        """
+        return [c for c in self.canon() if int(c.get("chapter") or 0) <= n]
+
+    def accounts_at(self, n: int) -> Dict[str, Dict[str, Any]]:
+        """第 n 章视角的硬账 —— 按流水回放到 <=n。同上, 防止拿终局子弹数
+        去对中段章的正文。"""
+        from . import rollback as _rb
+        return _rb.replay_accounts(self.hard_accounts(), n + 1)
+
     def canon_window(self, cn: List[Dict[str, Any]],
                      cap: int = 40) -> List[Dict[str, Any]]:
         """挑哪几条不可逆事实进提示词。
@@ -1970,10 +1986,10 @@ class Novelist:
                 cons.append(tb)
         except Exception as e:
             self._ledger(e, "措辞禁用表生成跳过")
-        _hb = _acc.brief(self.hard_accounts())
+        _hb = _acc.brief(self.accounts_at(n))
         if _hb:
             cons.append("\n" + _hb)
-        cn = self.canon()
+        cn = self.canon_upto(n)
         if cn and self.con_on("canon"):
             cons.append("【已确立的不可逆事实，绝对不得推翻】\n" + "；".join(
                 f"{c['subject']}{c['fact']}(第{c['chapter']}章)"
@@ -6160,7 +6176,7 @@ class Novelist:
             self._log(f"  元叙述泄漏：…{_leak}")
         # 硬账对数: 正文里的「N 发/贯」必须与台账一致 —— 119→12 那类跳变
         # 是通读 18 章抓出的最硬一条伤, 链条上每一环都有人管, 唯独数目没有。
-        _led = self.hard_accounts()
+        _led = self.accounts_at(n)
         for _d in _acc.check_prose(_led, text):
             self.iss.record("account_mismatch", _d)
             self._log("  " + _d)
@@ -6539,7 +6555,7 @@ class Novelist:
             prompt = critic_mod.build_prompt(
                 title=self.p.meta.get("title", ""), n=n, text=text, prev_texts=prev,
                 world=world_plus, roster=self.p.read("characters.md"),
-                canon=self.canon(), outline=outline_txt,
+                canon=self.canon_window(self.canon_upto(n)), outline=outline_txt,
                 budget_chars=budget, recalled=recalled, digests=digests,
                 roles=self.p.state.get("roles", {}), timeline=timeline,
                 # 维度三来源: 通遍固有的 + 真实历史专属的 + **本书文风包声明的**。
@@ -6619,7 +6635,11 @@ class Novelist:
             added = 0
         else:
             _led = self.hard_accounts()
-            if _led:
+            _frontier = max([0] + [int((e.get("log") or [{}])[-1].get("chapter") or 0)
+                                   for e in _led.values()])
+            # 只有**前沿章**才入账 —— 返修第 21 章时若再应用一次「-2 烟雾弹」,
+            # 消耗就被记了两遍, 台账从此全错
+            if _led and n >= _frontier:
                 for _ln in _acc.apply_changes(_led, d.get("account_changes") or [], n):
                     self._log("  " + _ln)
                 self.save_accounts(_led)

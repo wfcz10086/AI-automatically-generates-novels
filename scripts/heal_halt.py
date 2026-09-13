@@ -82,16 +82,25 @@ def main() -> int:
     key = str(n0)
     hs[key] = int(hs.get(key) or 0) + 1
     hist = list(hs.get("_history") or [])
-    hist.append({"n0": n0, "at": time.strftime("%m%d_%H%M")})
+    hw = len(p.state.get("done", []))          # 高水位: 现有完成章数
+    prev = hist[-1] if hist else None
+    hist.append({"n0": n0, "hw": hw, "at": time.strftime("%m%d_%H%M")})
     hs["_history"] = hist[-10:]
     hs_f.write_text(json.dumps(hs, ensure_ascii=False, indent=1), encoding="utf-8")
-    recent_rerolls = len(hist[-6:])
 
-    if hs[key] > MAX_REROLL_PER_SEGMENT or recent_rerolls >= 3:
+    # 止损看**方向**, 不是次数。实测一夜两轮回炉(n0: 7→14, 章数 7→27) ——
+    # 那是磨着前进, 不是乒乓; 按「近 6 次自愈回炉 ≥3」一刀切, 第三轮就会把
+    # 正常前进误判成乒乓标 MANUAL。乒乓的定义是**没有进度**:
+    #   n0 不再前进(回滚点倒退或原地), 或距上次回炉净增章数 < 3。
+    ping_pong = bool(prev) and (
+        n0 <= int(prev.get("n0") or 0)
+        or hw - int(prev.get("hw") or 0) < 3)
+
+    if hs[key] > MAX_REROLL_PER_SEGMENT or ping_pong:
         # ── 三级: 真的等人 ──
         why = (f"同段回炉 {hs[key]-1} 次" if hs[key] > MAX_REROLL_PER_SEGMENT
-               else f"近 {recent_rerolls} 次自愈全在回炉(起点 "
-                    f"{[h['n0'] for h in hist[-3:]]}，在打乒乓)")
+               else f"回炉没有进度(回滚点 {prev.get('n0')}→{n0}, "
+                    f"章数 {prev.get('hw')}→{hw})，在打乒乓")
         halt.write_text(
             halt.read_text(encoding="utf-8")
             + f"\n\nMANUAL: {why}，仍连片被拦。"

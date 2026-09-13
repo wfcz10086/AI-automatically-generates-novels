@@ -598,6 +598,35 @@ def test_自愈三级递进都在():
     heal = (root / "scripts/heal_halt.py").read_text(encoding="utf-8")
     assert "rollback_to" in heal and "MAX_REROLL_PER_SEGMENT" in heal
     assert "MANUAL" in heal, "没有终点档, 会无限回炉烧钱"
+    # 止损必须看**方向**不是次数: 实测一夜两轮回炉 n0 7→14、章数 7→27,
+    # 是磨着前进; 按次数一刀切会把正常前进误判成乒乓
+    assert "ping_pong" in heal and "hw" in heal, \
+        "止损退回按次数计了 —— 会把有进度的回炉误判成乒乓"
     gd = (root / "scripts/guard.sh").read_text(encoding="utf-8")
     assert "heal_halt.py" in gd, "守护没接自愈, 熔断还是纯等人"
     assert "grep -q MANUAL" in gd, "MANUAL 档没被尊重, 会绕过人工"
+
+
+def test_台账与硬账不许时间倒挂():
+    """返修第 21 章时，「第 27 章确立：烟雾弹已消耗最后两枚」被拿来拦
+    第 21 章正常使用烟雾弹 —— 未来的事实穿越回来当判据，中段章的返修
+    永远过不了，MANUAL 就是这么被逼出来的。
+    """
+    import inspect
+    from server import orchestrator as o
+    assert hasattr(o.Novelist, "canon_upto") and hasattr(o.Novelist, "accounts_at")
+    crit_src = inspect.getsource(o.Novelist.step_critique)
+    assert "canon_upto(n)" in crit_src, "评审还在拿全书台账判老章"
+    ctx_src = inspect.getsource(o.Novelist.build_context)
+    assert "canon_upto(n)" in ctx_src and "accounts_at(n)" in ctx_src
+    ch_src = inspect.getsource(o.Novelist.step_chapter)
+    assert "accounts_at(n)" in ch_src, "硬账对数还在拿终局值对中段章"
+    assert "_frontier" in crit_src, "返修老章会把消耗重复入账"
+
+    # 纯函数验证
+    nv = o.Novelist.__new__(o.Novelist)
+    nv.canon = lambda: [{"chapter": 0, "fact": "种子"},
+                        {"chapter": 21, "fact": "用了烟雾弹"},
+                        {"chapter": 27, "fact": "烟雾弹耗尽"}]
+    got = [c["chapter"] for c in o.Novelist.canon_upto(nv, 21)]
+    assert got == [0, 21], f"第21章视角不该看见第27章: {got}"
