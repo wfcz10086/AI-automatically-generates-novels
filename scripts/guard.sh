@@ -50,8 +50,16 @@ while :; do
       echo "[$(date '+%T')] 已完本(DONE.md 在)，哨兵退出" | tee -a "$LOG"; break
     fi
     if [ -f "projects/$SLUG/HALT.md" ]; then
-      [ $((STUCK % 10)) -eq 0 ] && echo "[$(date '+%T')] 熔断中(HALT.md 在)，等人处理" | tee -a "$LOG"
-      STUCK=$((STUCK+1)); sleep "$EVERY" 8>&-; continue
+      if grep -q MANUAL "projects/$SLUG/HALT.md"; then
+        [ $((STUCK % 10)) -eq 0 ] && echo "[$(date '+%T')] 熔断·已标 MANUAL，等人处理" | tee -a "$LOG"
+        STUCK=$((STUCK+1)); sleep "$EVERY" 8>&-; continue
+      fi
+      # 自愈三级递进: replace 返修 → 回炉发散(回滚坏段+细纲重排) → 标 MANUAL。
+      # 原来这里纯等人 —— 但连片坏段的第一响应本该是**自动回炉发散**,
+      # 种子和合同树都在, 重新三候选拆一遍是机器自己的活。
+      echo "[$(date '+%T')] 熔断，启动自愈(返修→回炉发散)" | tee -a "$LOG"
+      python3 scripts/heal_halt.py "$TITLE" >> "$LOG" 2>&1 8>&-
+      continue
     fi
     echo "[$(date '+%T')] 长跑不在，拉起（当前 $NOW/$TGT）" | tee -a "$LOG"
     setsid bash scripts/run_until.sh "$TITLE" "$TGT" "$BATCH" >> "$LOG" 2>&1 < /dev/null 8>&- &

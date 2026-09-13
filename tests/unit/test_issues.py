@@ -559,3 +559,45 @@ def test_硬账只对盘点句不对动作量():
     assert check_prose(led, "他抬手开了一发，枪声如雷。") == []
     assert check_prose(led, "弹夹里还剩一百一十九发。") == []
     assert check_prose(led, "院里放了十二发炮仗。") == []
+
+
+# ───────── 回炉发散：返修的第三档 ─────────
+
+def test_回滚把每类状态都截干净():
+    """清不干净等于没回滚 —— 残留的旧事实会立刻把新写的章再拦一遍。"""
+    from server import rollback as rb
+
+    canon = [{"chapter": 0, "fact": "种子事实"}, {"chapter": 3, "fact": "a"},
+             {"chapter": 8, "fact": "坏段里的"}]
+    assert [c["chapter"] for c in rb.prune_canon(canon, 4)] == [0, 3]
+
+    st = rb.prune_state({"done": [1, 2, 3, 8, 9], "current": 9,
+                         "summaries": {"2": "x", "8": "y", "roles": "z"}}, 4)
+    assert st["done"] == [1, 2, 3] and st["current"] == 3
+    assert "8" not in st["summaries"] and "roles" in st["summaries"]
+
+    co = rb.prune_outlines({"3": "留", "4": "删", "12": "删"}, 4)
+    assert list(co) == ["3"]
+
+    led = {"底牌": {"value": 12, "unit": "发", "chapter": 10,
+                    "log": [{"chapter": 0, "value": 120},
+                            {"chapter": 3, "value": 119},
+                            {"chapter": 10, "value": 12}]}}
+    out = rb.replay_accounts(led, 4)
+    assert out["底牌"]["value"] == 119, "硬账要按流水回放到坏段之前"
+    assert out["底牌"]["chapter"] == 3
+
+    q = rb.prune_queue([{"ch": 2}, {"ch": 8}], 4)
+    assert [x["ch"] for x in q] == [2]
+
+
+def test_自愈三级递进都在():
+    """polish → replace → reroll(回炉发散) → MANUAL。缺一级就退化成傻等。"""
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent.parent
+    heal = (root / "scripts/heal_halt.py").read_text(encoding="utf-8")
+    assert "rollback_to" in heal and "MAX_REROLL_PER_SEGMENT" in heal
+    assert "MANUAL" in heal, "没有终点档, 会无限回炉烧钱"
+    gd = (root / "scripts/guard.sh").read_text(encoding="utf-8")
+    assert "heal_halt.py" in gd, "守护没接自愈, 熔断还是纯等人"
+    assert "grep -q MANUAL" in gd, "MANUAL 档没被尊重, 会绕过人工"
