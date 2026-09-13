@@ -197,7 +197,10 @@ def cmd_run(a):
         return len(co) > 40
 
     bad_run, recent = 0, []
-    _cap_words = int(((cfg.get("limits") or {}).get("max_total_words")) or 0)
+    # cfg 是别的函数作用域里的 —— 这里得自己加载(NameError 实测把每一轮
+    # 启动都掐死在进章之前, 守护重试五轮全崩)。
+    _cfg = load_settings()
+    _cap_words = int(((_cfg.get("limits") or {}).get("max_total_words")) or 0)
     while n <= end:
         # 总字数上限(UI「单本总字数上限」)。settings 里一直有这个键,
         # 从没有任何人读过 —— 四个死参数之三。到线不算故障, 是**完本**:
