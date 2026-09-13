@@ -32,13 +32,25 @@
 
 ### 界面
 
-| 工作台 | 章节正文 |
+| 工作台 | 新建项目（四种内容类型） |
 |---|---|
-| ![工作台](docs/screenshots/rd-dashboard.png) | ![章节](docs/screenshots/rd-chapters.png) |
+| ![工作台](docs/screenshots/rd-dashboard.png) | ![新建项目](docs/screenshots/rd-new-project.png) |
 
-| 结构（合同树） | 全局设置 |
+| 章节正文 | 结构（合同树） |
 |---|---|
-| ![合同树](docs/screenshots/rd-structure.png) | ![设置](docs/screenshots/rd-settings.png) |
+| ![章节](docs/screenshots/rd-chapters.png) | ![合同树](docs/screenshots/rd-structure.png) |
+
+| 大纲与分章细纲 | 记忆（五层预算） |
+|---|---|
+| ![大纲](docs/screenshots/rd-outline.png) | ![记忆](docs/screenshots/rd-memory.png) |
+
+| 质检 | 包管理 |
+|---|---|
+| ![质检](docs/screenshots/rd-quality.png) | ![包管理](docs/screenshots/rd-packs.png) |
+
+| 导出 | 全局设置 |
+|---|---|
+| ![导出](docs/screenshots/rd-export.png) | ![设置](docs/screenshots/rd-settings.png) |
 
 ## 快速开始
 
