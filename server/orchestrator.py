@@ -386,6 +386,10 @@ THINK_BUDGET_X = 3
 CONTINUE_ROUNDS = 3
 
 
+from .settings import load as _load_settings
+_SET = _load_settings()
+
+
 def call(profile: str, prompt: str, on_delta: Optional[Callable[[str], None]] = None,
          system: str = "", max_tokens: Optional[int] = None,
          _retry: bool = True, _cont: int = 0,
@@ -398,6 +402,15 @@ def call(profile: str, prompt: str, on_delta: Optional[Callable[[str], None]] = 
     provider, kw = registry.resolve(profile)
     if _BOOK_MODEL:
         kw["model"] = _BOOK_MODEL
+    # UI 的「正文温度/规划温度」生效。此前 providers.yaml 的 profile 写死
+    # 1.0/0.8, 设置页那两个旋钮**从没被任何人读过** —— 用户问「这些参数是不是
+    # 全部都用到」逐项对出来的四个死参数之一。UI 是用户声明的意图, 优先于
+    # profile 里的调优值; 没设就用 profile 的。
+    _g = _SET.get("generation") or {}
+    if profile == "drafting" and _g.get("temperature_draft") is not None:
+        kw["temperature"] = float(_g["temperature_draft"])
+    elif profile == "planning" and _g.get("temperature_plan") is not None:
+        kw["temperature"] = float(_g["temperature_plan"])
     if not _retry:
         kw["thinking"] = False
     if max_tokens:
@@ -5846,8 +5859,12 @@ class Novelist:
             tag = "达标" if cn3 >= floor else f"仍差 {floor - cn3} 字"
             self._log(f"第{n}章扩写第{round_}轮 {was} → {cn3} 字（{tag}）")
 
-        # 不合格自动重写一次 (只做一轮, 避免无限循环烧钱)
-        if a["score"] < retry_on_low and text:
+        # 不合格自动重写, 轮数吃 UI 的 max_rewrites(死参数之二: settings 里
+        # 一直有 quality.max_rewrites, 这里写死「只做一轮」, 旋钮从没生效)。
+        _mr = int((self.q.get("max_rewrites") or 1))
+        for _rw in range(_mr):
+            if not (a["score"] < retry_on_low and text):
+                break
             probs = "；".join(f"{i['type']}{i.get('samples','')}" for i in a["issues"][:6])
             over_note = ""
             if a["stats"]["cn"] > target * 1.15:

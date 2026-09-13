@@ -46,6 +46,9 @@ while :; do
   pgrep -f "run_novel.py run --title $TITLE" >/dev/null 2>&1 && ALIVE=1
   if [ "$ALIVE" -eq 0 ]; then
     # 熔断旗在就不拉 —— 否则哨兵每 3 分钟把刚熔断的长跑再点着, 熔断等于没有。
+    if [ -f "projects/$SLUG/DONE.md" ]; then
+      echo "[$(date '+%T')] 已完本(DONE.md 在)，哨兵退出" | tee -a "$LOG"; break
+    fi
     if [ -f "projects/$SLUG/HALT.md" ]; then
       [ $((STUCK % 10)) -eq 0 ] && echo "[$(date '+%T')] 熔断中(HALT.md 在)，等人处理" | tee -a "$LOG"
       STUCK=$((STUCK+1)); sleep "$EVERY" 8>&-; continue

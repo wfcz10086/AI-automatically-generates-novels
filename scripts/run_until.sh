@@ -33,6 +33,8 @@ while [ "$(count)" -lt "$TARGET" ]; do
   # 4 = 书级熔断: 连片需人工, 同一个根子在批量产废品。不是失败, 不重试 ——
   # 重试只会接着烧。人处理完删掉 HALT.md, 守护那层会重新拉起。
   [ "$RC" -eq 4 ] && { echo "!! 书级熔断, 长跑退出等人 $(date '+%T')" | tee -a "$LOG"; exit 0; }
+  # 5 = 达到总字数上限, 完本 —— 不是故障
+  [ "$RC" -eq 5 ] && { echo "== 达到总字数上限, 完本 $(date '+%T')" | tee -a "$LOG"; exit 0; }
   if [ "$AFTER" -le "$BEFORE" ]; then
     FAILS=$((FAILS+1))
     echo "!! 本轮无进展（$BEFORE -> $AFTER），第 $FAILS 次；60s 后重试" | tee -a "$LOG"

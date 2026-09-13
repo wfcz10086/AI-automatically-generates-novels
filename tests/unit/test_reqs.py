@@ -232,3 +232,40 @@ def test_槽内最高优先级的块永远不丢():
            "⚠️ 普通纪律" + "普" * 300]
     kept = enforce_slots(list(seg), index=0)
     assert any("人物纪律" in b for b in kept), "最高优先级的块被预算饿死了"
+
+
+def test_设置页每个参数都有人读():
+    """用户问「这些参数是不是全部都用到」，逐项对出四个死参数：
+
+    正文温度/规划温度（providers.yaml 写死 1.0，UI 旋钮从没被读过）、
+    每章最多重写次数（代码写死「只做一轮」）、单本总字数上限（没人查）。
+    参数和字段一样：没有消费者的旋钮是骗人的 —— 用户以为拧了有用。
+    """
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent.parent
+    blob = ""
+    for pat in ("server/**/*.py", "scripts/*.py", "scripts/*.sh", "run_novel.py"):
+        for f in root.glob(pat):
+            blob += f.read_text(encoding="utf-8", errors="ignore")
+
+    NEED = {  # settings 键 → 至少出现在引擎代码里
+        "chapter_words_min": "字数下限", "chapter_words_max": "字数上限",
+        "max_chapters": "章节上限", "max_total_words": "总字数上限",
+        "outline_batch": "每批细纲", "temperature_draft": "正文温度",
+        "temperature_plan": "规划温度", "audit_pass_score": "AI味合格线",
+        "max_rewrites": "重写次数", "recap_every": "概要间隔",
+        "l2_every": "L2间隔", "recent_chapters": "最近摘要数",
+        "banned_global": "全局禁用词", "anti_ai_rules": "去AI味",
+        "chapter_directives": "写法要求", "character_rules": "人物纪律",
+        "context_menus": "右键菜单", "style_defaults": "视角时态",
+    }
+    settings_py = (root / "server/settings.py").read_text(encoding="utf-8")
+    dead = []
+    for key, label in NEED.items():
+        # 出现次数 > settings.py 里的声明次数才算有真消费者
+        used = len(re.findall(re.escape(key), blob))
+        decl = len(re.findall(re.escape(key), settings_py))
+        if used - decl <= 0:
+            dead.append(f"{key}（{label}）")
+    assert not dead, "这些设置页参数没有任何消费者：" + "、".join(dead)

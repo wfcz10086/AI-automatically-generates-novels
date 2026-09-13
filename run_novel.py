@@ -197,7 +197,17 @@ def cmd_run(a):
         return len(co) > 40
 
     bad_run, recent = 0, []
+    _cap_words = int(((cfg.get("limits") or {}).get("max_total_words")) or 0)
     while n <= end:
+        # 总字数上限(UI「单本总字数上限」)。settings 里一直有这个键,
+        # 从没有任何人读过 —— 四个死参数之三。到线不算故障, 是**完本**:
+        # 写 DONE.md, 守护看到它就不再拉起。
+        if _cap_words and p.total_words >= _cap_words:
+            (p.dir / "DONE.md").write_text(
+                f"# 已达总字数上限\n\n{p.total_words:,} / {_cap_words:,} 字，"
+                f"共 {len(p.state.get('done', []))} 章。\n", encoding="utf-8")
+            print(f"\n== 已达总字数上限 {p.total_words:,}/{_cap_words:,}，完本收笔 ==")
+            sys.exit(5)
         outlines = p._load("chapter_outlines.json", {})
         if not _has(n):
             # 领先上限同样适用：写到第 n 章时，最多把细纲排到 n+lead
