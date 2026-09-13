@@ -254,15 +254,20 @@ def cmd_run(a):
         # 连败会被中间零星的「完成」打断 —— 实测 18 章里 12 章需人工, 最长
         # 连败恰好 4, 卡在阈值之下, 熔断一次没响。加滑窗: 最近 10 章过 6 也停。
         if bad_run >= 5 or sum(recent[-10:]) >= 6:
+            # 触发理由要写准 —— 滑窗触发时印「连续 3 章」是误导, 查的人会
+            # 以为阈值错了(实测就被自己看糊涂了一回)
+            _why = (f"连续 {bad_run} 章需人工"
+                    if bad_run >= 5 else
+                    f"最近 10 章里 {sum(recent[-10:])} 章需人工（连败 {bad_run}）")
             halt = p.dir / "HALT.md"
             halt.write_text(
                 f"# 书级熔断 {time.strftime('%F %T')}\n\n"
-                f"连续 {bad_run} 章被判「需人工」（至第 {r['chapter']} 章）。\n"
+                f"{_why}（至第 {r['chapter']} 章）。\n"
                 f"这不是 {bad_run} 个独立问题，是同一个根子在批量产废品。\n\n"
                 f"看：audit/ 最近几章的 critique.issues（每条带正文原句）、\n"
                 f"canon_conflicts.json（被反复推翻的事实）、repair_queue.json。\n\n"
                 f"处理完删掉本文件，守护会自动续跑。\n", encoding="utf-8")
-            print(f"\n!! 书级熔断：连续 {bad_run} 章需人工，已写 HALT.md 并停跑。"
+            print(f"\n!! 书级熔断：{_why}，已写 HALT.md 并停跑。"
                   f"根因处理完删掉它，守护自动续跑。")
             sys.exit(4)
         n += 1
