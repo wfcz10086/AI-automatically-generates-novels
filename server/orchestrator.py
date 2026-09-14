@@ -3176,6 +3176,11 @@ class Novelist:
                  json.loads(f.read_text(encoding="utf-8")).items()}
         cand = [x for x in nodes.values()
                 if x.id != "R" and x.start <= n <= (x.end or x.start)]
+        # 取**最窄**的那个节点, 不是第一个。树是三层的(R.x 四十章、R.x.y 十三章),
+        # 收口要按最紧的那道闸算 —— 四十章一个出口正是「节点内部原地打转」的
+        # 温床: 中间没有任何检查点, 模型把一个冲突反复加深四十章, 出口照样对得上。
+        # 闸距从 40 缩到 13, 每 13 章就得结一次账。
+        cand.sort(key=lambda x: ((x.end or x.start) - x.start, -x.id.count(".")))
         return cand[0] if cand else None
 
     def _roots_pool(self) -> Dict[str, Any]:
@@ -3199,9 +3204,13 @@ class Novelist:
         for i in range(k):
             try:
                 raw = call("planning", _roots.p_roots(seed, chain, n_each),
-                           max_tokens=6000)
+                           max_tokens=6000).text
                 got = _roots.parse(raw, n_each)
+                if not got:
+                    raise ValueError(f"根系 JSON 解析不出来, 模型原话前 120 字："
+                                     f"{raw[:120]}")
             except Exception as e:
+                self._log(f"  [根系] 第{i+1}稿失败：{type(e).__name__}: {e}")
                 self._ledger(e, f"根系发散第 {i+1} 稿失败")
                 continue
             sc_ = _roots.score(got)
@@ -3209,6 +3218,8 @@ class Novelist:
             if sc_ > best_s:
                 best, best_s = got, sc_
         if not best:
+            self._log(f"  [根系] {k} 稿全废, 这一批退回「模型自己想剧情」")
+            self.iss.record("roots_all_failed", f"根系发散 {k} 稿全部失败")
             return pool
         if pool:                       # 续池：接在原池后面，旧的 used 标记不动
             for kk, rows in best.items():
