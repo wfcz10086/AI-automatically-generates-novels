@@ -663,3 +663,15 @@ def test_红线词回流_点名才学_语域不学():
     got = store["rules.json"]["forbidden_terms"]
     assert n == 2 and "枪管" in got and "膛线" in got
     assert "武松" not in got and "战略判断" not in got
+
+
+def test_返修配额跟着积压走():
+    """固定每批 2 条追不上新增 —— 实测 62 章时积压 25 章，被拦章在修好前
+    一直留在书里。但也不能无上限，否则一批全在返修不写新章。
+    """
+    from pathlib import Path
+    sh = (Path(__file__).resolve().parent.parent.parent
+          / "scripts/run_until.sh").read_text(encoding="utf-8")
+    assert "q[:2]" not in sh, "配额还写死 2 条"
+    assert "_n = 2 if len(q) < 10" in sh and "else 8" in sh, "配额没按积压分档"
+    assert "q[_n:]" in sh and "q[:_n]" in sh, "取件与出队没跟着配额走"

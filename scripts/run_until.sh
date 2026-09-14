@@ -52,8 +52,12 @@ p = Project(sys.argv[1])
 q = p._load('repair_queue.json', [])
 if q:
     nv = Novelist(p)
-    rest = list(q[2:])
-    for item in q[:2]:
+    # 配额跟着积压走 —— 固定每批 2 条追不上新增(实测 62 章时积压到 25 章,
+    # 被拦章在修好前一直留在书里)。积压越多修得越多, 但给上限免得一批全在
+    # 返修不写新章: 正常 2 条; 超 10 章积压时 5 条; 超 20 章时 8 条。
+    _n = 2 if len(q) < 10 else (5 if len(q) < 20 else 8)
+    rest = list(q[_n:])
+    for item in q[:_n]:
         # 修完要复审才知道该不该出队。原来无条件 q[2:] 丢掉前两条 ——
         # 没修好的也当修好了; 而 audit 那边状态又不更新, 于是「修好了还一直
         # 报警」和「没修好却被丢出队列」两种错同时存在。
@@ -80,6 +84,7 @@ if q:
                 item['tries'] = tries
                 rest.append(item)
     p.write('repair_queue.json', json.dumps(rest, ensure_ascii=False, indent=2))
+    print(f"[repair] 本批修 {_n} 章（积压 {len(q)} → {len(rest)}）")
 PYQ
   fi
 done
