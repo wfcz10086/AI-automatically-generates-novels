@@ -1274,7 +1274,7 @@ const SettingsView = {
   actions: () => `<button class="btn btn-primary" id="st-save">保存</button>`,
   async render() {
     const s = S.settings = await API.settings();
-    const g = s.generation, l = s.limits, q = s.quality, m = s.memory, sd = s.style_defaults;
+    const g = s.generation, l = s.limits, q = s.quality, m = s.memory, sd = s.style_defaults, r = s.roots || {};
     const num = (id,label,v,hint='') => `<div class="field"><label>${label}</label>
       <input class="input" id="${id}" type="number" value="${v}" step="any">
       ${hint?`<div class="hint">${hint}</div>`:''}</div>`;
@@ -1300,6 +1300,20 @@ const SettingsView = {
           ${num('g-tp','规划温度',g.temperature_plan)}
           ${num('g-cand','并发候选数',g.candidates||3,
             '多发散选优：里程碑/细纲/正文各生成几个候选，程序打分选最好的。温度拉满时 3 个足够拉开差距')}</div></div>
+      <div class="card"><div class="card-head"><div class="card-title">种子根系（可控的发散）</div>
+        <div class="card-sub">开书时从种子发散出一池素材（新冲突／可打的牌／可翻的脸／要付的代价／新舞台／新手段），
+          每批由<b>程序</b>挑几条没用过的配发给模型，用过即焚。主干（里程碑出口合同）不变，枝叶每批都换。<br>
+          为什么要它：模型每批临场编剧情时只会加深最近那条线——实测一个配角占了 43% 的章节。</div></div>
+        <div class="row"><div class="field"><label>启用种子根系</label>
+            <select class="input" id="rt-on">
+              <option value="1"${r.enabled!==false?' selected':''}>开</option>
+              <option value="0"${r.enabled===false?' selected':''}>关</option></select>
+            <div class="hint">关掉就退回「模型每批自己想剧情」</div></div>
+          ${num('rt-pk','每类发散条数',r.per_kind,'六类各这么多条，总量是它的六倍')}
+          ${num('rt-cand','根系几选一',r.candidates,'程序按「六类齐全＋不同源」打分选最好的一份')}</div>
+        <div class="row">${num('rt-pb','每批强制动用几条',r.per_batch,'写进细纲约束，程序核对是否真的用上了')}
+          ${num('rt-cr','收口比例 (0-1)',r.closing_ratio,'一节的最后这个比例停止配发新素材，强制收掉本节的坑、对齐出口合同——这是「最终剧情可控」的保障')}
+          ${num('rt-rf','剩几条时自动续池',r.refill_below,'池子见底自动再发散一批，不用人管')}</div></div>
       <div class="card"><div class="card-head"><div class="card-title">质量闸</div></div>
         <div class="row">${num('q-pass','AI 味合格线 (0-100)',q.audit_pass_score,'低于此分自动重写')}
           ${num('q-rw','每章最多重写次数',q.max_rewrites)}</div></div>
@@ -1394,6 +1408,10 @@ const SettingsView = {
         temperature_draft:v('#g-td'), temperature_plan:v('#g-tp'),
         candidates:v('#g-cand')});
       Object.assign(s.limits, {max_chapters:v('#l-ch'), max_total_words:v('#l-w')});
+      s.roots = Object.assign(s.roots||{}, {
+        enabled: $('#rt-on').value === '1', per_kind:v('#rt-pk'),
+        candidates:v('#rt-cand'), per_batch:v('#rt-pb'),
+        closing_ratio:v('#rt-cr'), refill_below:v('#rt-rf')});
       Object.assign(s.quality, {audit_pass_score:v('#q-pass'), max_rewrites:v('#q-rw')});
       Object.assign(s.memory, {top_k:v('#m-k'), recent_chapters:v('#m-rec'), l2_every:v('#m-l2')});
       Object.assign(s.style_defaults, {narration:$('#s-nar').value, tense:$('#s-tense').value,

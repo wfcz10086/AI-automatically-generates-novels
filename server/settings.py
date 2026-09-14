@@ -20,6 +20,17 @@ DEFAULTS: Dict[str, Any] = {
                    "min_context_budget": 32000, "max_context_budget": 100000, "temperature_draft": 0.92,
                    "temperature_plan": 0.80},
     "limits": {"max_chapters": 500, "max_total_words": 2_000_000, "daily_call_budget": 0},
+    # 种子根系: 开书时从种子发散出素材池, 每批由程序配发, 用过即焚。
+    # 这是「可控的发散」的物质基础 —— 模型每批临场编剧情时只会加深最近
+    # 那条线(实测: 一个仵作占了 43% 章节), 给它外部素材才换得动方向。
+    "roots": {
+        "enabled": True,
+        "per_kind": 10,        # 六类各发散多少条 (总量 = 6 × 该值)
+        "candidates": 3,       # 根系发散几选一(程序按「六类齐全+不同源」打分)
+        "per_batch": 3,        # 每批细纲强制动用几条新素材
+        "closing_ratio": 0.30,  # 一节的最后这个比例进入收口模式, 停止配发新素材
+        "refill_below": 6,     # 池子剩不到这么多条时, 自动再发散一批续上
+    },
     "quality": {"audit_pass_score": 70, "max_rewrites": 1, "hard_fail_on_blacklist": True},
     "memory": {"enabled": True, "top_k": 40, "recent_chapters": 16, "recent_full": 14, "foreshadow_show": 24, "l2_every": 10,
                "index_chapters": True},

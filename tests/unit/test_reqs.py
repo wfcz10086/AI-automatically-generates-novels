@@ -38,7 +38,10 @@ def test_回扫能抓住今天最难查的那个bug():
     一轮打分权重，第三轮才想到去 trace 里看提示词本身。有了回扫，这种事当场
     指名道姓。
     """
-    act = {"opening_beat": True, "overdue_foreshadow": True, "no_stall": False}
+    # 没列出的要求一律当「该到」—— 默认严格是故意的：
+    # 新登记了要求却忘了在调用处加开关，回扫就该当场响，而不是静默放过。
+    act = {"opening_beat": True, "overdue_foreshadow": True, "no_stall": False,
+           "use_roots": False, "closing_seal": False}
 
     bug = "【开局落点】开局落点：纽约曼哈顿…【已确立的不可逆事实】…"
     got = R.missing_delivery(bug, "outline", act)
@@ -55,7 +58,7 @@ def test_不适用的要求不许误报():
     assert R.missing_delivery(
         bare, "outline",
         {"opening_beat": False, "overdue_foreshadow": False,
-         "no_stall": False}) == []
+         "no_stall": False, "use_roots": False, "closing_seal": False}) == []
 
 
 def test_程序直写的要求不参与回扫():

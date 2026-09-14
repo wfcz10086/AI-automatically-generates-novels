@@ -211,6 +211,23 @@ def _reg_all():
         check=lambda nv, parts, start: []))   # 判据在停滞检测本身
 
     register(Req(
+        id="use_roots", source="种子根系素材池(程序按批配发)", stage="outline",
+        deliver=PROMPT, on_fail=PENALTY, marker="本批必须动用的新素材",
+        why="模型每批临场编剧情时只会加深最近那条线 —— 三候选也救不了, "
+            "三稿从同一段上下文生成, 是同一个想法的三种写法。给它外部素材"
+            "才换得动方向。素材由程序配发、用过即焚, 所以「有没有真用上」"
+            "必须回扫: 配发了却没写进细纲, 等于这一批白发。",
+        check=lambda nv, parts, start: nv._roots_used_check(parts)))
+
+    register(Req(
+        id="closing_seal", source="里程碑节点的尾段(默认最后 30%)",
+        stage="outline", deliver=PROMPT, on_fail=PENALTY, marker="收口模式",
+        why="只发散不收口的下场是一路开新坑、到节尾收不回来, 出口合同对不上。"
+            "一节切两段: 前段放开发散, 尾段停发新素材、强制结账 —— 这是"
+            "「最终剧情可控」的保障, 不是可选项。",
+        check=lambda nv, parts, start: []))   # 出口合同本身已有 check_parent
+
+    register(Req(
         id="hard_accounts", source="合同树根账本(子弹这类可计数状态)",
         stage="chapter", deliver=PROMPT, on_fail=BLOCK, marker="【硬账",
         why="子弹 119 发在第 15 章突然写成「还有十二发」, 中间没有任何消耗"

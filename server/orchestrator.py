@@ -28,6 +28,19 @@ from . import reqs as _reqs
 from . import tics as _tics
 from . import accounts as _acc
 from . import stall as _stall
+from . import roots as _roots
+
+# 素材回扫要排掉的虚词与万能词 —— 这些字出现在细纲里说明不了任何事。
+# 不是「限定词表」那种拿来做语义判断的东西, 只是把无信息量的词剔掉,
+# 剩下的名物词才能指认「这一条素材用没用」。
+_ROOT_STOP = set("""
+主角 他们 自己 一个 这个 那个 之后 因为 所以 如果 但是 而且 于是
+不许 必须 可以 能够 需要 什么 怎么 为了 通过 以及 或者 还有 然后
+接着 最后 出来 进去 起来 下来 上去 过来 过去 一下 一起 东西 事情
+时候 地方 问题 办法 手上 心里 眼里 身上 面前 背后 里面 外面 上面
+下面 前面 后面 一条 一句 一次 一步 这条 那条 当场 立刻 随后
+""".split())
+
 
 
 def _norm_key(v: str) -> str:
@@ -3153,6 +3166,164 @@ class Novelist:
         self._log(f"分卷 {len(vols)} 卷 / {r.elapsed:.1f}s")
         return vols
 
+    def _roots_node(self, n: int):
+        """章号 n 落在哪一节里程碑上。收口模式要靠它算节尾。"""
+        f = self.p.dir / "tree.json"
+        if not f.exists():
+            return None
+        import server.tree as tr
+        nodes = {k: tr.Node.from_dict(v) for k, v in
+                 json.loads(f.read_text(encoding="utf-8")).items()}
+        cand = [x for x in nodes.values()
+                if x.id != "R" and x.start <= n <= (x.end or x.start)]
+        return cand[0] if cand else None
+
+    def _roots_pool(self) -> Dict[str, Any]:
+        """素材池。没有就发散一份（三选一，程序打分）；见底了自动续。
+
+        为什么发散要多候选：这一池素材决定了后面几十章的剧情走向，是全书
+        里**单次影响最大**的一次调用。三份里挑「六类齐全、彼此不同源」的
+        那一份，比接受第一份划算得多 —— 同源的池子等于没有池子。
+        """
+        cfg = (self.cfg.get("roots") or {})
+        f = self.p.dir / "roots.json"
+        pool = _roots.load(f)
+        left = len(_roots.unused(pool))
+        if pool and left > int(cfg.get("refill_below") or 6):
+            return pool
+        seed = _soft(self._roots_seed_text(), 3000, "种子")
+        chain = _soft(self._tree_chain_text(), 2500, "主线骨架")
+        n_each = int(cfg.get("per_kind") or 10)
+        k = max(1, int(cfg.get("candidates") or 3))
+        best, best_s = {}, -1e18
+        for i in range(k):
+            try:
+                raw = call("planning", _roots.p_roots(seed, chain, n_each),
+                           max_tokens=6000)
+                got = _roots.parse(raw, n_each)
+            except Exception as e:
+                self._ledger(e, f"根系发散第 {i+1} 稿失败")
+                continue
+            sc_ = _roots.score(got)
+            self._log(f"  [根系] 第{i+1}稿 {sum(len(v) for v in got.values())} 条, 得分 {sc_:.1f}")
+            if sc_ > best_s:
+                best, best_s = got, sc_
+        if not best:
+            return pool
+        if pool:                       # 续池：接在原池后面，旧的 used 标记不动
+            for kk, rows in best.items():
+                have = {r["what"] for r in pool.get(kk, [])}
+                base = len(pool.get(kk, []))
+                for j, r in enumerate(rows):
+                    if r["what"] not in have:
+                        pool.setdefault(kk, []).append(
+                            {"id": f"{kk[:2]}{base + j + 1}", "what": r["what"],
+                             "used": None})
+        else:
+            pool = best
+        _roots.save(f, pool)
+        self._log(f"  [根系] 素材池 {sum(len(v) for v in pool.values())} 条"
+                  f"（未用 {len(_roots.unused(pool))}），选优得分 {best_s:.1f}")
+        return pool
+
+    def _roots_used_check(self, parts) -> List[str]:
+        """配发的素材, 细纲里到底用上了没有。
+
+        判法不做语义, 只对**名物词**: 从素材原句里取出不常见的 2-4 字词
+        (人名、地名、物件名), 看细纲里出没出现。一条素材命中一个词就算用了 ——
+        宽松是故意的, 这里要抓的是「整条素材被无视」, 不是「用得像不像」。
+        用得像不像归评审管。
+        """
+        picks = getattr(self, "_roots_picks", None)
+        if not picks:
+            return []
+        text = "\n".join(str(x) for x in (parts or [])) if not isinstance(parts, str) else parts
+        if len(text) < 200:
+            return []
+        miss = []
+        for p in picks:
+            keys = [w for w in re.findall(r"[一-鿿]{2,4}", p.get("what", ""))
+                    if w not in _ROOT_STOP]
+            # 长词优先: 「漕帮」「盐场」比「粮船」更能指认这条素材
+            keys.sort(key=len, reverse=True)
+            if keys and not any(k in text for k in keys[:8]):
+                miss.append(f"素材 [{p['id']}] 配发了但细纲里没动用：{p['what'][:40]}")
+        if miss:
+            self._roots_unused_back(picks, miss)
+        return miss
+
+    def _roots_unused_back(self, picks, miss) -> None:
+        """没用上的素材**退回池子**（清掉 used 标记），下一批重发。
+
+        不退回就是真丢了 —— 「用过即焚」焚的必须是真用掉的那一条，
+        配发了却被无视的等于没发过。
+        """
+        try:
+            f = self.p.dir / "roots.json"
+            pool = _roots.load(f)
+            bad = {m.split("[")[1].split("]")[0] for m in miss if "[" in m}
+            n = 0
+            for rows in pool.values():
+                for r in rows:
+                    if r.get("id") in bad and r.get("used"):
+                        r["used"] = None
+                        n += 1
+            if n:
+                _roots.save(f, pool)
+                self._log(f"  [根系] {n} 条配发未用, 已退回池子等下一批重发")
+        except Exception as e:
+            self._ledger(e, "素材退回失败")
+
+    def _roots_seed_text(self) -> str:
+        """喂给根系发散的「种子」：世界观 + 人物 + 总纲 + 红线。
+
+        要给足 —— 素材是从这里长出来的，给得少就只能凭空编，编出来的东西
+        跟这本书对不上（实测过：只给一句话故事，发散出一堆现代词汇）。
+        """
+        parts = [self.asset("world_bible.md", 1600), self.asset("characters.md", 1200),
+                 self.asset("outline.md", 1800),
+                 _soft(self.genre_rules(), 600, "题材规范")]
+        return "\n\n".join(x for x in parts if x)
+
+    def _tree_chain_text(self) -> str:
+        """主线骨架的纯文本形态，喂给根系发散用。素材必须服务于它。"""
+        vols = self._volumes_from_tree()
+        if not vols:
+            return _soft(str(self.p.state.get("outline") or ""), 2000, "大纲")
+        return "\n".join(
+            f"{v.get('name', '')}（第{v.get('start')}-{v.get('end')}章）："
+            f"解决 {v.get('solves', '')}；随之暴露 {v.get('exposes', '')}"
+            for v in vols)
+
+    def _roots_brief(self, start: int) -> str:
+        """这一批：配发新素材，还是收口？一节之内两段，互斥。"""
+        cfg = (self.cfg.get("roots") or {})
+        self._roots_on = self._roots_closing = False
+        self._roots_picks = []
+        if cfg.get("enabled") is False:
+            return ""
+        node = self._roots_node(start)
+        if node and _roots.closing_mode(start, node.start, node.end or node.start,
+                                        float(cfg.get("closing_ratio") or 0.30)):
+            self._roots_closing = True
+            self._log(f"  [根系] 第{start}章进入收口模式"
+                      f"（本节 {node.start}-{node.end}），本批不配发新素材")
+            return _roots.closing_brief(node, max(0, (node.end or start) - start + 1))
+        pool = self._roots_pool()
+        if not pool:
+            return ""
+        picks = _roots.pick(pool, start, int(cfg.get("per_batch") or 3))
+        if not picks:
+            return ""
+        _roots.mark_used(pool, picks, start)
+        _roots.save(self.p.dir / "roots.json", pool)
+        self._roots_on = True
+        self._roots_picks = picks
+        left = len(_roots.unused(pool))
+        self._log(f"  [根系] 配发 {len(picks)} 条：" +
+                  "、".join(p["id"] for p in picks) + f"（余 {left}）")
+        return _roots.brief(picks, left)
+
     def _volumes_from_tree(self) -> List[Dict[str, Any]]:
         """合同树的里程碑链 → 卷。没有树就返回空，由调用方退回模型生成。
 
@@ -5142,6 +5313,15 @@ class Novelist:
         except Exception as e:
             self._stall_on = False
             self._ledger(e, "停滞检测跳过")
+        # 种子根系: 程序配发新素材 / 节尾收口。见 server/roots.py 的开头。
+        # 两件事互斥 —— 一节的前 70% 放开发散, 后 30% 只收不放。
+        self._roots_on = False
+        try:
+            rb = self._roots_brief(start)
+            if rb:
+                cons.append(rb)
+        except Exception as e:
+            self._ledger(e, "种子根系跳过")
         # 这一批要写的章号**不一定连续**：前面批次有章被完整性守卫丢掉，
         # 就留下了洞。而前情里的「每章一句话」清单是按现有章号排的，
         # 洞在清单里看不出来（66 直接跳到 69），模型以为那两章早写过了，
@@ -5347,10 +5527,17 @@ class Novelist:
                 prompt, "outline",
                 {"opening_beat": bool(self.beat_for(start)),
                  "overdue_foreshadow": bool(overdue),
-                 "no_stall": bool(getattr(self, "_stall_on", False))}):
+                 "no_stall": bool(getattr(self, "_stall_on", False)),
+                 "use_roots": bool(getattr(self, "_roots_on", False)),
+                 "closing_seal": bool(getattr(self, "_roots_closing", False))}):
             self._log(f"  ⚠ 要求没进提示词：{_m}")
             self.iss.record("req_not_delivered", _m)
         r, parts = self.outline_best(prompt, count, start, on_delta)
+        # 配发的素材真的用上了没有。B 类「到达了但没人验」—— 素材写进提示词
+        # 只是第一步, 模型完全可以看一眼就绕开写它本来想写的那条线。
+        for _m in self._roots_used_check(parts):
+            self._log(f"  ⚠ {_m}")
+            self.iss.record("roots_unused", _m)
         outlines = self.p._load("chapter_outlines.json", {})
         # 章号以**正文里写的**为准, 不能按顺序硬编号。实测要它排 37-54,
         # 它排出的是「第75章…第87章」, 而 str(start+i) 把这些内容存成了
