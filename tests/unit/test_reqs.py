@@ -38,7 +38,7 @@ def test_回扫能抓住今天最难查的那个bug():
     一轮打分权重，第三轮才想到去 trace 里看提示词本身。有了回扫，这种事当场
     指名道姓。
     """
-    act = {"opening_beat": True, "overdue_foreshadow": True}
+    act = {"opening_beat": True, "overdue_foreshadow": True, "no_stall": False}
 
     bug = "【开局落点】开局落点：纽约曼哈顿…【已确立的不可逆事实】…"
     got = R.missing_delivery(bug, "outline", act)
@@ -54,7 +54,8 @@ def test_不适用的要求不许误报():
     bare = "什么都没有"
     assert R.missing_delivery(
         bare, "outline",
-        {"opening_beat": False, "overdue_foreshadow": False}) == []
+        {"opening_beat": False, "overdue_foreshadow": False,
+         "no_stall": False}) == []
 
 
 def test_程序直写的要求不参与回扫():
@@ -62,7 +63,8 @@ def test_程序直写的要求不参与回扫():
     beat = next(r for r in R.REGISTRY if r.id == "opening_beat")
     assert beat.deliver == R.PROGRAM
     got = R.missing_delivery("空", "outline", {"opening_beat": True,
-                                               "overdue_foreshadow": False})
+                                               "overdue_foreshadow": False,
+                                               "no_stall": False})
     assert not any("opening_beat" in g for g in got)
 
 

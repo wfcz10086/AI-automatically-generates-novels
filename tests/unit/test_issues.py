@@ -675,3 +675,26 @@ def test_返修配额跟着积压走():
     assert "q[:2]" not in sh, "配额还写死 2 条"
     assert "_n = 2 if len(q) < 10" in sh and "else 8" in sh, "配额没按积压分档"
     assert "q[_n:]" in sh and "q[:_n]" in sh, "取件与出队没跟着配额走"
+
+
+def test_叙事停滞检测_配角压主线():
+    """何九叔 29/68 章（最近 24 章占 13）—— 合同树管节点之间，节点内部
+    翻来覆去验尸四十章没人看。名单不能只信 roster：实测这本书 roster 只剩
+    三个名字，拖住主线的三个人一个都不在。
+    """
+    from server import stall
+    ch = {i: ("林远说道。何九叔低声道。" if i % 2 else "林远说道。潘金莲道。")
+          for i in range(1, 25)}
+    hot = stall.name_hotspots(ch, [], "林远")
+    got = {n for n, _h, _t in hot}
+    assert "何九叔" in got and "潘金莲" in got, f"没认出热点配角: {hot}"
+    # 主角碎片与虚词片段不许混进来
+    assert not any("林远" in n or "他知" == n or "或者" == n for n, _, _ in hot)
+
+    ti = {i: f"第{i}章 验尸笔·回响" for i in range(1, 17)}
+    mot = stall.motif_repeat(ti)
+    assert any(w in ("验尸", "回响", "验尸笔") for w, _ in mot), f"母题没抓到: {mot}"
+
+    b = stall.brief(hot, mot)
+    assert "了断" in b and "第三次翻案" in b
+    assert stall.brief([], []) == ""

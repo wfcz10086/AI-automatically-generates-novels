@@ -27,6 +27,7 @@ from . import voice as _voice
 from . import reqs as _reqs
 from . import tics as _tics
 from . import accounts as _acc
+from . import stall as _stall
 
 
 def _norm_key(v: str) -> str:
@@ -2589,6 +2590,32 @@ class Novelist:
         return [f"第{n}章细纲里没有「开局落点：」那一行，或没照抄作者原文。"
                 f"应原样写上：{beat[:60]}"]
 
+    def clean_outline_meta(self, n: int, body: str) -> str:
+        """细纲首行的元叙述当场剪掉 —— **章节标题就是从这里取的**。
+
+        实测成品里第 13 章的标题是「── 第 13 章细纲草稿（修订版）──」,
+        第 12 章标题是半句被截断的大纲。元叙述检查只查正文, 而标题走的是
+        细纲第一行 —— 检查漏了一整条路径, 读者翻到这里直接出戏。
+        程序能判的字面问题不该留给模型自觉: 首行含草稿/修订版/细纲这类词
+        或形如「── … ──」的分隔装饰, 一律剪掉, 取下一个像标题的行。
+        """
+        lines = [l for l in (body or "").split("\n")]
+        META = re.compile(r"细纲|大纲|草稿|修订版|初稿|本章要点|以下是|输出格式"
+                          r"|^[\s─—\-=*]{3,}$|^──")
+        out, dropped = [], 0
+        for i, l in enumerate(lines):
+            t = l.strip()
+            if dropped < 3 and t and META.search(t) and not re.match(
+                    r"^(一句话|视角|承接|出场角色|剧情|重场|解说|账目|后果"
+                    r"|章末钩子|开局落点|回收伏笔)", t):
+                dropped += 1
+                continue
+            out.append(l)
+        if dropped:
+            self._log(f"  第{n}章细纲剪掉 {dropped} 行元叙述（标题取自首行，"
+                      f"漏进去就是成品里的出戏）")
+        return "\n".join(out)
+
     def pin_beat(self, n: int, body: str) -> str:
         """把第 n 章的开局落点那一行**由程序钉进去**，不问模型。
 
@@ -4148,7 +4175,7 @@ class Novelist:
             if lack:                     # 残缺的不许换上去, 原稿还在
                 self._log(f"第{idx}章重排结果缺 {'、'.join(lack)}，不予采用")
                 continue
-            co[str(idx)] = self.pin_beat(idx, body)
+            co[str(idx)] = self.pin_beat(idx, self.clean_outline_meta(idx, body))
             done += 1
         if done:
             self.register_new_cast(parts)
@@ -5096,6 +5123,25 @@ class Novelist:
         if self.prompt_override("chapter_outline_extra"):
             cons.append(self.prompt_override("chapter_outline_extra"))
         cons.append(_soft(self.genre_rules(), 800, "题材节奏"))
+        # 叙事停滞: 配角戏份压过主线 / 章节名母题复读 —— 合同树管节点之间,
+        # 节点内部翻来覆去没人看(实测何九叔 29/68 章、最近 24 章占 13)。
+        try:
+            _done = sorted(int(x) for x in self.p.state.get("done", []))[-24:]
+            _chs = {i: self.p.chapter(i) for i in _done}
+            _co = self.p._load("chapter_outlines.json", {})
+            _ti = {int(k): ([l for l in v.split("\n") if l.strip()] or [""])[0]
+                   for k, v in _co.items() if str(k).isdigit()}
+            _sb = _stall.brief(
+                _stall.name_hotspots(_chs, [c["name"] for c in self.roster()],
+                                     self.hero_name()),
+                _stall.motif_repeat(_ti))
+            self._stall_on = bool(_sb)
+            if _sb:
+                cons.append(_sb)
+                self._log("  " + _sb.split("\n")[1].strip()[:70])
+        except Exception as e:
+            self._stall_on = False
+            self._ledger(e, "停滞检测跳过")
         # 这一批要写的章号**不一定连续**：前面批次有章被完整性守卫丢掉，
         # 就留下了洞。而前情里的「每章一句话」清单是按现有章号排的，
         # 洞在清单里看不出来（66 直接跳到 69），模型以为那两章早写过了，
@@ -5300,7 +5346,8 @@ class Novelist:
         for _m in _reqs.missing_delivery(
                 prompt, "outline",
                 {"opening_beat": bool(self.beat_for(start)),
-                 "overdue_foreshadow": bool(overdue)}):
+                 "overdue_foreshadow": bool(overdue),
+                 "no_stall": bool(getattr(self, "_stall_on", False))}):
             self._log(f"  ⚠ 要求没进提示词：{_m}")
             self.iss.record("req_not_delivered", _m)
         r, parts = self.outline_best(prompt, count, start, on_delta)
@@ -5338,6 +5385,7 @@ class Novelist:
             if twin:
                 dupes.append((idx, twin))
                 continue
+            body = self.clean_outline_meta(idx, body)
             outlines[str(idx)] = self.pin_beat(idx, body)
             kept += 1
         self.register_new_cast(parts)

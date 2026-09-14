@@ -203,6 +203,14 @@ def _reg_all():
         check=lambda nv, n, text: []))     # 范文只求到达, 不验正文
 
     register(Req(
+        id="no_stall", source="最近24章的配角出场率与章节名母题", stage="outline",
+        deliver=PROMPT, on_fail=PENALTY, marker="这条线在原地打转",
+        why="仵作何九叔 29/68 章有他(43%), 章节名连成串是「验尸笔·回响→"
+            "断章→残片→断笔·真伪→回响」—— 同一份证据翻案四十章。合同树管"
+            "节点之间, 节点内部的打转没有任何人看。",
+        check=lambda nv, parts, start: []))   # 判据在停滞检测本身
+
+    register(Req(
         id="hard_accounts", source="合同树根账本(子弹这类可计数状态)",
         stage="chapter", deliver=PROMPT, on_fail=BLOCK, marker="【硬账",
         why="子弹 119 发在第 15 章突然写成「还有十二发」, 中间没有任何消耗"
