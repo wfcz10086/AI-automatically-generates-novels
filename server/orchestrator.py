@@ -3228,7 +3228,8 @@ class Novelist:
                 for j, r in enumerate(rows):
                     if r["what"] not in have:
                         pool.setdefault(kk, []).append(
-                            {"id": f"{kk[:2]}{base + j + 1}", "what": r["what"],
+                            {"id": f"{_roots.PREFIX[kk]}{base + j + 1}",
+                             "what": r["what"],
                              "used": None})
         else:
             pool = best
@@ -3272,11 +3273,14 @@ class Novelist:
         try:
             f = self.p.dir / "roots.json"
             pool = _roots.load(f)
-            bad = {m.split("[")[1].split("]")[0] for m in miss if "[" in m}
+            # 按 (类, id) 匹配, 不能只按 id —— 前缀撞号时会误退另一类的同号素材。
+            # 现在 PREFIX 已经保证不撞, 但匹配方式本身也得是对的。
+            bad = {(p["kind"], p["id"]) for p in picks
+                   if any(f"[{p['id']}]" in m for m in miss)}
             n = 0
-            for rows in pool.values():
+            for kk, rows in pool.items():
                 for r in rows:
-                    if r.get("id") in bad and r.get("used"):
+                    if (kk, r.get("id")) in bad and r.get("used"):
                         r["used"] = None
                         n += 1
             if n:

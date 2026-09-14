@@ -86,3 +86,14 @@ def test_解析容得下模型的坏输出():
     assert R.parse('```json\n{"conflict":["漕帮截了粮船要买路钱"]}\n```')["conflict"]
     # 太短的条目是占位符，不要
     assert "card" not in R.parse('{"card":["无","略"]}')
+
+
+def test_id前缀不许撞号():
+    """conflict 和 cost 都是 "co" —— 第一次真跑就撞上了：日志里的 co2 看不出
+    是哪一类，而退回池子按 id 匹配会把另一类的同号素材一起退回去。"""
+    assert len(set(R.PREFIX.values())) == len(R.KINDS)
+    assert set(R.PREFIX) == set(R.KINDS)
+    pool = R.parse('{"conflict":["甲方来闹事要收保护费"],'
+                   '"cost":["赢了也得赔上一个自己人"]}')
+    ids = [r["id"] for rows in pool.values() for r in rows]
+    assert len(set(ids)) == len(ids), f"撞号: {ids}"

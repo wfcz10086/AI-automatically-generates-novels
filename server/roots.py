@@ -45,6 +45,13 @@ KINDS = {
     "device": "新手段（可用一次的道具或做局方式，不是金手指）",
 }
 
+#: id 前缀。**不许再用 kind[:2] 自动取** —— conflict 和 cost 都是 "co",
+#: 撞号之后日志里的 co2 到底是哪一类看不出来, 而退回池子只按 id 匹配,
+#: 会把另一类的同号素材一起退回去(实测第一次真跑就撞上了)。
+PREFIX = {"conflict": "cf", "card": "ca", "reversal": "re",
+          "cost": "cs", "arena": "ar", "device": "de"}
+assert len(set(PREFIX.values())) == len(KINDS), "id 前缀撞号"
+
 
 def p_roots(seed: str, chain: str, n_each: int = 10) -> str:
     return f"""下面是一本长篇小说的种子和它的主线骨架。请从中**发散**出一批可用素材。
@@ -88,7 +95,7 @@ def parse(raw: str, n_each: int = 10) -> Dict[str, List[Dict[str, Any]]]:
             t = str(x).strip()
             if len(t) < 8:
                 continue
-            rows.append({"id": f"{kind[:2]}{len(rows)+1}", "what": t[:160],
+            rows.append({"id": f"{PREFIX[kind]}{len(rows)+1}", "what": t[:160],
                          "used": None})
         if rows:
             out[kind] = rows
